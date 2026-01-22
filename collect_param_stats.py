@@ -1,0 +1,356 @@
+#!/usr/bin/env python
+# /// script
+# dependencies = [
+#   "torch",
+#   "transformers",
+#   "numpy",
+#   "tqdm",
+#   "safetensors",
+#   "huggingface_hub",
+# ]
+# ///
+
+import argparse
+import csv
+import gc
+import json
+import os
+import re
+from typing import Dict, List, Optional, Tuple, Set
+
+import numpy as np
+import torch
+from tqdm import tqdm
+from safetensors.torch import load_file as load_safetensors_file
+from safetensors import safe_open
+from huggingface_hub import snapshot_download
+
+
+# --- layer + coarse module parsing ---
+LAYER_PATTERNS = [
+    re.compile(r"\.layers\.(\d+)\."),
+    re.compile(r"\.h\.(\d+)\."),
+    re.compile(r"\.blocks\.(\d+)\."),
+]
+COARSE_ATTN_KEYS = ("attn", "attention", "self_attn")
+COARSE_MLP_KEYS = ("mlp", "ffn", "feed_forward", "intermediate")
+
+
+class SmartLoader:
+    def __init__(self, model_path: str):
+        # Handle HF Hub IDs: If path doesn't exist locally, try downloading
+        if not os.path.exists(model_path):
+            print(f"'{model_path}' not found locally. Attempting HF Hub download...")
+            try:
+                # Download only essential files for stats
+                model_path = snapshot_download(
+                    repo_id=model_path, 
+                    allow_patterns=["*.safetensors", "*.bin", "*.json"],
+                    ignore_patterns=["*.msgpack", "*.h5"]
+                )
+                print(f"Downloaded/Found at: {model_path}")
+            except Exception as e:
+                # If it looks like a path but failed, or network failed, we'll crash later or raise here
+                pass
+
+        self.model_path = model_path
+        self.index = {}
+        self.is_safetensors = False
+        self.single_file = None
+        self._scan_structure()
+        
+        # Cache one shard at a time
+        self.current_shard_path = None
+        self.current_shard_data = {}
+
+    def _scan_structure(self):
+        # 1. Check for safetensors index
+        sf_index = os.path.join(self.model_path, "model.safetensors.index.json")
+        sf_single = os.path.join(self.model_path, "model.safetensors")
+        pt_index = os.path.join(self.model_path, "pytorch_model.bin.index.json")
+        pt_single = os.path.join(self.model_path, "pytorch_model.bin")
+
+        if os.path.exists(sf_index):
+            self.is_safetensors = True
+            with open(sf_index, "r") as f:
+                data = json.load(f)
+            self.index = data["weight_map"]
+        elif os.path.exists(sf_single):
+            self.is_safetensors = True
+            self.single_file = sf_single
+        elif os.path.exists(pt_index):
+            self.is_safetensors = False
+            with open(pt_index, "r") as f:
+                data = json.load(f)
+            self.index = data["weight_map"]
+        elif os.path.exists(pt_single):
+            self.is_safetensors = False
+            self.single_file = pt_single
+        else:
+            # Fallback: check if user passed a direct file path instead of dir
+            if os.path.isfile(self.model_path):
+                if self.model_path.endswith(".safetensors"):
+                    self.is_safetensors = True
+                    self.single_file = self.model_path
+                else:
+                    self.is_safetensors = False
+                    self.single_file = self.model_path
+            else:
+                raise FileNotFoundError(f"Could not find model weights in {self.model_path}")
+
+    def get_all_param_names(self) -> Set[str]:
+        if self.index:
+            return set(self.index.keys())
+        
+        # Single file case: we must peek
+        if self.is_safetensors:
+            with safe_open(self.single_file, framework="pt", device="cpu") as f:
+                return set(f.keys())
+        else:
+            # Torch bin: heavy, but we have to load to list keys if we essentially want to know them
+            # Optimization: Just load 'map_location="meta"'? No, torch.load doesn't support that well for full files.
+            # We'll just load it once to get keys and cache it if it fits, or trust usage.
+            # BUT for high-mem safety, let's just claim strictly needed params.
+            # Actually, `torch.load` of a 10GB file might kill us merely to list keys.
+            # Let's hope single-file models aren't huge (usually <10GB).
+            print(f"Warning: Loading full checkpoint {self.single_file} to list keys (Legacy PT format).")
+            self.current_shard_data = torch.load(self.single_file, map_location="cpu", weights_only=True)
+            self.current_shard_path = self.single_file
+            return set(self.current_shard_data.keys())
+
+    def get_param(self, name: str, device: str, dtype: torch.dtype) -> Optional[torch.Tensor]:
+        # Determine which file contains this param
+        if self.single_file:
+            path = self.single_file
+        else:
+            if name not in self.index:
+                return None
+            filename = self.index[name]
+            path = os.path.join(self.model_path, filename)
+        
+        # Check if loaded
+        if self.current_shard_path != path:
+            # Unload old
+            del self.current_shard_data
+            gc.collect()
+            
+            # Load new
+            self.current_shard_path = path
+            if self.is_safetensors:
+                self.current_shard_data = load_safetensors_file(path, device="cpu")
+            else:
+                self.current_shard_data = torch.load(path, map_location="cpu", weights_only=True)
+                
+        # Get tensor
+        if name not in self.current_shard_data:
+            return None
+            
+        tensor = self.current_shard_data[name]
+        
+        # Convert / Move
+        # We assume tensor is on CPU initially to save GPU mem, then we move just this param
+        tensor = tensor.to(dtype=dtype, device=device)
+        return tensor
+
+
+def resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        return "mps"
+    return "cpu"
+
+
+def resolve_dtype(dtype: str, device: str) -> torch.dtype:
+    if dtype == "auto":
+        if device == "cuda":
+            return torch.bfloat16
+        if device == "mps":
+            return torch.float16
+        return torch.float32
+    mapping = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
+    if dtype not in mapping:
+        raise ValueError(f"Unknown dtype '{dtype}'. Use auto|fp32|fp16|bf16")
+    return mapping[dtype]
+
+
+def extract_layer(param_name: str) -> Optional[int]:
+    for pat in LAYER_PATTERNS:
+        m = pat.search(param_name)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def classify_coarse(param_name: str) -> str:
+    s = param_name.lower()
+    if any(k in s for k in COARSE_ATTN_KEYS):
+        return "attn"
+    if any(k in s for k in COARSE_MLP_KEYS):
+        return "mlp"
+    return "other"
+
+
+def spectral_norm_power(A: torch.Tensor, iters: int = 5, eps: float = 1e-12) -> float:
+    m, n = A.shape
+    if m == 0 or n == 0:
+        return 0.0
+    v = torch.randn(n, 1, device=A.device, dtype=A.dtype)
+    v = v / (v.norm() + eps)
+    for _ in range(iters):
+        u = A @ v
+        u = u / (u.norm() + eps)
+        v = A.T @ u
+        v = v / (v.norm() + eps)
+    u = A @ v
+    return float(u.norm().item())
+
+
+def stable_rank(A: torch.Tensor, iters: int = 5) -> float:
+    if A.numel() == 0:
+        return 0.0
+    Af = A.float()
+    fro_sq = float((Af * Af).sum(dtype=torch.float64).item())
+    if fro_sq == 0.0:
+        return 0.0
+    spec = spectral_norm_power(Af, iters=iters)
+    if spec <= 0:
+        return 0.0
+    return fro_sq / (spec * spec)
+
+
+def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        w.writerows(rows)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model-a", required=True, help="Baseline / before model path")
+    ap.add_argument("--model-b", required=True, help="After model path")
+    ap.add_argument("--device", default="auto")
+    ap.add_argument("--dtype", default="auto")
+    ap.add_argument("--sr-iters", type=int, default=5)
+    ap.add_argument("--outdir", default="outputs/param_stats")
+    # Ignored legacy args to prevent breaking scripts
+    ap.add_argument("--trust-remote-code", action="store_true")
+    args = ap.parse_args()
+
+    device = resolve_device(args.device)
+    dtype = resolve_dtype(args.dtype, device)
+
+    print(f"Initializing SmartLoaders (Streaming Mode)...")
+    print(f"  Model A: {args.model_a}")
+    print(f"  Model B: {args.model_b}")
+
+    try:
+        loader_a = SmartLoader(args.model_a)
+        loader_b = SmartLoader(args.model_b)
+    except FileNotFoundError as e:
+        print(f"Error loading models: {e}")
+        return
+
+    # Get intersect of parameters
+    names_a = loader_a.get_all_param_names()
+    names_b = loader_b.get_all_param_names()
+    
+    # Filter for Weights only (skip biases, layernorms mostly by name convention for stats)
+    # We stick to the logic: Must end in .weight
+    all_names = sorted(list(names_a.intersection(names_b)))
+    
+    linear_names = []
+    # Pre-scan to filter potential linear names
+    for n in all_names:
+        if n.endswith(".weight"):
+            linear_names.append(n)
+
+    rows = []
+    per_layer = {}
+
+    print(f"Scanning {len(linear_names)} potential weight matrices...")
+    
+    for name in tqdm(linear_names, desc="Processing"):
+        # Load A
+        Wa = loader_a.get_param(name, device, dtype)
+        if Wa is None or Wa.ndim != 2:
+            continue
+            
+        # Load B
+        Wb = loader_b.get_param(name, device, dtype)
+        if Wb is None:
+            continue
+            
+        if Wa.shape != Wb.shape:
+            print(f"Skipping {name}: shape mismatch {Wa.shape} vs {Wb.shape}")
+            continue
+
+        # Calc Stats
+        dW = (Wb - Wa)
+        
+        layer = extract_layer(name)
+        group = classify_coarse(name)
+
+        dW_fro = float(dW.float().norm().item())
+        dW_sr = stable_rank(dW, iters=args.sr_iters)
+        W_sr = stable_rank(Wa, iters=args.sr_iters)
+
+        rows.append({
+            "name": name,
+            "layer": layer if layer is not None else -1,
+            "group": group,
+            "shape0": Wa.shape[0],
+            "shape1": Wa.shape[1],
+            "dW_fro": dW_fro,
+            "dW_stable_rank": dW_sr,
+            "W_stable_rank": W_sr,
+        })
+
+        if layer is not None:
+            key = (layer, group)
+            st = per_layer.setdefault(key, {"sum_dW_fro_sq": 0.0, "sum_dW_sr": 0.0, "count": 0})
+            st["sum_dW_fro_sq"] += dW_fro * dW_fro
+            st["sum_dW_sr"] += dW_sr
+            st["count"] += 1
+            
+        # Explicit delete to aid GC in loop
+        del Wa
+        del Wb
+        del dW
+
+    # Write Output
+    out_a = re.sub(r"[^A-Za-z0-9_.-]+", "_", args.model_a)
+    out_b = re.sub(r"[^A-Za-z0-9_.-]+", "_", args.model_b)
+    outdir = os.path.join(args.outdir, f"{out_a}__to__{out_b}")
+    os.makedirs(outdir, exist_ok=True)
+
+    write_csv(
+        os.path.join(outdir, "per_matrix.csv"),
+        rows,
+        ["name", "layer", "group", "shape0", "shape1", "dW_fro", "dW_stable_rank", "W_stable_rank"],
+    )
+
+    layer_rows = []
+    for (layer, group), st in sorted(per_layer.items(), key=lambda x: (x[0][0], x[0][1])):
+        layer_rows.append({
+            "layer": layer,
+            "group": group,
+            "dW_fro_layer": float(np.sqrt(st["sum_dW_fro_sq"])),
+            "mean_dW_stable_rank": st["sum_dW_sr"] / max(st["count"], 1),
+            "count_mats": st["count"],
+        })
+
+    write_csv(
+        os.path.join(outdir, "per_layer.csv"),
+        layer_rows,
+        ["layer", "group", "dW_fro_layer", "mean_dW_stable_rank", "count_mats"],
+    )
+
+    print(f"Success. Wrote stats to: {outdir}")
+
+if __name__ == "__main__":
+    main()
