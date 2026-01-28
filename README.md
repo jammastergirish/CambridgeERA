@@ -4,57 +4,54 @@ This directory contains scripts for analyzing the differences between PyTorch mo
 
 ## Quick Start
 
-Use the provided bash scripts to run the analysis. These scripts handle arguments and environment setups for you.
-
-### 1. Data Generation (Required for Activations)
-Before running activation analysis, you must generate the "Forget" and "Retain" datasets.
-
-```bash
-uv run create_datasets.py
-# Creates data/forget.txt and data/retain.txt
-```
-
-### 2. Parameter Statistics (Local / Mac)
-Use `run_params_local.sh` to compare models on your local machine (e.g. Mac). It defaults to CPU/MPS and safe dtypes to avoid OOM.
-
-```bash
-# Edit variables in the script first if needed (BASE, FILTERED, UNLEARNED)
-./run_params_local.sh
-```
-
-### 3. Parameter Statistics (H100 / Cluster)
-Use `run_params_h100.sh` for high-performance runs on a GPU cluster.
-
-```bash
-# Edit variables in the script first if needed
-./run_params_h100.sh
-```
-
-### 4. Activation Norms
-Use `run_activations.sh` to compute activation norms.
-
-```bash
-# Requires data/forget.txt and data/retain.txt (from step 1)
-./run_activations.sh
-```
-
-### 5. Visualization
-Generate plots from the computed statistics.
-
-```bash
-# Plot parameter statistics (Frobenius norms, Stable Rank)
-./plot_param_stats.sh
-
-# Plot activation norms
-./plot_activation_norms.sh
-```
-
-### 6. Full Pipeline
-Run the entire workflow end-to-end (Local/Mac optimized).
+Run the full analysis pipeline (Data Generation → Parameter Stats → Activations → Plotting):
 
 ```bash
 ./pipeline.sh
 ```
+*Note: This script cleans the `outputs/` and `plots/` directories and runs all steps end-to-end.*
+
+---
+
+## Pipeline Breakdown
+
+If you want to run steps individually or understand what `pipeline.sh` is doing, here is the breakdown:
+
+### 1. Parameter Analysis
+```bash
+./run_params_local.sh
+```
+Comparses the baseline model against the fine-tuned versions. computes Frobenius norms and Stable Ranks for every weight matrix.
+*   **Input**: HuggingFace models.
+*   **Output**: `outputs/param_stats/...` (CSVs with raw stats).
+
+### 2. Plot Parameter Stats
+```bash
+./plot_param_stats.sh
+```
+Visualizes the CSVs generated in step 1.
+*   **Output**: `plots/filtered/*.png`, `plots/unlearned/*.png`.
+
+### 3. Data Generation
+```bash
+uv run create_datasets.py
+```
+Downloads WMDP-Bio (hazardous knowledge) and Wikitext (general knowledge) datasets.
+*   **Output**: `data/forget.txt`, `data/retain.txt`.
+
+### 4. Activation Analysis
+```bash
+./run_activations.sh
+```
+Runs the models on the datasets from step 3 and records the average hidden-state norms for every layer.
+*   **Output**: `outputs/activation_norms/activation_norms.csv`.
+
+### 5. Plot Activations
+```bash
+./plot_activation_norms.sh
+```
+Visualizes the activation trends to show "Unlearning Gaps".
+*   **Output**: `plots/activations/*.png`.
 
 ---
 
