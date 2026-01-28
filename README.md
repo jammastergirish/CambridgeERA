@@ -87,6 +87,8 @@ Granular stats for every single weight matrix scaned.
 | `name` | Parameter name (e.g., `layers.10.mlp.gate_proj.weight`) |
 | `layer` | The integer layer index extracted from the name |
 | `group` | Coarse grouping (`attn` for attention, `mlp` for feed-forward) |
+| `shape0` | Matrix dimension 0 (rows/output features) |
+| `shape1` | Matrix dimension 1 (cols/input features) |
 | `dW_fro` | Frobenius norm of the difference: $\|\Delta W\|_F$ |
 | `dW_stable_rank` | Stable rank of the difference: $r_{stable}(\Delta W)$ |
 | `W_stable_rank` | Stable rank of the original base weights: $r_{stable}(W)$ |
@@ -95,8 +97,11 @@ Granular stats for every single weight matrix scaned.
 Aggregated statistics per layer.
 | Column | Description |
 | :--- | :--- |
+| `layer` | The integer layer index |
+| `group` | Coarse grouping (`attn` vs `mlp`) |
 | `dW_fro_layer` | Root-sum-square of Frobenius norms in that layer ($\sqrt{\sum \|\Delta W_i\|_F^2}$). Like a "Layer Norm" for parameter changes. |
 | `mean_dW_stable_rank` | Average stable rank of changes in that layer. |
+| `count_mats` | Number of parameter matrices aggregated in this group/layer. |
 
 ---
 
