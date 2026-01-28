@@ -128,14 +128,30 @@ Aggregated statistics per layer.
 ---
 
 ### 3. Plots
-The scripts in `plots/` visualize these CSVs.
+The scripts in `plots/` visualize the CSVs generated above. Here is exactly where the data comes from:
 
-*   **Layer Locality (`layer_locality_*.png`)**:
-    *   *X-axis*: Layer Index. *Y-axis*: $\|\Delta W\|_F$ ( Magnitude of change).
-    *   **Use**: Identifies *where* the model changed. Did the fine-tuning affect early layers (features) or late layers (reasoning)?
-*   **Edit Dimensionality (`stable_rank_*.png`)**:
-    *   *X-axis*: Layer Index. *Y-axis*: Stable Rank.
-    *   **Use**: Identifies *how* the model changed. Low stable rank implies surgical edits; high implies general drift.
-*   **Activation Profiles (`activation_norms_*.png`)**:
-    *   *X-axis*: Layer Index. *Y-axis*: Mean Hidden State Norm.
-    *   **Use**: Compares signal propagation between models. Look for the "Unlearning Gap": where the unlearned model's curve dips below the baseline on the Forget set.  
+*   **Layer Locality (`layer_locality_*.png`)**
+    *   **Source Data**: `per_layer.csv`
+    *   **Column Plotted**: `dW_fro_layer` (filtered by group `attn` or `mlp`)
+    *   **Interpretation**:
+        *   *X-axis*: Layer Index.
+        *   *Y-axis*: Aggregated Frobenius Norm of parameters in that layer.
+        *   *Meaning*: Shows **where** the model changed. A spike at layer 5 means the weights in layer 5 were modified significantly more than others.
+
+*   **Edit Dimensionality (`stable_rank_*.png`)**
+    *   **Source Data**: `per_layer.csv`
+    *   **Column Plotted**: `mean_dW_stable_rank` (filtered by group `attn` or `mlp`)
+    *   **Interpretation**:
+        *   *X-axis*: Layer Index.
+        *   *Y-axis*: Average Stable Rank of the difference matrices ($\Delta W$).
+        *   *Meaning*: Shows **complexity** of the change.
+            *   **~1.0**: Surgical, low-rank update (affects specific features).
+            *   **High**: Broad, isotropic noise (affects all features).
+
+*   **Activation Profiles (`activation_norms_*.png`)**
+    *   **Source Data**: `activation_norms.csv`
+    *   **Column Plotted**: `mean_norm`
+    *   **Interpretation**:
+        *   *X-axis*: Layer Index.
+        *   *Y-axis*: Average L2 norm of hidden states.
+        *   *Meaning*: Shows signal propagation strength. "Unlearning" is successful if the curve **drops** for the Forget Set (Blue) but stays **stable** for the Retain Set (Orange).  
