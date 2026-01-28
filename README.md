@@ -13,45 +13,50 @@ Run the full analysis pipeline (Data Generation → Parameter Stats → Activati
 
 ---
 
+## Quick Start
+
+Run the full analysis pipeline (Data Generation → Parameter Stats → Activations → Plotting):
+
+```bash
+./pipeline.sh
+```
+*Note: This script cleans the `outputs/` and `plots/` directories and runs all steps end-to-end.*
+
+---
+
 ## Pipeline Breakdown
 
-If you want to run steps individually or understand what `pipeline.sh` is doing, here is the breakdown:
+Here is a detailed explanation of every file executed by `pipeline.sh`:
 
-### 1. Parameter Analysis
-```bash
-./run_params_local.sh
-```
-Comparses the baseline model against the fine-tuned versions. computes Frobenius norms and Stable Ranks for every weight matrix.
-*   **Input**: HuggingFace models.
-*   **Output**: `outputs/param_stats/...` (CSVs with raw stats).
+### 1. `run_params_local.sh`
+**Action**: Runs `collect_param_stats.py` twice to compare the baseline model against two variations.
+*   **Models Compared**:
+    1.  `deep-ignorance-unfiltered` vs `deep-ignorance-e2e-strong-filter`
+    2.  `deep-ignorance-unfiltered` vs `deep-ignorance-unfiltered-cb-lat` (Unlearned)
+*   **Output**: Generates `outputs/param_stats/.../per_matrix.csv` (raw stats) and `per_layer.csv` (aggregated).
 
-### 2. Plot Parameter Stats
-```bash
-./plot_param_stats.sh
-```
-Visualizes the CSVs generated in step 1.
-*   **Output**: `plots/filtered/*.png`, `plots/unlearned/*.png`.
+### 2. `plot_param_stats.sh`
+**Action**: Calls `plot_param_stats.py` to visualize the CSVs from step 1.
+*   **Plots Generated**:
+    *   `layer_locality_*.png`: Magnitude of changes per layer (Frobenius norm).
+    *   `stable_rank_*.png`: Complexity of changes per layer (Stable Rank).
+*   **Output Directory**: `plots/filtered/` and `plots/unlearned/`.
 
-### 3. Data Generation
-```bash
-uv run create_datasets.py
-```
-Downloads WMDP-Bio (hazardous knowledge) and Wikitext (general knowledge) datasets.
+### 3. `create_datasets.py`
+**Action**: logic to download and filter raw datasets from HuggingFace (`cais/wmdp`, `wikitext`).
+*   **Forget Set**: 500 questions from WMDP-Bio (Hazardous Bio knowledge).
+*   **Retain Set**: 500 generic samples from Wikitext-2 (General capabilities).
 *   **Output**: `data/forget.txt`, `data/retain.txt`.
 
-### 4. Activation Analysis
-```bash
-./run_activations.sh
-```
-Runs the models on the datasets from step 3 and records the average hidden-state norms for every layer.
+### 4. `run_activations.sh`
+**Action**: Runs `collect_activation_norms.py` on the models using the text files from step 3.
+*   **Metric**: Computes the average L2 norm of hidden states for every layer on both "Forget" and "Retain" data.
 *   **Output**: `outputs/activation_norms/activation_norms.csv`.
 
-### 5. Plot Activations
-```bash
-./plot_activation_norms.sh
-```
-Visualizes the activation trends to show "Unlearning Gaps".
-*   **Output**: `plots/activations/*.png`.
+### 5. `plot_activation_norms.sh`
+**Action**: Calls `plot_activation_norms.py` to visualize signal strength.
+*   **Goal**: Show "Unlearning Gaps" where the model's response to hazardous info drops while general knowledge remains stable.
+*   **Output**: `plots/activations/activation_norms_*.png`.
 
 ---
 
