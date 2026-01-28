@@ -90,9 +90,13 @@ def mean_hidden_norms(model_id: str, texts: List[str], device: str, dtype: torch
 
 def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", newline="") as f:
+    file_exists = os.path.isfile(path)
+    mode = "a" if file_exists else "w"
+    
+    with open(path, mode, newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
+        if not file_exists:
+            w.writeheader()
         w.writerows(rows)
 
 

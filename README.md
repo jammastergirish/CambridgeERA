@@ -75,6 +75,7 @@ Here is a detailed explanation of every file executed by `pipeline.sh`:
     *   The largest singular value ($\sigma_{max}$) of the matrix.
     *   Measures the maximum "stretch" the matrix can apply to a vector.
     *   *Implementation Note*: Computing full SVD for large matrices (e.g., 4096x11008) is slow. This script uses **Power Iteration** to efficiently approximate the largest singular value on the GPU.
+    *   *Determinism*: Power Iteration starts with a random vector. The script uses a fixed random seed (default `--seed 42`) to ensuring results are bit-for-bit identical across runs.
 *   **Stable Rank ($r_{stable}$)**:
     *   **Formula**: $r_{stable} = \frac{\|A\|_F^2}{\|A\|_2^2}$.
     *   **Interpretation**: A proxy for the "effective rank" of the matrix.

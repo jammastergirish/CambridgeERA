@@ -237,9 +237,16 @@ def main():
     ap.add_argument("--dtype", default="auto")
     ap.add_argument("--sr-iters", type=int, default=5)
     ap.add_argument("--outdir", default="outputs/param_stats")
+    ap.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
     # Ignored legacy args to prevent breaking scripts
     ap.add_argument("--trust-remote-code", action="store_true")
     args = ap.parse_args()
+
+    # Set seed for reproducibility (vital for Power Iteration stability)
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
