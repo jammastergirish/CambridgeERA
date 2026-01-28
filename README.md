@@ -6,7 +6,15 @@ This directory contains scripts for analyzing the differences between PyTorch mo
 
 Use the provided bash scripts to run the analysis. These scripts handle arguments and environment setups for you.
 
-### 1. Parameter Statistics (Local / Mac)
+### 1. Data Generation (Required for Activations)
+Before running activation analysis, you must generate the "Forget" and "Retain" datasets.
+
+```bash
+uv run create_datasets.py
+# Creates data/forget.txt and data/retain.txt
+```
+
+### 2. Parameter Statistics (Local / Mac)
 Use `run_params_local.sh` to compare models on your local machine (e.g. Mac). It defaults to CPU/MPS and safe dtypes to avoid OOM.
 
 ```bash
@@ -14,7 +22,7 @@ Use `run_params_local.sh` to compare models on your local machine (e.g. Mac). It
 ./run_params_local.sh
 ```
 
-### 2. Parameter Statistics (H100 / Cluster)
+### 3. Parameter Statistics (H100 / Cluster)
 Use `run_params_h100.sh` for high-performance runs on a GPU cluster.
 
 ```bash
@@ -22,12 +30,30 @@ Use `run_params_h100.sh` for high-performance runs on a GPU cluster.
 ./run_params_h100.sh
 ```
 
-### 3. Activation Norms
-Use `run_activations_optional.sh` to compute activation norms on specific datasets.
+### 4. Activation Norms
+Use `run_activations.sh` to compute activation norms.
 
 ```bash
-# Requires data/forget.txt and data/retain.txt to exist
-./run_activations_optional.sh
+# Requires data/forget.txt and data/retain.txt (from step 1)
+./run_activations.sh
+```
+
+### 5. Visualization
+Generate plots from the computed statistics.
+
+```bash
+# Plot parameter statistics (Frobenius norms, Stable Rank)
+./plot_param_stats.sh
+
+# Plot activation norms
+./plot_activation_norms.sh
+```
+
+### 6. Full Pipeline
+Run the entire workflow end-to-end (Local/Mac optimized).
+
+```bash
+./pipeline.sh
 ```
 
 ---
