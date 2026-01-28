@@ -60,34 +60,77 @@ Run the entire workflow end-to-end (Local/Mac optimized).
 
 ## Script Details
 
-### `collect_param_stats.py`
-**Purpose**: Calculates how much the weights have changed and how "complex" those changes are.
+## Script Details & Technical Reference
 
-**Key Concepts:**
-1.  **Linear Only**: It scans for `nn.Linear` modules (ignoring LayerNorms, Biases, and Embeddings).
-2.  **Spectral Norm (via Power Iteration)**: Computing the true singular values (SVD) of large matrices (e.g., 4096x11008) is slow. This script uses **Power Iteration** to approximate the largest singular value ($\|A\|_2$) efficiently on the GPU.
-3.  **Stable Rank**: defined as $r_{stable} = \frac{\|A\|_F^2}{\|A\|_2^2}$.
-    *   **Low Stable Rank (near 1)**: The change is "spiky" or low-rank; it affects only a few specific directions in the feature space.
-    *   **High Stable Rank**: The change is "blurry" or isotropic; it affects many directions intimately.
-4.  **Memory Efficient (Streaming)**: This script uses a **SmartLoader** to read parameters one-by-one from disk (supporting `safetensors` and `pytorch_model.bin`). It does **not** load the full model into RAM, making it safe to run 70B+ param model analysis locally.
+### 1. `collect_param_stats.py`
+**Purpose**: Calculates parameter-level statistics to quantify model changes ($\Delta W = W_{fine-tuned} - W_{base}$).
 
-**Outputs:**
-*   `per_matrix.csv`: Granular stats for every single weight matrix (e.g. `model.layers.5.mlp.gate_proj.weight`).
-*   `per_layer.csv`: Aggregated stats.
-    *   `dW_fro_layer`: Root-sum-square of all Frobenius norms in that layer (like a "Layer Norm" of the parameter stats).
-    *   `mean_dW_stable_rank`: Average complexity of changes in that layer.
+#### Key Concepts
+*   **Frobenius Norm ($\|A\|_F$)**:
+    *   The Euclidean norm of the flattened matrix: $\sqrt{\sum_{i,j} A_{ij}^2}$.
+    *   Measures the *magnitude* of the change.
+*   **Spectral Norm ($\|A\|_2$)**:
+    *   The largest singular value ($\sigma_{max}$) of the matrix.
+    *   Measures the maximum "stretch" the matrix can apply to a vector.
+    *   *Implementation Note*: Computing full SVD for large matrices (e.g., 4096x11008) is slow. This script uses **Power Iteration** to efficiently approximate the largest singular value on the GPU.
+*   **Stable Rank ($r_{stable}$)**:
+    *   **Formula**: $r_{stable} = \frac{\|A\|_F^2}{\|A\|_2^2}$.
+    *   **Interpretation**: A proxy for the "effective rank" of the matrix.
+        *   **Low Stable Rank ($\approx 1$)**: The change is "spiky" or "rank-1". All the energy is concentrated in one specific direction (singular vector). This often indicates a precise, surgical edit.
+        *   **High Stable Rank**: The change is "blurry" or isotropic. The energy is spread out across many dimensions. This often indicates noise or a general "drift" in the weights.
 
-### `collect_activation_norms.py`
-**Purpose**: Checks if the model is "activitating" more or less strongly on specific data (Forget set vs Retain set).
+#### Outputs
+**`outputs/param_stats/<model_pair>/per_matrix.csv`**
+Granular stats for every single weight matrix scaned.
+| Column | Description |
+| :--- | :--- |
+| `name` | Parameter name (e.g., `layers.10.mlp.gate_proj.weight`) |
+| `layer` | The integer layer index extracted from the name |
+| `group` | Coarse grouping (`attn` for attention, `mlp` for feed-forward) |
+| `dW_fro` | Frobenius norm of the difference: $\|\Delta W\|_F$ |
+| `dW_stable_rank` | Stable rank of the difference: $r_{stable}(\Delta W)$ |
+| `W_stable_rank` | Stable rank of the original base weights: $r_{stable}(W)$ |
 
-**Process:**
-1.  **Tokenization**: Reads lines from text files and tokenizes them.
-2.  **Forward Pass**: Runs the model in `inference_mode` and captures the **hidden states** at every layer.
-3.  **L2 Norm Calculation**:
-    *   For each token, it computes the L2 norm of the hidden vector: $\|h\|_2 = \sqrt{\sum h_i^2}$.
-    *   It ignores padding tokens (using the attention mask).
-4.  **Averaging**: accurately computes the mean norm per layer across all valid tokens in the dataset.
+**`outputs/param_stats/<model_pair>/per_layer.csv`**
+Aggregated statistics per layer.
+| Column | Description |
+| :--- | :--- |
+| `dW_fro_layer` | Root-sum-square of Frobenius norms in that layer ($\sqrt{\sum \|\Delta W_i\|_F^2}$). Like a "Layer Norm" for parameter changes. |
+| `mean_dW_stable_rank` | Average stable rank of changes in that layer. |
 
-**Interpretation:**
-*   If `mean_norm` drops significantly on the "Forget" set but stays same on "Retain", the unlearning was effective (the model is less confident/active on the target).
-*   If `mean_norm` explodes, the model might be broken (lobotomized).  
+---
+
+### 2. `collect_activation_norms.py`
+**Purpose**: Measures the magnitude or "confidence" of the model's internal representations on specific datasets.
+
+#### Data Sources
+*   **Forget Set (`data/forget.txt`)**: Generated (via `create_datasets.py`) from **WMDP-Bio**. These are questions about hazardous biological knowledge that we want the model to "forget".
+*   **Retain Set (`data/retain.txt`)**: Generated from **Wikitext-2**. These are general English texts that we want the model to preserve capabilities on.
+
+#### Outputs
+**`outputs/activation_norms/activation_norms.csv`**
+| Column | Description |
+| :--- | :--- |
+| `model` | The HF model ID or path |
+| `split` | Dataset split (`forget` or `retain`) |
+| `layer` | Layer index (0 to N) |
+| `mean_norm` | The average L2 norm of the hidden states in that layer: $\mathbb{E}[\sqrt{\sum h_i^2}]$ |
+
+#### Interpretation
+*   **Effective Unlearning**: You want `mean_norm` to **drop** on the `forget` split (less activation/confidence on hazardous topics) while staying **constant** on the `retain` split (general capabilities preserved).
+*   **Lobotomy**: If `mean_norm` drops to zero or explodes everywhere, the model is broken.
+
+---
+
+### 3. Plots
+The scripts in `plots/` visualize these CSVs.
+
+*   **Layer Locality (`layer_locality_*.png`)**:
+    *   *X-axis*: Layer Index. *Y-axis*: $\|\Delta W\|_F$ ( Magnitude of change).
+    *   **Use**: Identifies *where* the model changed. Did the fine-tuning affect early layers (features) or late layers (reasoning)?
+*   **Edit Dimensionality (`stable_rank_*.png`)**:
+    *   *X-axis*: Layer Index. *Y-axis*: Stable Rank.
+    *   **Use**: Identifies *how* the model changed. Low stable rank implies surgical edits; high implies general drift.
+*   **Activation Profiles (`activation_norms_*.png`)**:
+    *   *X-axis*: Layer Index. *Y-axis*: Mean Hidden State Norm.
+    *   **Use**: Compares signal propagation between models. Look for the "Unlearning Gap": where the unlearned model's curve dips below the baseline on the Forget set.  
