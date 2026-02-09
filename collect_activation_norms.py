@@ -18,26 +18,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-
-def resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        return "mps"
-    return "cpu"
-
-
-def resolve_dtype(dtype: str, device: str) -> torch.dtype:
-    if dtype == "auto":
-        if device == "cuda":
-            return torch.bfloat16
-        if device == "mps":
-            return torch.float16
-        return torch.float32
-    mapping = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
-    return mapping[dtype]
+from utils import resolve_device, resolve_dtype
 
 
 def read_lines(path: str, max_samples: int) -> List[str]:

@@ -11,12 +11,10 @@
 # ///
 
 import argparse
-import csv
 import gc
 import json
 import os
-import re
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Optional, Set
 
 import numpy as np
 import torch
@@ -25,15 +23,15 @@ from safetensors.torch import load_file as load_safetensors_file
 from safetensors import safe_open
 from huggingface_hub import snapshot_download
 
-
-# --- layer + coarse module parsing ---
-LAYER_PATTERNS = [
-    re.compile(r"\.layers\.(\d+)\."),
-    re.compile(r"\.h\.(\d+)\."),
-    re.compile(r"\.blocks\.(\d+)\."),
-]
-COARSE_ATTN_KEYS = ("attn", "attention", "self_attn")
-COARSE_MLP_KEYS = ("mlp", "ffn", "feed_forward", "intermediate")
+from utils import (
+    sanitize_filename,
+    resolve_device,
+    resolve_dtype,
+    extract_layer,
+    classify_coarse,
+    stable_rank,
+    write_csv,
+)
 
 
 class SmartLoader:
@@ -153,80 +151,7 @@ class SmartLoader:
         return tensor
 
 
-def resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        return "mps"
-    return "cpu"
 
-
-def resolve_dtype(dtype: str, device: str) -> torch.dtype:
-    if dtype == "auto":
-        if device == "cuda":
-            return torch.bfloat16
-        if device == "mps":
-            return torch.float16
-        return torch.float32
-    mapping = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
-    if dtype not in mapping:
-        raise ValueError(f"Unknown dtype '{dtype}'. Use auto|fp32|fp16|bf16")
-    return mapping[dtype]
-
-
-def extract_layer(param_name: str) -> Optional[int]:
-    for pat in LAYER_PATTERNS:
-        m = pat.search(param_name)
-        if m:
-            return int(m.group(1))
-    return None
-
-
-def classify_coarse(param_name: str) -> str:
-    s = param_name.lower()
-    if any(k in s for k in COARSE_ATTN_KEYS):
-        return "attn"
-    if any(k in s for k in COARSE_MLP_KEYS):
-        return "mlp"
-    return "other"
-
-
-def spectral_norm_power(A: torch.Tensor, iters: int = 5, eps: float = 1e-12) -> float:
-    m, n = A.shape
-    if m == 0 or n == 0:
-        return 0.0
-    v = torch.randn(n, 1, device=A.device, dtype=A.dtype)
-    v = v / (v.norm() + eps)
-    for _ in range(iters):
-        u = A @ v
-        u = u / (u.norm() + eps)
-        v = A.T @ u
-        v = v / (v.norm() + eps)
-    u = A @ v
-    return float(u.norm().item())
-
-
-def stable_rank(A: torch.Tensor, iters: int = 5) -> float:
-    if A.numel() == 0:
-        return 0.0
-    Af = A.float()
-    fro_sq = float((Af * Af).sum(dtype=torch.float64).item())
-    if fro_sq == 0.0:
-        return 0.0
-    spec = spectral_norm_power(Af, iters=iters)
-    if spec <= 0:
-        return 0.0
-    return fro_sq / (spec * spec)
-
-
-def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        w.writerows(rows)
 
 
 def main():
@@ -238,8 +163,6 @@ def main():
     ap.add_argument("--sr-iters", type=int, default=5)
     ap.add_argument("--outdir", default="outputs/param_stats")
     ap.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
-    # Ignored legacy args to prevent breaking scripts
-    ap.add_argument("--trust-remote-code", action="store_true")
     args = ap.parse_args()
 
     # Set seed for reproducibility (vital for Power Iteration stability)
@@ -330,8 +253,8 @@ def main():
         del dW
 
     # Write Output
-    out_a = re.sub(r"[^A-Za-z0-9_.-]+", "_", args.model_a)
-    out_b = re.sub(r"[^A-Za-z0-9_.-]+", "_", args.model_b)
+    out_a = sanitize_filename(args.model_a)
+    out_b = sanitize_filename(args.model_b)
     outdir = os.path.join(args.outdir, f"{out_a}__to__{out_b}")
     os.makedirs(outdir, exist_ok=True)
 
