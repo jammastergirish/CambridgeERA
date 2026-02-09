@@ -190,3 +190,81 @@ The scripts in `plots/` visualize the CSVs generated above:
         *   *X-axis*: Layer Index.
         *   *Y-axis*: Mean norm of activation difference ($\Delta h$).
         *   *Meaning*: Shows how much internal representations changed. High on Forget + Low on Retain = targeted unlearning.  
+
+---
+
+## 6. Unlearning Pipeline
+
+Run unlearning experiments with **10 different methods** via a single script. Includes automatic train/eval splitting and tqdm progress bars.
+
+### Available Methods
+
+#### Loss-based methods
+
+| Method | Description | Ref Model? | Key Args |
+|--------|-------------|:---:|----------|
+| `ga_simple` | **Pure Gradient Ascent** on forget set only | No | — |
+| `ga` | **Gradient Ascent** on forget + Gradient Descent on retain | No | — |
+| `grad_diff` | **Gradient Difference** — weighted forget/retain NLL | No | `--forget-weight` |
+| `dpo` | **Direct Preference Optimization** — forget=rejected, retain=chosen | Yes | `--beta` |
+| `npo` | **Negative Preference Optimization** — DPO-inspired | Yes | `--beta` |
+| `simnpo` | **Simple NPO** — reference-free variant of NPO | No | `--beta` |
+
+#### Representation-level methods
+
+| Method | Description | Ref Model? | Key Args |
+|--------|-------------|:---:|----------|
+| `rmu` | **Representation Misdirection** — MSE toward random targets | No | `--layer-id`, `--steering-coeff`, `--alpha` |
+| `cb` | **Circuit Breakers** — cosine-similarity rerouting | No | `--layer-id`, `--steering-coeff`, `--alpha` |
+| `lat` | **Latent Adversarial Training** — adversarial perturbation in hidden states | No | `--layer-id`, `--lat-eps`, `--lat-steps` |
+| `cb_lat` | **CB + LAT combined** — Circuit Breakers with adversarial robustness | No | all CB + LAT args |
+
+### Quick Start
+
+```bash
+# Run a single method (uses default model: EleutherAI/deep-ignorance-unfiltered)
+./run_unlearn.sh ga
+
+# Override defaults via environment variables
+DEVICE=mps EPOCHS=3 LR=2e-5 ./run_unlearn.sh npo
+
+# Or call the Python script directly
+uv run --script unlearn.py \
+  --model EleutherAI/deep-ignorance-unfiltered \
+  --method simnpo \
+  --outdir outputs/my_experiment/unlearned_model \
+  --device auto --dtype auto --epochs 1
+```
+
+### Evaluation Split
+
+By default, 10% of forget/retain data is held out for evaluation. After training, the script reports:
+- **forget_NLL** — should be high (model forgot hazardous knowledge)
+- **retain_NLL** — should be low (model still works on general text)
+- **gap** — bigger = better unlearning
+
+```bash
+# Custom eval split (20%)
+uv run --script unlearn.py --model ... --method ga --eval-split 0.2 --outdir ...
+
+# Disable eval split (use all data for training)
+uv run --script unlearn.py --model ... --method ga --eval-split 0 --outdir ...
+```
+
+### Output & Integration
+
+Unlearned models are saved to `outputs/<model>__<method>/unlearned_model/` and can be fed directly into the analysis pipeline as `--model-b`:
+
+```bash
+# Parameter stats: compare original vs. unlearned
+uv run --script collect_param_stats.py \
+  --model-a EleutherAI/deep-ignorance-unfiltered \
+  --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
+  --device auto --dtype auto --outdir outputs/EleutherAI_deep-ignorance-unfiltered__ga/param_stats
+
+# Activation norms: measure representation changes on forget vs. retain data
+uv run --script collect_activation_norms.py \
+  --model-a EleutherAI/deep-ignorance-unfiltered \
+  --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
+  --device auto --dtype auto --outdir outputs/EleutherAI_deep-ignorance-unfiltered__ga/activation_stats
+```

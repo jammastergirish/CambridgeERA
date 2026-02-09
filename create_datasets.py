@@ -7,6 +7,8 @@
 
 from datasets import load_dataset
 
+NUM_SAMPLES = 10000
+
 ds = load_dataset("cais/wmdp", "wmdp-bio", split="test")
 
 # Just take the questions/prompts
@@ -18,7 +20,7 @@ for ex in ds:
     elif "prompt" in ex:
         texts.append(ex["prompt"])
 
-texts = texts[:500]
+texts = texts[:NUM_SAMPLES]
 
 with open("data/forget.txt", "w") as f:
     for t in texts:
@@ -33,7 +35,7 @@ for ex in ds:
     if len(t) > 50:
         texts.append(t)
 
-texts = texts[:500]
+texts = texts[:NUM_SAMPLES]
 
 with open("data/retain.txt", "w") as f:
     for t in texts:
