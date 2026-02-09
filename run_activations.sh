@@ -10,19 +10,36 @@ if [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
   exit 0
 fi
 
-MODELS=(
-  "EleutherAI/deep-ignorance-unfiltered"
-  "EleutherAI/deep-ignorance-e2e-strong-filter"
-  "EleutherAI/deep-ignorance-unfiltered-cb-lat"
-)
-
 DEVICE="${DEVICE:-auto}"
 DTYPE="${DTYPE:-auto}"
 
+# Baseline model
+MODEL_A="EleutherAI/deep-ignorance-unfiltered"
+
+# Comparison 1: Base → Filtered
+MODEL_B="EleutherAI/deep-ignorance-e2e-strong-filter"
+COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-strong-filter"
+echo ""
+echo "===== Comparing: $MODEL_A -> $MODEL_B ====="
 uv run --script collect_activation_norms.py \
-  --models "${MODELS[@]}" \
+  --model-a "$MODEL_A" \
+  --model-b "$MODEL_B" \
   --forget-text "$FORGET" \
   --retain-text "$RETAIN" \
   --device "$DEVICE" \
   --dtype "$DTYPE" \
-  --outdir "${OUTROOT}/activation_norms"
+  --outdir "${OUTROOT}/${COMP1}/activation_stats"
+
+# Comparison 2: Base → Unlearned
+MODEL_B="EleutherAI/deep-ignorance-unfiltered-cb-lat"
+COMP2="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-unfiltered-cb-lat"
+echo ""
+echo "===== Comparing: $MODEL_A -> $MODEL_B ====="
+uv run --script collect_activation_norms.py \
+  --model-a "$MODEL_A" \
+  --model-b "$MODEL_B" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$DEVICE" \
+  --dtype "$DTYPE" \
+  --outdir "${OUTROOT}/${COMP2}/activation_stats"

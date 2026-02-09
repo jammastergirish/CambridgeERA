@@ -24,7 +24,6 @@ from safetensors import safe_open
 from huggingface_hub import snapshot_download
 
 from utils import (
-    sanitize_filename,
     resolve_device,
     resolve_dtype,
     extract_layer,
@@ -253,13 +252,10 @@ def main():
         del dW
 
     # Write Output
-    out_a = sanitize_filename(args.model_a)
-    out_b = sanitize_filename(args.model_b)
-    outdir = os.path.join(args.outdir, f"{out_a}__to__{out_b}")
-    os.makedirs(outdir, exist_ok=True)
+    os.makedirs(args.outdir, exist_ok=True)
 
     write_csv(
-        os.path.join(outdir, "per_matrix.csv"),
+        os.path.join(args.outdir, "per_matrix.csv"),
         rows,
         ["name", "layer", "group", "shape0", "shape1", "dW_fro", "dW_stable_rank", "W_stable_rank"],
     )
@@ -275,12 +271,12 @@ def main():
         })
 
     write_csv(
-        os.path.join(outdir, "per_layer.csv"),
+        os.path.join(args.outdir, "per_layer.csv"),
         layer_rows,
         ["layer", "group", "dW_fro_layer", "mean_dW_stable_rank", "count_mats"],
     )
 
-    print(f"Success. Wrote stats to: {outdir}")
+    print(f"Success. Wrote stats to: {args.outdir}")
 
 if __name__ == "__main__":
     main()

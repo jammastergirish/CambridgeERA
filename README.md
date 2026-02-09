@@ -33,14 +33,14 @@ Here is a detailed explanation of every file executed by `pipeline.sh`:
 *   **Models Compared**:
     1.  `deep-ignorance-unfiltered` vs `deep-ignorance-e2e-strong-filter`
     2.  `deep-ignorance-unfiltered` vs `deep-ignorance-unfiltered-cb-lat` (Unlearned)
-*   **Output**: Generates `outputs/param_stats/.../per_matrix.csv` (raw stats) and `per_layer.csv` (aggregated).
+*   **Output**: `outputs/<comparison>/param_stats/per_matrix.csv` and `per_layer.csv`
 
 ### 2. `plot_param_stats.sh`
 **Action**: Calls `plot_param_stats.py` to visualize the CSVs from step 1.
 *   **Plots Generated**:
     *   `layer_locality_*.png`: Magnitude of changes per layer (Frobenius norm).
     *   `stable_rank_*.png`: Complexity of changes per layer (Stable Rank).
-*   **Output Directory**: `plots/filtered/` and `plots/unlearned/`.
+*   **Output Directory**: `plots/<comparison>/param_plots/`
 
 ### 3. `create_datasets.py`
 **Action**: logic to download and filter raw datasets from HuggingFace (`cais/wmdp`, `wikitext`).
@@ -49,18 +49,23 @@ Here is a detailed explanation of every file executed by `pipeline.sh`:
 *   **Output**: `data/forget.txt`, `data/retain.txt`.
 
 ### 4. `run_activations.sh`
-**Action**: Runs `collect_activation_norms.py` on the models using the text files from step 3.
-*   **Metric**: Computes the average L2 norm of hidden states for every layer on both "Forget" and "Retain" data.
-*   **Output**: `outputs/activation_norms/activation_norms.csv`.
+**Action**: Runs `collect_activation_norms.py` for each model pair comparison.
+*   **Comparisons**:
+    1.  `deep-ignorance-unfiltered` → `deep-ignorance-e2e-strong-filter`
+    2.  `deep-ignorance-unfiltered` → `deep-ignorance-unfiltered-cb-lat`
+*   **Metrics Computed**:
+    *   **Absolute norms**: L2 norm of hidden states for each model.
+    *   **Activation diffs**: L1 and L2 norms of the hidden state difference ($\Delta h = h_{after} - h_{before}$).
+*   **Output**: `outputs/<comparison>/activation_stats/activation_stats.csv`
 
 ### 5. `plot_activation_norms.sh`
-**Action**: Calls `plot_activation_norms.py` to visualize signal strength.
-*   **Goal**: Show "Unlearning Gaps" where the model's response to hazardous info drops while general knowledge remains stable.
-*   **Output**: `plots/activations/activation_norms_*.png`.
+**Action**: Calls `plot_activation_norms.py` to visualize activation statistics.
+*   **Plots Generated**:
+    *   `activation_norms_*.png`: Compares model A vs model B absolute activation magnitude.
+    *   `activation_diffs_*.png`: Shows L1 and L2 norms of the activation difference.
+*   **Output**: `plots/<comparison>/activation_plots/`
 
 ---
-
-## Script Details
 
 ## Script Details & Technical Reference
 
@@ -83,7 +88,7 @@ Here is a detailed explanation of every file executed by `pipeline.sh`:
         *   **High Stable Rank**: The change is "blurry" or isotropic. The energy is spread out across many dimensions. This often indicates noise or a general "drift" in the weights.
 
 #### Outputs
-**`outputs/param_stats/<model_pair>/per_matrix.csv`**
+**`outputs/<comparison>/param_stats/per_matrix.csv`**
 Granular stats for every single weight matrix scaned.
 | Column | Description |
 | :--- | :--- |
@@ -96,7 +101,7 @@ Granular stats for every single weight matrix scaned.
 | `dW_stable_rank` | Stable rank of the difference: $r_{stable}(\Delta W)$ |
 | `W_stable_rank` | Stable rank of the original base weights: $r_{stable}(W)$ |
 
-**`outputs/param_stats/<model_pair>/per_layer.csv`**
+**`outputs/<comparison>/param_stats/per_layer.csv`**
 Aggregated statistics per layer.
 | Column | Description |
 | :--- | :--- |
@@ -109,29 +114,52 @@ Aggregated statistics per layer.
 ---
 
 ### 2. `collect_activation_norms.py`
-**Purpose**: Measures the magnitude or "confidence" of the model's internal representations on specific datasets.
+**Purpose**: Measures both absolute activation magnitudes and the difference in activations between model pairs on specific datasets.
+
+#### Key Concepts
+*   **Absolute Activation Norm ($\|h\|_2$)**:
+    *   The L2 norm of the hidden state vector at each position.
+    *   Measures the "signal strength" or "confidence" of the model's internal representation.
+*   **Activation Difference ($\Delta h = h_{after} - h_{before}$)**:
+    *   The difference in hidden states between two models on the **same input**.
+    *   Measures how much the model's internal representations *changed* due to fine-tuning/unlearning.
+*   **L1 vs L2 Norms of $\Delta h$**:
+    *   **L1 ($\|\Delta h\|_1$)**: Sum of absolute differences. Treats all dimensions equally.
+    *   **L2 ($\|\Delta h\|_2$)**: Euclidean distance. Penalizes large changes in individual dimensions.
+    *   If L1 >> L2 (relatively): changes are spread across many dimensions.
+    *   If L2 is large relative to L1: changes are concentrated in a few dimensions.
+
+#### Memory-Efficient Implementation
+The script uses **disk caching** to avoid loading two models simultaneously:
+1.  Run **model A** on all texts, cache hidden states to temp directory.
+2.  Run **model B**, load cached hidden states batch-by-batch, compute diffs.
+3.  Cleanup temp files.
 
 #### Data Sources
-*   **Forget Set (`data/forget.txt`)**: Generated (via `create_datasets.py`) from **WMDP-Bio**. These are questions about hazardous biological knowledge that we want the model to "forget".
-*   **Retain Set (`data/retain.txt`)**: Generated from **Wikitext-2**. These are general English texts that we want the model to preserve capabilities on.
+*   **Forget Set (`data/forget.txt`)**: Generated (via `create_datasets.py`) from **WMDP-Bio**. Hazardous biological knowledge to "forget".
+*   **Retain Set (`data/retain.txt`)**: Generated from **Wikitext-2**. General English to preserve capabilities.
 
 #### Outputs
-**`outputs/activation_norms/activation_norms.csv`**
+**`outputs/<comparison>/activation_stats/activation_stats.csv`**
 | Column | Description |
 | :--- | :--- |
-| `model` | The HF model ID or path |
-| `split` | Dataset split (`forget` or `retain`) |
 | `layer` | Layer index (0 to N) |
-| `mean_norm` | The average L2 norm of the hidden states in that layer: $\mathbb{E}[\sqrt{\sum h_i^2}]$ |
+| `split` | Dataset split (`forget` or `retain`) |
+| `model_a_norm_L2` | Mean L2 norm of hidden states for **model A** (baseline) |
+| `model_b_norm_L2` | Mean L2 norm of hidden states for **model B** (target) |
+| `mean_dh_L1` | Mean L1 norm of the activation difference: $\mathbb{E}[\|\Delta h\|_1]$ |
+| `mean_dh_L2` | Mean L2 norm of the activation difference: $\mathbb{E}[\|\Delta h\|_2]$ |
 
 #### Interpretation
-*   **Effective Unlearning**: You want `mean_norm` to **drop** on the `forget` split (less activation/confidence on hazardous topics) while staying **constant** on the `retain` split (general capabilities preserved).
-*   **Lobotomy**: If `mean_norm` drops to zero or explodes everywhere, the model is broken.
+*   **Effective Unlearning**:
+    *   On **`forget`** split: Large `mean_dh_L1`/`mean_dh_L2` → representations changed significantly (good!).
+    *   On **`retain`** split: Small `mean_dh_L1`/`mean_dh_L2` → representations stayed similar (good!).
+*   **Absolute norm comparison**: If `model_b_norm_L2` drops on forget but stays stable on retain, the model is selectively suppressing hazardous knowledge.
 
 ---
 
 ### 3. Plots
-The scripts in `plots/` visualize the CSVs generated above. Here is exactly where the data comes from:
+The scripts in `plots/` visualize the CSVs generated above:
 
 *   **Layer Locality (`layer_locality_*.png`)**
     *   **Source Data**: `per_layer.csv`
@@ -151,10 +179,18 @@ The scripts in `plots/` visualize the CSVs generated above. Here is exactly wher
             *   **~1.0**: Surgical, low-rank update (affects specific features).
             *   **High**: Broad, isotropic noise (affects all features).
 
-*   **Activation Profiles (`activation_norms_*.png`)**
-    *   **Source Data**: `activation_norms.csv`
-    *   **Column Plotted**: `mean_norm`
+*   **Activation Magnitude (`activation_norms_*.png`)**
+    *   **Source Data**: `activation_stats.csv`
+    *   **Columns Plotted**: `model_a_norm_L2`, `model_b_norm_L2`
     *   **Interpretation**:
         *   *X-axis*: Layer Index.
         *   *Y-axis*: Average L2 norm of hidden states.
-        *   *Meaning*: Shows signal propagation strength. "Unlearning" is successful if the curve **drops** for the Forget Set (Blue) but stays **stable** for the Retain Set (Orange).  
+        *   *Meaning*: Compares signal strength between models. Drop on Forget but stable on Retain = successful unlearning.
+
+*   **Activation Diffs (`activation_diffs_*.png`)**
+    *   **Source Data**: `activation_stats.csv`
+    *   **Columns Plotted**: `mean_dh_L1`, `mean_dh_L2`
+    *   **Interpretation**:
+        *   *X-axis*: Layer Index.
+        *   *Y-axis*: Mean norm of activation difference ($\Delta h$).
+        *   *Meaning*: Shows how much internal representations changed. High on Forget + Low on Retain = targeted unlearning.  
