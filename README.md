@@ -13,17 +13,6 @@ Run the full analysis pipeline (Data Generation → Parameter Stats → Activati
 
 ---
 
-## Quick Start
-
-Run the full analysis pipeline (Data Generation → Parameter Stats → Activations → Plotting):
-
-```bash
-./pipeline.sh
-```
-*Note: This script cleans the `outputs/` and `plots/` directories and runs all steps end-to-end.*
-
----
-
 ## Pipeline Breakdown
 
 Here is a detailed explanation of every file executed by `pipeline.sh`:
@@ -145,16 +134,23 @@ The script uses **disk caching** to avoid loading two models simultaneously:
 | :--- | :--- |
 | `layer` | Layer index (0 to N) |
 | `split` | Dataset split (`forget` or `retain`) |
-| `model_a_norm_L2` | Mean L2 norm of hidden states for **model A** (baseline) |
+| `model_a_norm_L1` | Mean L1 norm of hidden states for **model A** (baseline): $\mathbb{E}[\|h\|_1]$ |
+| `model_a_norm_L2` | Mean L2 norm of hidden states for **model A** (baseline): $\mathbb{E}[\|h\|_2]$ |
+| `model_b_norm_L1` | Mean L1 norm of hidden states for **model B** (target) |
 | `model_b_norm_L2` | Mean L2 norm of hidden states for **model B** (target) |
 | `mean_dh_L1` | Mean L1 norm of the activation difference: $\mathbb{E}[\|\Delta h\|_1]$ |
 | `mean_dh_L2` | Mean L2 norm of the activation difference: $\mathbb{E}[\|\Delta h\|_2]$ |
 
 #### Interpretation
+*   **L1 vs L2 norms**:
+    *   **L1** ($\|h\|_1 = \sum |h_i|$): Total activation mass across all dimensions. Treats every dimension equally.
+    *   **L2** ($\|h\|_2 = \sqrt{\sum h_i^2}$): Geometric magnitude. Dominated by the largest activations.
+    *   If L1 changes but L2 doesn't: the change is spread across many small dimensions.
+    *   If L2 changes but L1 doesn't: the change is concentrated in a few dominant features.
 *   **Effective Unlearning**:
     *   On **`forget`** split: Large `mean_dh_L1`/`mean_dh_L2` → representations changed significantly (good!).
     *   On **`retain`** split: Small `mean_dh_L1`/`mean_dh_L2` → representations stayed similar (good!).
-*   **Absolute norm comparison**: If `model_b_norm_L2` drops on forget but stays stable on retain, the model is selectively suppressing hazardous knowledge.
+*   **Absolute norm comparison**: If `model_b_norm_*` drops on forget but stays stable on retain, the model is selectively suppressing hazardous knowledge.
 
 ---
 
@@ -181,15 +177,15 @@ The scripts in `plots/` visualize the CSVs generated above:
 
 *   **Activation Magnitude (`activation_norms_*.png`)**
     *   **Source Data**: `activation_stats.csv`
-    *   **Columns Plotted**: `model_a_norm_L2`, `model_b_norm_L2`
+    *   **Columns Plotted**: L1 (left) and L2 (right) side-by-side, model A vs model B per panel
     *   **Interpretation**:
         *   *X-axis*: Layer Index.
-        *   *Y-axis*: Average L2 norm of hidden states.
+        *   *Y-axis*: Average norm of hidden states.
         *   *Meaning*: Compares signal strength between models. Drop on Forget but stable on Retain = successful unlearning.
 
 *   **Activation Diffs (`activation_diffs_*.png`)**
     *   **Source Data**: `activation_stats.csv`
-    *   **Columns Plotted**: `mean_dh_L1`, `mean_dh_L2`
+    *   **Columns Plotted**: `mean_dh_L1` (left), `mean_dh_L2` (right) side-by-side
     *   **Interpretation**:
         *   *X-axis*: Layer Index.
         *   *Y-axis*: Mean norm of activation difference ($\Delta h$).

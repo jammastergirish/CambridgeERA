@@ -31,6 +31,7 @@ def main():
         parts = csv_path.split(os.sep)
         activation_stats_idx = parts.index("activation_stats")
         comparison_name = parts[activation_stats_idx - 1]
+        title = comparison_name.replace("__to__", " → ").replace("_", "/")
 
         df = pd.read_csv(csv_path)
         df = df[df["layer"] != "ALL_MEAN"]
@@ -45,21 +46,31 @@ def main():
             if sub.empty:
                 continue
 
-            # Plot 1: Absolute norms comparison (model_a vs model_b)
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(sub["layer"], sub["model_a_norm_L2"], marker="o", linewidth=1.5, label="Model A (before)", color="tab:blue")
-            ax.plot(sub["layer"], sub["model_b_norm_L2"], marker="s", linewidth=1.5, label="Model B (after)", color="tab:orange")
-            ax.set_xlabel("Layer")
-            ax.set_ylabel(r"Mean $\|h\|_2$ per token")
-            ax.set_title(f"Activation Magnitude ({split})")
-            ax.legend()
-            ax.grid(alpha=0.3)
-            fig.suptitle(comparison_name.replace("__to__", " → ").replace("_", "/"), fontsize=11)
+            # Plot 1: Absolute norms — L1 and L2 side-by-side, model A vs model B
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+            ax1.plot(sub["layer"], sub["model_a_norm_L1"], marker="o", linewidth=1.5, label="Model A (before)", color="tab:blue")
+            ax1.plot(sub["layer"], sub["model_b_norm_L1"], marker="s", linewidth=1.5, label="Model B (after)", color="tab:orange")
+            ax1.set_xlabel("Layer")
+            ax1.set_ylabel(r"Mean $\|h\|_1$ per token")
+            ax1.set_title(f"$L_1$ Activation Magnitude ({split})")
+            ax1.legend()
+            ax1.grid(alpha=0.3)
+
+            ax2.plot(sub["layer"], sub["model_a_norm_L2"], marker="o", linewidth=1.5, label="Model A (before)", color="tab:blue")
+            ax2.plot(sub["layer"], sub["model_b_norm_L2"], marker="s", linewidth=1.5, label="Model B (after)", color="tab:orange")
+            ax2.set_xlabel("Layer")
+            ax2.set_ylabel(r"Mean $\|h\|_2$ per token")
+            ax2.set_title(f"$L_2$ Activation Magnitude ({split})")
+            ax2.legend()
+            ax2.grid(alpha=0.3)
+
+            fig.suptitle(title, fontsize=11)
             plt.tight_layout()
             plt.savefig(os.path.join(plot_outdir, f"activation_norms_{split}.png"))
             plt.close()
 
-            # Plot 2: Activation diffs (L1 and L2)
+            # Plot 2: Activation diffs — L1 and L2 side-by-side
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
             ax1.plot(sub["layer"], sub["mean_dh_L1"], marker="o", linewidth=1.5, color="tab:green")
@@ -74,7 +85,7 @@ def main():
             ax2.set_title(f"Activation Diff $L_2$ Norm ({split})")
             ax2.grid(alpha=0.3)
 
-            fig.suptitle(comparison_name.replace("__to__", " → ").replace("_", "/"), fontsize=11)
+            fig.suptitle(title, fontsize=11)
             plt.tight_layout()
             plt.savefig(os.path.join(plot_outdir, f"activation_diffs_{split}.png"))
             plt.close()

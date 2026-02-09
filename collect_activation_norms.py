@@ -41,7 +41,7 @@ def cache_hidden_states(
 ) -> Dict[str, List[float]]:
     """
     Run model on texts, cache hidden states to disk, and return absolute norms.
-    Returns dict with "mean_norm_L2" per layer.
+    Returns dict with "mean_norm_L1" and "mean_norm_L2" per layer.
     """
     tok = AutoTokenizer.from_pretrained(model_id, use_fast=True)
     if tok.pad_token is None:
@@ -56,6 +56,7 @@ def cache_hidden_states(
     model.to(device)
 
     # Accumulators for absolute norms
+    sum_L1 = None
     sum_L2 = None
     total_tokens = 0.0
 
@@ -69,7 +70,8 @@ def cache_hidden_states(
         if hs is None:
             raise RuntimeError("No hidden_states returned; cannot compute activation norms.")
 
-        if sum_L2 is None:
+        if sum_L1 is None:
+            sum_L1 = [0.0] * len(hs)
             sum_L2 = [0.0] * len(hs)
 
         mask = inp["attention_mask"].float()
@@ -78,7 +80,10 @@ def cache_hidden_states(
 
         # Compute absolute norms
         for layer_idx, h in enumerate(hs):
-            L2_norms = torch.linalg.vector_norm(h.float(), ord=2, dim=-1)  # [B, T]
+            hf = h.float()
+            L1_norms = hf.abs().sum(dim=-1)  # [B, T]
+            L2_norms = torch.linalg.vector_norm(hf, ord=2, dim=-1)  # [B, T]
+            sum_L1[layer_idx] += float((L1_norms * mask).sum().item())
             sum_L2[layer_idx] += float((L2_norms * mask).sum().item())
 
         # Save hidden states and mask for this batch (for diff computation later)
@@ -93,6 +98,7 @@ def cache_hidden_states(
     torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     return {
+        "mean_norm_L1": [s / total_tokens if total_tokens else 0.0 for s in sum_L1],
         "mean_norm_L2": [s / total_tokens if total_tokens else 0.0 for s in sum_L2],
         "num_layers": len(sum_L2),
     }
@@ -126,7 +132,8 @@ def compute_activation_diffs(
     model.to(device)
 
     # Accumulators
-    sum_abs_L2 = [0.0] * num_layers  # Absolute norms for model_b
+    sum_abs_L1 = [0.0] * num_layers  # Absolute L1 norms for model_b
+    sum_abs_L2 = [0.0] * num_layers  # Absolute L2 norms for model_b
     sum_diff_L1 = [0.0] * num_layers  # Diff L1 norms
     sum_diff_L2 = [0.0] * num_layers  # Diff L2 norms
     total_tokens = 0.0
@@ -158,7 +165,9 @@ def compute_activation_diffs(
             layer_mask = mask[:, :min_len]
 
             # Absolute norms for model_b
+            abs_L1 = h_b.abs().sum(dim=-1)
             abs_L2 = torch.linalg.vector_norm(h_b, ord=2, dim=-1)
+            sum_abs_L1[layer_idx] += float((abs_L1 * layer_mask).sum().item())
             sum_abs_L2[layer_idx] += float((abs_L2 * layer_mask).sum().item())
 
             # Diff norms
@@ -174,6 +183,7 @@ def compute_activation_diffs(
     torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     return {
+        "mean_norm_L1": [s / total_tokens if total_tokens else 0.0 for s in sum_abs_L1],
         "mean_norm_L2": [s / total_tokens if total_tokens else 0.0 for s in sum_abs_L2],
         "mean_dh_L1": [s / total_tokens if total_tokens else 0.0 for s in sum_diff_L1],
         "mean_dh_L2": [s / total_tokens if total_tokens else 0.0 for s in sum_diff_L2],
@@ -239,7 +249,9 @@ def main():
                 rows.append({
                     "layer": layer_idx,
                     "split": split_name,
+                    "model_a_norm_L1": result_a["mean_norm_L1"][layer_idx],
                     "model_a_norm_L2": result_a["mean_norm_L2"][layer_idx],
+                    "model_b_norm_L1": result_b["mean_norm_L1"][layer_idx],
                     "model_b_norm_L2": result_b["mean_norm_L2"][layer_idx],
                     "mean_dh_L1": result_b["mean_dh_L1"][layer_idx],
                     "mean_dh_L2": result_b["mean_dh_L2"][layer_idx],
@@ -249,7 +261,9 @@ def main():
             rows.append({
                 "layer": "ALL_MEAN",
                 "split": split_name,
+                "model_a_norm_L1": float(np.mean(result_a["mean_norm_L1"])),
                 "model_a_norm_L2": float(np.mean(result_a["mean_norm_L2"])),
+                "model_b_norm_L1": float(np.mean(result_b["mean_norm_L1"])),
                 "model_b_norm_L2": float(np.mean(result_b["mean_norm_L2"])),
                 "mean_dh_L1": float(np.mean(result_b["mean_dh_L1"])),
                 "mean_dh_L2": float(np.mean(result_b["mean_dh_L2"])),
@@ -262,7 +276,8 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     outpath = os.path.join(args.outdir, "activation_stats.csv")
-    write_csv(outpath, rows, ["layer", "split", "model_a_norm_L2", "model_b_norm_L2", "mean_dh_L1", "mean_dh_L2"])
+    fieldnames = ["layer", "split", "model_a_norm_L1", "model_a_norm_L2", "model_b_norm_L1", "model_b_norm_L2", "mean_dh_L1", "mean_dh_L2"]
+    write_csv(outpath, rows, fieldnames)
     print(f"\nWrote: {outpath}")
 
 
