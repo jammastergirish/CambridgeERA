@@ -94,8 +94,6 @@ def main():
     ap.add_argument("--outdir", default="outputs/activation_norms")
     args = ap.parse_args()
 
-    # If you don't want activations, just don't run this script.
-    # Also: fail gracefully if files missing.
     if not args.forget_text or not os.path.exists(args.forget_text):
         print("Skipping: forget-text missing/not found")
         return

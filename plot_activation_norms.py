@@ -39,7 +39,7 @@ def main():
             )
 
         plt.xlabel("Layer")
-        plt.ylabel("Mean hidden-state L2 norm")
+        plt.ylabel(r"Mean hidden-state $L_2$ norm")
         if split == "forget":
                 subtitle = "WMDP-Bio prompts (forget distribution)"
         else:
