@@ -106,7 +106,9 @@ def stable_rank(A: torch.Tensor, iters: int = 5) -> float:
 # --- I/O utilities ---
 def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
     """Write list of dicts to CSV, creating directories as needed."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    dirname = os.path.dirname(path)
+    if dirname:  # Only create directory if path has a directory component
+        os.makedirs(dirname, exist_ok=True)
     with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()

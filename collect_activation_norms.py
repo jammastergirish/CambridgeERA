@@ -38,6 +38,7 @@ def cache_hidden_states(
     dtype: torch.dtype,
     max_length: int,
     batch_size: int,
+    use_fp16_cache: bool = False,
 ) -> Dict[str, List[float]]:
     """
     Run model on texts, cache hidden states to disk, and return absolute norms.
@@ -87,10 +88,18 @@ def cache_hidden_states(
             sum_L2[layer_idx] += float((L2_norms * mask).sum().item())
 
         # Save hidden states and mask for this batch (for diff computation later)
-        batch_data = {
-            "hidden_states": [h.cpu() for h in hs],
-            "attention_mask": inp["attention_mask"].cpu(),
-        }
+        if use_fp16_cache:
+            # Use half precision to save disk space and I/O time
+            batch_data = {
+                "hidden_states": [h.cpu().half() for h in hs],  # Convert to fp16 for storage
+                "attention_mask": inp["attention_mask"].cpu(),
+            }
+        else:
+            # Keep full precision
+            batch_data = {
+                "hidden_states": [h.cpu() for h in hs],
+                "attention_mask": inp["attention_mask"].cpu(),
+            }
         torch.save(batch_data, os.path.join(cache_dir, f"batch_{batch_idx}.pt"))
 
     # Cleanup model from memory
@@ -191,7 +200,9 @@ def compute_activation_diffs(
 
 
 def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    dirname = os.path.dirname(path)
+    if dirname:  # Only create directory if path has a directory component
+        os.makedirs(dirname, exist_ok=True)
     with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
@@ -210,6 +221,8 @@ def main():
     ap.add_argument("--max-length", type=int, default=512)
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--outdir", default="outputs/activation_stats")
+    ap.add_argument("--cache-fp16", action="store_true",
+                    help="Use half-precision caching to reduce disk I/O (default: False)")
     args = ap.parse_args()
 
     if not args.forget_text or not os.path.exists(args.forget_text):
@@ -227,6 +240,13 @@ def main():
 
     rows = []
 
+    # Warn about caching mode for reproducibility
+    if args.cache_fp16:
+        print("[WARNING] Using FP16 caching - this reduces precision for faster I/O")
+        print("          For exact reproducibility, omit --cache-fp16")
+    else:
+        print("[INFO] Using full precision caching (default)")
+
     for split_name, texts in [("forget", forget), ("retain", retain)]:
         cache_dir = tempfile.mkdtemp(prefix="activation_cache_")
 
@@ -235,7 +255,7 @@ def main():
 
             # Step 1: Cache model_a hidden states + get absolute norms
             result_a = cache_hidden_states(
-                args.model_a, texts, cache_dir, device, dtype, args.max_length, args.batch_size
+                args.model_a, texts, cache_dir, device, dtype, args.max_length, args.batch_size, args.cache_fp16
             )
             num_layers = result_a["num_layers"]
 

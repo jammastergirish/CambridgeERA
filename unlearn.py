@@ -406,6 +406,8 @@ def lat_loss(
 
         if layers is None:
             # Fallback: just use GA loss
+            print(f"[WARNING] LAT: Could not find model layers structure. Falling back to gradient ascent loss.")
+            print(f"[WARNING] LAT: This may happen with non-standard model architectures.")
             return -nll_loss(model, forget_batch) + nll_loss(model, retain_batch)
 
         handle = layers[target_lid].register_forward_hook(make_hook(delta))
@@ -483,6 +485,8 @@ def cb_lat_loss(
 
     if layers is None:
         # Fallback to plain CB
+        print(f"[WARNING] CB-LAT: Could not find model layers structure. Falling back to plain Circuit Breakers.")
+        print(f"[WARNING] CB-LAT: This may happen with non-standard model architectures.")
         return cb_loss(model, forget_batch, retain_batch, layer_ids,
                        random_targets, retain_targets, steering_coeff, alpha)
 
@@ -549,6 +553,29 @@ def cb_lat_loss(
 
 
 # ===================================================================
+# Validation function
+# ===================================================================
+
+def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step, verbose=True):
+    """Run validation on held-out data and return metrics."""
+    if not eval_forget_batches or not eval_retain_batches:
+        return None
+
+    model.eval()
+    with torch.no_grad():
+        forget_nll = sum(nll_loss(model, b).item() for b in eval_forget_batches) / len(eval_forget_batches)
+        retain_nll = sum(nll_loss(model, b).item() for b in eval_retain_batches) / len(eval_retain_batches)
+    model.train()
+
+    gap = forget_nll - retain_nll
+
+    if verbose:
+        print(f"\n[VAL @ epoch {epoch+1}, step {step}]  forget_NLL={forget_nll:.4f}  retain_NLL={retain_nll:.4f}  gap={gap:.4f}")
+
+    return {"forget_nll": forget_nll, "retain_nll": retain_nll, "gap": gap}
+
+
+# ===================================================================
 # Main training loop
 # ===================================================================
 
@@ -587,6 +614,12 @@ def main():
     parser.add_argument("--eval-split", type=float, default=0.1,
                         help="Fraction of data to hold out for evaluation (0 to disable)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--grad-clip", type=float, default=1.0,
+                        help="Gradient clipping max norm (0 to disable)")
+    parser.add_argument("--grad-accum-steps", type=int, default=1,
+                        help="Gradient accumulation steps for effective larger batch size")
+    parser.add_argument("--eval-interval", type=int, default=0,
+                        help="Evaluate every N steps during training (0 to disable)")
     args = parser.parse_args()
 
     # ---- Setup ----
@@ -599,6 +632,14 @@ def main():
     print(f"[unlearn] method={args.method}  device={device}  dtype={pt_dtype}")
     print(f"[unlearn] model={args.model}")
     print(f"[unlearn] forget={args.forget_data}  retain={args.retain_data}")
+
+    # Log optimization settings for reproducibility
+    if args.grad_accum_steps > 1:
+        print(f"[unlearn] WARNING: Gradient accumulation enabled (steps={args.grad_accum_steps})")
+        print(f"[unlearn]          Effective batch size = {args.batch_size * args.grad_accum_steps}")
+        print(f"[unlearn]          This may affect convergence compared to true larger batch training")
+    if args.grad_clip == 0:
+        print(f"[unlearn] WARNING: Gradient clipping disabled - training may be less stable")
 
     # ---- Load tokenizer ----
     print("[unlearn] Loading tokenizer...")
@@ -682,6 +723,9 @@ def main():
         print(f"[unlearn] {args.method.upper()}: target layers={layer_ids}  (model has {n_layers})")
 
     if args.method in ("rmu", "cb", "cb_lat"):
+        if n_steps == 0:
+            sys.exit("[unlearn] ERROR: No training steps available (n_steps=0)")
+
         hidden_dim = model.config.hidden_size
 
         # Fixed random target vectors per layer
@@ -713,11 +757,17 @@ def main():
     for epoch in range(args.epochs):
         epoch_loss = 0.0
         pbar = tqdm(range(n_steps), desc=f"Epoch {epoch+1}/{args.epochs}", unit="step")
+
         for step_idx in pbar:
             fb = forget_batches[step_idx]
             rb = retain_batches[step_idx]
 
-            optimizer.zero_grad()
+            # Zero grad at accumulation boundaries (or every step if no accumulation)
+            if args.grad_accum_steps > 1:
+                if step_idx % args.grad_accum_steps == 0:
+                    optimizer.zero_grad()
+            else:
+                optimizer.zero_grad()
 
             if args.method == "ga_simple":
                 loss = ga_simple_loss(model, fb)
@@ -734,13 +784,13 @@ def main():
             elif args.method == "rmu":
                 loss = rmu_loss(
                     model, fb, rb, layer_ids,
-                    random_targets, retain_act_cache[step_idx],
+                    random_targets, retain_act_cache[step_idx % len(retain_act_cache)],
                     args.steering_coeff, args.alpha,
                 )
             elif args.method == "cb":
                 loss = cb_loss(
                     model, fb, rb, layer_ids,
-                    random_targets, retain_act_cache[step_idx],
+                    random_targets, retain_act_cache[step_idx % len(retain_act_cache)],
                     args.steering_coeff, args.alpha,
                 )
             elif args.method == "lat":
@@ -751,22 +801,45 @@ def main():
             elif args.method == "cb_lat":
                 loss = cb_lat_loss(
                     model, fb, rb, layer_ids,
-                    random_targets, retain_act_cache[step_idx],
+                    random_targets, retain_act_cache[step_idx % len(retain_act_cache)],
                     args.steering_coeff, args.alpha,
                     args.lat_eps, args.lat_steps,
                 )
             else:
                 raise ValueError(f"Unknown method: {args.method}")
 
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-            scheduler.step()
+            # Handle gradient accumulation if enabled
+            if args.grad_accum_steps > 1:
+                # Scale loss for gradient accumulation
+                loss = loss / args.grad_accum_steps
+                loss.backward()
 
-            epoch_loss += loss.item()
+                # Step optimizer only at accumulation boundaries or last step
+                if (step_idx + 1) % args.grad_accum_steps == 0 or step_idx == n_steps - 1:
+                    if args.grad_clip > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip)
+                    optimizer.step()
+                    scheduler.step()
+
+                epoch_loss += loss.item() * args.grad_accum_steps  # Unscale for logging
+            else:
+                # Standard training without accumulation
+                loss.backward()
+                if args.grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip)
+                optimizer.step()
+                scheduler.step()
+
+                epoch_loss += loss.item()
             global_step += 1
             avg = epoch_loss / (step_idx + 1)
-            pbar.set_postfix(loss=f"{loss.item():.4f}", avg=f"{avg:.4f}", lr=f"{scheduler.get_last_lr()[0]:.2e}")
+            # Display unscaled loss for consistency
+            display_loss = loss.item() * args.grad_accum_steps if args.grad_accum_steps > 1 else loss.item()
+            pbar.set_postfix(loss=f"{display_loss:.4f}", avg=f"{avg:.4f}", lr=f"{scheduler.get_last_lr()[0]:.2e}")
+
+            # Periodic validation
+            if args.eval_interval > 0 and global_step % args.eval_interval == 0:
+                run_validation(model, eval_forget_batches, eval_retain_batches, epoch, global_step)
 
         avg_epoch = epoch_loss / max(n_steps, 1)
         print(f"  → epoch {epoch+1} done.  avg_loss={avg_epoch:.4f}\n")
