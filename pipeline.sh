@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-clear
+clear && printf '\e[3J'
 rm -rf outputs plots
 
 # Configuration

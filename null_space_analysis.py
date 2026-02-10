@@ -171,11 +171,13 @@ def main():
     # Save results
     os.makedirs(args.outdir, exist_ok=True)
 
-    write_csv(
-        os.path.join(args.outdir, "null_space_results.csv"),
-        results,
-        list(results[0].keys()) if results else [],
-    )
+    if results:
+        fieldnames = list(results[0].keys())
+        write_csv(
+            os.path.join(args.outdir, "null_space_results.csv"),
+            results,
+            fieldnames,
+        )
 
     # Create visualizations
     if mlp_results["null_space"] or attn_results["null_space"]:
