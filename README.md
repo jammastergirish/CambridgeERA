@@ -218,55 +218,91 @@ Before running experiments, check your setup:
 python check_experiment.py  # Runs sanity checks for common issues
 ```
 
-Run the full analysis pipeline (Data Generation → Parameter Stats → Activations → Plotting):
+Run the full analysis pipeline (Data Generation → Parameter Stats → Activations → Plotting → Advanced Analyses):
 
 ```bash
 ./pipeline.sh
 ```
-*Note: This script cleans the `outputs/` and `plots/` directories and runs all steps end-to-end.*
+
+*Note: This consolidated script cleans the `outputs/` and `plots/` directories and runs all steps end-to-end.*
+
+**Environment Variables for Customization:**
+```bash
+# Use different devices/precision for different stages
+PARAM_DEVICE=cpu ACTIVATION_DEVICE=cuda ./pipeline.sh
+
+# Custom output directories
+OUTROOT=my_outputs PLOTROOT=my_plots ./pipeline.sh
+
+# Override data paths
+FORGET_TEXT=custom_forget.txt RETAIN_TEXT=custom_retain.txt ./pipeline.sh
+```
 
 ---
 
 ## Pipeline Breakdown
 
-Here is a detailed explanation of every file executed by `pipeline.sh`:
+The consolidated `pipeline.sh` script executes the following steps in sequence:
 
-### 1. `run_params_local.sh`
+### Step 1: Parameter Statistics Collection
 **Action**: Runs `collect_param_stats.py` twice to compare the baseline model against two variations.
 *   **Models Compared**:
-    1.  `deep-ignorance-unfiltered` vs `deep-ignorance-e2e-strong-filter`
-    2.  `deep-ignorance-unfiltered` vs `deep-ignorance-unfiltered-cb-lat` (Unlearned)
+    1.  `deep-ignorance-unfiltered` vs `deep-ignorance-e2e-strong-filter` (COMP1)
+    2.  `deep-ignorance-unfiltered` vs `deep-ignorance-unfiltered-cb-lat` (COMP2)
 *   **Output**: `outputs/<comparison>/param_stats/per_matrix.csv` and `per_layer.csv`
+*   **Device/Dtype**: Uses `PARAM_DEVICE` and `PARAM_DTYPE` (default: cpu/fp16 for Mac safety)
 
-### 2. `plot_param_stats.sh`
-**Action**: Calls `plot_param_stats.py` to visualize the CSVs from step 1.
+### Step 2: Plot Parameter Statistics
+**Action**: Calls `plot_param_stats.py` to visualize the CSVs from Step 1.
 *   **Plots Generated**:
     *   `layer_locality_*.png`: Magnitude of changes per layer (Frobenius norm).
     *   `stable_rank_*.png`: Complexity of changes per layer (Stable Rank).
+    *   `empirical_rank_*.png`: Discrete dimensionality of changes (Empirical Rank).
+    *   `rank_comparison_*.png`: Side-by-side comparison of stable vs empirical ranks.
 *   **Output Directory**: `plots/<comparison>/param_plots/`
 
-### 3. `create_datasets.py`
+### Step 3: Generate Test Datasets
+**Script**: `create_datasets.py`
 **Action**: logic to download and filter raw datasets from HuggingFace (`cais/wmdp`, `wikitext`).
 *   **Forget Set**: 500 questions from WMDP-Bio (Hazardous Bio knowledge).
 *   **Retain Set**: 500 generic samples from Wikitext-2 (General capabilities).
 *   **Output**: `data/forget.txt`, `data/retain.txt`.
 
-### 4. `run_activations.sh`
-**Action**: Runs `collect_activation_norms.py` for each model pair comparison.
-*   **Comparisons**:
-    1.  `deep-ignorance-unfiltered` → `deep-ignorance-e2e-strong-filter`
-    2.  `deep-ignorance-unfiltered` → `deep-ignorance-unfiltered-cb-lat`
+### Step 4: Activation Analysis
+**Script**: `collect_activation_norms.py` for each model pair comparison.
+*   **Device/Dtype**: Uses `ACTIVATION_DEVICE` and `ACTIVATION_DTYPE` (default: auto/auto)
 *   **Metrics Computed**:
     *   **Absolute norms**: L2 norm of hidden states for each model.
     *   **Activation diffs**: L1 and L2 norms of the hidden state difference ($\Delta h = h_{after} - h_{before}$).
 *   **Output**: `outputs/<comparison>/activation_stats/activation_stats.csv`
 
-### 5. `plot_activation_norms.sh`
-**Action**: Calls `plot_activation_norms.py` to visualize activation statistics.
+### Step 5: Plot Activation Norms
+**Script**: `plot_activation_norms.py` to visualize activation statistics.
 *   **Plots Generated**:
     *   `activation_norms_*.png`: Compares model A vs model B absolute activation magnitude.
     *   `activation_diffs_*.png`: Shows L1 and L2 norms of the activation difference.
 *   **Output**: `plots/<comparison>/activation_plots/`
+
+### Step 6: MLP vs Attention Analysis
+**Script**: `analyze_mlp_vs_attn.py`
+**Action**: Compares MLP vs attention weight changes inspired by safety fine-tuning research.
+*   **Analyses**:
+    *   Magnitude comparison: Which component changes more?
+    *   Ratio plots: MLP/Attention change ratios per layer.
+    *   Rank structure: How concentrated are changes in each component?
+*   **Key Finding**: Safety fine-tuning often "minimally transforms MLP weights" (per recent research).
+*   **Output**: `outputs/<comparison>/mlp_attn_analysis/`
+
+### Step 7: Null Space & Subspace Analysis
+**Script**: `null_space_analysis.py`
+**Action**: Analyzes the geometry of weight changes and subspace alignment.
+*   **Metrics**:
+    *   **Concentration**: How many singular values capture most variance?
+    *   **Subspace Alignment**: Grassmann distance between original and fine-tuned weight spaces.
+    *   **Component Comparison**: MLP vs attention null space properties.
+*   **Interpretation**: Low-rank, concentrated changes suggest "surgical" edits that preserve model structure.
+*   **Output**: `outputs/<comparison>/null_space_analysis/`
+*   **Note**: Computationally intensive due to SVD calculations on weight matrices
 
 ---
 
@@ -289,6 +325,13 @@ Here is a detailed explanation of every file executed by `pipeline.sh`:
     *   **Interpretation**: A proxy for the "effective rank" of the matrix.
         *   **Low Stable Rank ($\approx 1$)**: The change is "spiky" or "rank-1". All the energy is concentrated in one specific direction (singular vector). This often indicates a precise, surgical edit.
         *   **High Stable Rank**: The change is "blurry" or isotropic. The energy is spread out across many dimensions. This often indicates noise or a general "drift" in the weights.
+*   **Empirical Rank ($r_{empirical}$)**:
+    *   **Formula**: Number of singular values needed to capture a threshold (default 99%) of total variance.
+    *   **Computation**: $r_{empirical} = \min\{k : \sum_{i=1}^k \sigma_i^2 \geq 0.99 \cdot \sum_{i=1}^n \sigma_i^2\}$
+    *   **Interpretation**: A discrete measure of effective dimensionality.
+        *   **Low Empirical Rank**: Changes are concentrated in few principal components.
+        *   **High Empirical Rank**: Changes span many dimensions.
+    *   **vs Stable Rank**: While stable rank gives a continuous measure, empirical rank tells you exactly how many dimensions capture most of the change.
 
 #### Outputs
 **`outputs/<comparison>/param_stats/per_matrix.csv`**
@@ -303,6 +346,8 @@ Granular stats for every single weight matrix scaned.
 | `dW_fro` | Frobenius norm of the difference: $\|\Delta W\|_F$ |
 | `dW_stable_rank` | Stable rank of the difference: $r_{stable}(\Delta W)$ |
 | `W_stable_rank` | Stable rank of the original base weights: $r_{stable}(W)$ |
+| `dW_empirical_rank` | Empirical rank of the difference: Number of SVs for 99% variance |
+| `W_empirical_rank` | Empirical rank of the original weights |
 
 **`outputs/<comparison>/param_stats/per_layer.csv`**
 Aggregated statistics per layer.
@@ -312,6 +357,7 @@ Aggregated statistics per layer.
 | `group` | Coarse grouping (`attn` vs `mlp`) |
 | `dW_fro_layer` | Root-sum-square of Frobenius norms in that layer ($\sqrt{\sum \|\Delta W_i\|_F^2}$). Like a "Layer Norm" for parameter changes. |
 | `mean_dW_stable_rank` | Average stable rank of changes in that layer. |
+| `mean_dW_empirical_rank` | Average empirical rank of changes in that layer. |
 | `count_mats` | Number of parameter matrices aggregated in this group/layer. |
 
 ---
@@ -388,6 +434,17 @@ The scripts in `plots/` visualize the CSVs generated above:
         *   *Meaning*: Shows **complexity** of the change.
             *   **~1.0**: Surgical, low-rank update (affects specific features).
             *   **High**: Broad, isotropic noise (affects all features).
+
+*   **Empirical Rank (`empirical_rank_*.png`)** (New)
+    *   **Source Data**: `per_layer.csv`
+    *   **Column Plotted**: `mean_dW_empirical_rank`
+    *   **Interpretation**:
+        *   Shows discrete number of dimensions needed to capture 99% of variance.
+        *   Complements stable rank with an interpretable "effective dimensionality".
+
+*   **Rank Comparison (`rank_comparison_*.png`)** (New)
+    *   **Dual y-axis plot** comparing stable rank (continuous) vs empirical rank (discrete).
+    *   **Interpretation**: When both ranks are low, changes are highly concentrated.
 
 *   **Activation Magnitude (`activation_norms_*.png`)**
     *   **Source Data**: `activation_stats.csv`
