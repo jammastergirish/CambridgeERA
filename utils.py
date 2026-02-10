@@ -103,6 +103,49 @@ def stable_rank(A: torch.Tensor, iters: int = 5) -> float:
     return fro_sq / (spec * spec)
 
 
+def empirical_rank(A: torch.Tensor, threshold: float = 0.99) -> int:
+    """
+    Compute empirical rank as the number of singular values needed to
+    capture 'threshold' fraction of total variance (sum of squared singular values).
+
+    Args:
+        A: Input matrix
+        threshold: Fraction of variance to capture (default 0.99)
+
+    Returns:
+        Number of singular values needed to capture threshold of variance
+    """
+    if A.numel() == 0:
+        return 0
+
+    # Compute SVD (we only need singular values)
+    # Use float32 for memory efficiency
+    Af = A.float()
+    try:
+        # torch.linalg.svdvals is more efficient when we only need singular values
+        s = torch.linalg.svdvals(Af)
+    except:
+        # Fallback to standard SVD if svdvals not available
+        _, s, _ = torch.linalg.svd(Af, full_matrices=False)
+
+    # Compute squared singular values (these represent variance)
+    s_squared = s * s
+    total_variance = s_squared.sum().item()
+
+    if total_variance == 0.0:
+        return 0
+
+    # Find how many singular values we need to capture threshold of variance
+    cumsum = torch.cumsum(s_squared, dim=0)
+    threshold_variance = threshold * total_variance
+
+    # Find first index where cumsum exceeds threshold
+    rank = torch.searchsorted(cumsum, threshold_variance).item() + 1
+
+    # Ensure rank doesn't exceed matrix dimensions
+    return min(rank, min(A.shape))
+
+
 # --- I/O utilities ---
 def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
     """Write list of dicts to CSV, creating directories as needed."""

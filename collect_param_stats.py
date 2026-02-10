@@ -29,6 +29,7 @@ from utils import (
     extract_layer,
     classify_coarse,
     stable_rank,
+    empirical_rank,
     write_csv,
 )
 
@@ -160,6 +161,8 @@ def main():
     ap.add_argument("--device", default="auto")
     ap.add_argument("--dtype", default="auto")
     ap.add_argument("--sr-iters", type=int, default=5)
+    ap.add_argument("--empirical-threshold", type=float, default=0.99,
+                     help="Threshold for empirical rank (fraction of variance to capture, default: 0.99)")
     ap.add_argument("--outdir", default="outputs/param_stats")
     ap.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
     args = ap.parse_args()
@@ -227,6 +230,8 @@ def main():
         dW_fro = float(dW.float().norm().item())
         dW_sr = stable_rank(dW, iters=args.sr_iters)
         W_sr = stable_rank(Wa, iters=args.sr_iters)
+        dW_er = empirical_rank(dW, threshold=args.empirical_threshold)
+        W_er = empirical_rank(Wa, threshold=args.empirical_threshold)
 
         rows.append({
             "name": name,
@@ -237,13 +242,16 @@ def main():
             "dW_fro": dW_fro,
             "dW_stable_rank": dW_sr,
             "W_stable_rank": W_sr,
+            "dW_empirical_rank": dW_er,
+            "W_empirical_rank": W_er,
         })
 
         if layer is not None:
             key = (layer, group)
-            st = per_layer.setdefault(key, {"sum_dW_fro_sq": 0.0, "sum_dW_sr": 0.0, "count": 0})
+            st = per_layer.setdefault(key, {"sum_dW_fro_sq": 0.0, "sum_dW_sr": 0.0, "sum_dW_er": 0.0, "count": 0})
             st["sum_dW_fro_sq"] += dW_fro * dW_fro
             st["sum_dW_sr"] += dW_sr
+            st["sum_dW_er"] += dW_er
             st["count"] += 1
             
         # Explicit delete to aid GC in loop
@@ -257,7 +265,7 @@ def main():
     write_csv(
         os.path.join(args.outdir, "per_matrix.csv"),
         rows,
-        ["name", "layer", "group", "shape0", "shape1", "dW_fro", "dW_stable_rank", "W_stable_rank"],
+        ["name", "layer", "group", "shape0", "shape1", "dW_fro", "dW_stable_rank", "W_stable_rank", "dW_empirical_rank", "W_empirical_rank"],
     )
 
     layer_rows = []
@@ -267,13 +275,14 @@ def main():
             "group": group,
             "dW_fro_layer": float(np.sqrt(st["sum_dW_fro_sq"])),
             "mean_dW_stable_rank": st["sum_dW_sr"] / max(st["count"], 1),
+            "mean_dW_empirical_rank": st["sum_dW_er"] / max(st["count"], 1),
             "count_mats": st["count"],
         })
 
     write_csv(
         os.path.join(args.outdir, "per_layer.csv"),
         layer_rows,
-        ["layer", "group", "dW_fro_layer", "mean_dW_stable_rank", "count_mats"],
+        ["layer", "group", "dW_fro_layer", "mean_dW_stable_rank", "mean_dW_empirical_rank", "count_mats"],
     )
 
     print(f"Success. Wrote stats to: {args.outdir}")
