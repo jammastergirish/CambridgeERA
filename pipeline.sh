@@ -43,222 +43,221 @@ echo "Comparison 1: -> $FILTERED"
 echo "Comparison 2: -> $UNLEARNED"
 echo ""
 
-# ============================================
-# STEP 1: Parameter Statistics
-# ============================================
-echo "=========================================="
-echo "STEP 1: Collecting Parameter Statistics"
-echo "=========================================="
+# # ============================================
+# # STEP 1: Parameter Statistics
+# # ============================================
+# echo "=========================================="
+# echo "STEP 1: Collecting Parameter Statistics"
+# echo "=========================================="
 
-echo ""
-echo "Comparison 1: Base → Filtered"
-echo "----------------------------------------"
-uv run collect_param_stats.py \
-  --model-a "$BASE" \
-  --model-b "$FILTERED" \
-  --device "$PARAM_DEVICE" \
-  --dtype "$PARAM_DTYPE" \
-  --outdir "${OUTROOT}/${COMP1}/param_stats"
+# echo ""
+# echo "Comparison 1: Base → Filtered"
+# echo "----------------------------------------"
+# uv run collect_param_stats.py \
+#   --model-a "$BASE" \
+#   --model-b "$FILTERED" \
+#   --device "$PARAM_DEVICE" \
+#   --dtype "$PARAM_DTYPE" \
+#   --outdir "${OUTROOT}/${COMP1}/param_stats"
 
-echo ""
-echo "Comparison 2: Base → Unlearned"
-echo "----------------------------------------"
-uv run collect_param_stats.py \
-  --model-a "$BASE" \
-  --model-b "$UNLEARNED" \
-  --device "$PARAM_DEVICE" \
-  --dtype "$PARAM_DTYPE" \
-  --outdir "${OUTROOT}/${COMP2}/param_stats"
+# echo ""
+# echo "Comparison 2: Base → Unlearned"
+# echo "----------------------------------------"
+# uv run collect_param_stats.py \
+#   --model-a "$BASE" \
+#   --model-b "$UNLEARNED" \
+#   --device "$PARAM_DEVICE" \
+#   --dtype "$PARAM_DTYPE" \
+#   --outdir "${OUTROOT}/${COMP2}/param_stats"
 
-# ============================================
-# STEP 2: Plot Parameter Statistics
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 2: Plotting Parameter Statistics"
-echo "=========================================="
+# # ============================================
+# # STEP 2: Plot Parameter Statistics
+# # ============================================
+# echo ""
+# echo "=========================================="
+# echo "STEP 2: Plotting Parameter Statistics"
+# echo "=========================================="
 
-echo ""
-echo "Plotting Comparison 1..."
-uv run plot_param_stats.py \
-  --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_layer.csv" \
-  --outdir "${PLOTROOT}/${COMP1}/param_plots" \
-  --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-e2e-strong-filter"
+# echo ""
+# echo "Plotting Comparison 1..."
+# uv run plot_param_stats.py \
+#   --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_layer.csv" \
+#   --outdir "${PLOTROOT}/${COMP1}/param_plots" \
+#   --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-e2e-strong-filter"
 
-echo ""
-echo "Plotting Comparison 2..."
-uv run plot_param_stats.py \
-  --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
-  --outdir "${PLOTROOT}/${COMP2}/param_plots" \
-  --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-unfiltered-cb-lat"
+# echo ""
+# echo "Plotting Comparison 2..."
+# uv run plot_param_stats.py \
+#   --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
+#   --outdir "${PLOTROOT}/${COMP2}/param_plots" \
+#   --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-unfiltered-cb-lat"
 
-# ============================================
-# STEP 3: Generate Test Datasets
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 3: Generating Test Datasets"
-echo "=========================================="
-uv run create_datasets.py
+# # ============================================
+# # STEP 3: Generate Test Datasets
+# # ============================================
+# echo ""
+# echo "=========================================="
+# echo "STEP 3: Generating Test Datasets"
+# echo "=========================================="
+# uv run create_datasets.py
 
-# ============================================
-# STEP 4: Activation Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 4: Collecting Activation Norms"
-echo "=========================================="
+# # ============================================
+# # STEP 4: Activation Analysis
+# # ============================================
+# echo ""
+# echo "=========================================="
+# echo "STEP 4: Collecting Activation Norms"
+# echo "=========================================="
 
-if [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
-  echo "Warning: Activation files missing; skipping activation analysis."
-else
-  echo ""
-  echo "Comparison 1: Base → Filtered"
-  echo "----------------------------------------"
-  uv run collect_activation_norms.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/activation_stats"
+# if [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
+#   echo "Warning: Activation files missing; skipping activation analysis."
+# else
+#   echo ""
+#   echo "Comparison 1: Base → Filtered"
+#   echo "----------------------------------------"
+#   uv run collect_activation_norms.py \
+#     --model-a "$BASE" \
+#     --model-b "$FILTERED" \
+#     --forget-text "$FORGET" \
+#     --retain-text "$RETAIN" \
+#     --device "$ACTIVATION_DEVICE" \
+#     --dtype "$ACTIVATION_DTYPE" \
+#     --outdir "${OUTROOT}/${COMP1}/activation_stats"
 
-  echo ""
-  echo "Comparison 2: Base → Unlearned"
-  echo "----------------------------------------"
-  uv run collect_activation_norms.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/activation_stats"
-fi
+#   echo ""
+#   echo "Comparison 2: Base → Unlearned"
+#   echo "----------------------------------------"
+#   uv run collect_activation_norms.py \
+#     --model-a "$BASE" \
+#     --model-b "$UNLEARNED" \
+#     --forget-text "$FORGET" \
+#     --retain-text "$RETAIN" \
+#     --device "$ACTIVATION_DEVICE" \
+#     --dtype "$ACTIVATION_DTYPE" \
+#     --outdir "${OUTROOT}/${COMP2}/activation_stats"
+# fi
 
-# ============================================
-# STEP 5: Plot Activation Norms
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 5: Plotting Activation Norms"
-echo "=========================================="
-uv run plot_activation_norms.py \
-  --indir "$OUTROOT" \
-  --outdir "$PLOTROOT"
+# # ============================================
+# # STEP 5: Plot Activation Norms
+# # ============================================
+# echo ""
+# echo "=========================================="
+# echo "STEP 5: Plotting Activation Norms"
+# echo "=========================================="
+# uv run plot_activation_norms.py \
+#   --indir "$OUTROOT" \
+#   --outdir "$PLOTROOT"
 
-# ============================================
-# STEP 6: MLP vs Attention Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 6: MLP vs Attention Analysis"
-echo "=========================================="
+# # ============================================
+# # STEP 6: MLP vs Attention Analysis
+# # ============================================
+# echo ""
+# echo "=========================================="
+# echo "STEP 6: MLP vs Attention Analysis"
+# echo "=========================================="
 
-echo ""
-echo "Analyzing Comparison 1..."
-uv run analyze_mlp_vs_attn.py \
-  --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_layer.csv" \
-  --per-matrix-csv "${OUTROOT}/${COMP1}/param_stats/per_matrix.csv" \
-  --outdir "${OUTROOT}/${COMP1}/mlp_attn_analysis" \
-  --title "E2E Strong Filter: MLP vs Attention"
+# echo ""
+# echo "Analyzing Comparison 1..."
+# uv run analyze_mlp_vs_attn.py \
+#   --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_layer.csv" \
+#   --per-matrix-csv "${OUTROOT}/${COMP1}/param_stats/per_matrix.csv" \
+#   --outdir "${OUTROOT}/${COMP1}/mlp_attn_analysis" \
+#   --title "E2E Strong Filter: MLP vs Attention"
 
-echo ""
-echo "Analyzing Comparison 2..."
-uv run analyze_mlp_vs_attn.py \
-  --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
-  --per-matrix-csv "${OUTROOT}/${COMP2}/param_stats/per_matrix.csv" \
-  --outdir "${OUTROOT}/${COMP2}/mlp_attn_analysis" \
-  --title "CB-LAT: MLP vs Attention"
+# echo ""
+# echo "Analyzing Comparison 2..."
+# uv run analyze_mlp_vs_attn.py \
+#   --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
+#   --per-matrix-csv "${OUTROOT}/${COMP2}/param_stats/per_matrix.csv" \
+#   --outdir "${OUTROOT}/${COMP2}/mlp_attn_analysis" \
+#   --title "CB-LAT: MLP vs Attention"
 
-# ============================================
-# STEP 7: Null Space & Subspace Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 7: Null Space & Subspace Analysis"
-echo "=========================================="
-echo "Note: This is computationally intensive (SVD on 50 weight matrices)"
+# # ============================================
+# # STEP 7: Null Space & Subspace Analysis
+# # ============================================
+# echo ""
+# echo "=========================================="
+# echo "STEP 7: Null Space & Subspace Analysis"
+# echo "=========================================="
+# echo "Note: This is computationally intensive (SVD on 50 weight matrices)"
 
-echo ""
-echo "Analyzing Comparison 1..."
-uv run null_space_analysis.py \
-  --model-a "$BASE" \
-  --model-b "$FILTERED" \
-  --outdir "${OUTROOT}/${COMP1}/null_space_analysis" \
-  --num-samples 50
+# echo ""
+# echo "Analyzing Comparison 1..."
+# uv run null_space_analysis.py \
+#   --model-a "$BASE" \
+#   --model-b "$FILTERED" \
+#   --outdir "${OUTROOT}/${COMP1}/null_space_analysis" \
+#   --num-samples 50
 
-echo ""
-echo "Analyzing Comparison 2..."
-uv run null_space_analysis.py \
-  --model-a "$BASE" \
-  --model-b "$UNLEARNED" \
-  --outdir "${OUTROOT}/${COMP2}/null_space_analysis" \
-  --num-samples 50
+# echo ""
+# echo "Analyzing Comparison 2..."
+# uv run null_space_analysis.py \
+#   --model-a "$BASE" \
+#   --model-b "$UNLEARNED" \
+#   --outdir "${OUTROOT}/${COMP2}/null_space_analysis" \
+#   --num-samples 50
 
-# ============================================
-# STEP 8: Activation Separation Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 8: Activation Separation Analysis"
-echo "=========================================="
-echo "Analyzing how well forget/retain activations are separated..."
+# # ============================================
+# # STEP 8: Activation Separation Analysis
+# # ============================================
+# echo ""
+# echo "=========================================="
+# echo "STEP 8: Activation Separation Analysis"
+# echo "=========================================="
+# echo "Analyzing how well forget/retain activations are separated..."
 
-echo ""
-echo "Analyzing Comparison 1..."
-uv run activation_separation_analysis.py \
-  --model-a "$BASE" \
-  --model-b "$FILTERED" \
-  --forget-text "$FORGET" \
-  --retain-text "$RETAIN" \
-  # --device "$ACTIVATION_DEVICE" \
-  .--device "cpu" \
-  --dtype "$ACTIVATION_DTYPE" \
-  --outdir "${OUTROOT}/${COMP1}/activation_separation"
+# echo ""
+# echo "Analyzing Comparison 1..."
+# uv run activation_separation_analysis.py \
+#   --model-a "$BASE" \
+#   --model-b "$FILTERED" \
+#   --forget-text "$FORGET" \
+#   --retain-text "$RETAIN" \
+#   --device "$ACTIVATION_DEVICE" \
+#   --dtype "$ACTIVATION_DTYPE" \
+#   --outdir "${OUTROOT}/${COMP1}/activation_separation"
 
-echo ""
-echo "Analyzing Comparison 2..."
-uv run activation_separation_analysis.py \
-  --model-a "$BASE" \
-  --model-b "$UNLEARNED" \
-  --forget-text "$FORGET" \
-  --retain-text "$RETAIN" \
-  --device "$ACTIVATION_DEVICE" \
-  --dtype "$ACTIVATION_DTYPE" \
-  --outdir "${OUTROOT}/${COMP2}/activation_separation"
+# echo ""
+# echo "Analyzing Comparison 2..."
+# uv run activation_separation_analysis.py \
+#   --model-a "$BASE" \
+#   --model-b "$UNLEARNED" \
+#   --forget-text "$FORGET" \
+#   --retain-text "$RETAIN" \
+#   --device "$ACTIVATION_DEVICE" \
+#   --dtype "$ACTIVATION_DTYPE" \
+#   --outdir "${OUTROOT}/${COMP2}/activation_separation"
 
-# ============================================
-# STEP 9: Activation Covariance Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 9: Activation Covariance Analysis"
-echo "=========================================="
-echo "Analyzing covariance spectrum changes..."
+# # ============================================
+# # STEP 9: Activation Covariance Analysis
+# # ============================================
+# echo ""
+# echo "=========================================="
+# echo "STEP 9: Activation Covariance Analysis"
+# echo "=========================================="
+# echo "Analyzing covariance spectrum changes..."
 
-echo ""
-echo "Analyzing Comparison 1..."
-uv run activation_covariance_analysis.py \
-  --model-a "$BASE" \
-  --model-b "$FILTERED" \
-  --forget-text "$FORGET" \
-  --retain-text "$RETAIN" \
-  --device "$ACTIVATION_DEVICE" \
-  --dtype "$ACTIVATION_DTYPE" \
-  --outdir "${OUTROOT}/${COMP1}/activation_covariance"
+# echo ""
+# echo "Analyzing Comparison 1..."
+# uv run activation_covariance_analysis.py \
+#   --model-a "$BASE" \
+#   --model-b "$FILTERED" \
+#   --forget-text "$FORGET" \
+#   --retain-text "$RETAIN" \
+#   --device "$ACTIVATION_DEVICE" \
+#   --dtype "$ACTIVATION_DTYPE" \
+#   --outdir "${OUTROOT}/${COMP1}/activation_covariance"
 
-echo ""
-echo "Analyzing Comparison 2..."
-uv run activation_covariance_analysis.py \
-  --model-a "$BASE" \
-  --model-b "$UNLEARNED" \
-  --forget-text "$FORGET" \
-  --retain-text "$RETAIN" \
-  --device "$ACTIVATION_DEVICE" \
-  --dtype "$ACTIVATION_DTYPE" \
-  --outdir "${OUTROOT}/${COMP2}/activation_covariance"
+# echo ""
+# echo "Analyzing Comparison 2..."
+# uv run activation_covariance_analysis.py \
+#   --model-a "$BASE" \
+#   --model-b "$UNLEARNED" \
+#   --forget-text "$FORGET" \
+#   --retain-text "$RETAIN" \
+#   --device "$ACTIVATION_DEVICE" \
+#   --dtype "$ACTIVATION_DTYPE" \
+#   --outdir "${OUTROOT}/${COMP2}/activation_covariance"
 
 # ============================================
 # STEP 10: MLP Nullspace Alignment

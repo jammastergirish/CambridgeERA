@@ -90,8 +90,6 @@ These are aggregated per layer and split into **MLP vs Attention** groups, then 
 
 **Why this matters:** If unlearning produces low-rank, localized updates (small ‖ΔW‖_F concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The stable rank quantifies this precisely — it's the "soft" version of matrix rank, robust to noise.
 
-> Think of stable rank like the participation ratio in physics: it measures how many degrees of freedom meaningfully contribute to the perturbation, not just whether they're technically nonzero.
-
 ---
 
 #### Step 6: MLP vs Attention Breakdown (`analyze_mlp_vs_attn.py`)
@@ -131,13 +129,11 @@ Decomposes each MLP update ΔW into components that lie in the **column space** 
 
 **Why this matters:** If unlearning updates are primarily in the nullspace, the model's existing computations are barely disturbed — the "unlearned" knowledge may still flow through the same channels, just with a small additive correction that's easy to remove. True knowledge erasure should require on-manifold changes that destroy the original computation.
 
-> This is analogous to perturbation theory in physics: a perturbation in the null space of the Hamiltonian doesn't change the energy eigenvalues to first order.
-
 ---
 
 ### Activation-Space Diagnostics
 
-These run the model on actual text and measure *what it computes*, not just what its parameters look like.
+These run the model on actual text and measure *what it computes*, not just what its parameters look like. All activation scripts cap input at `--max-samples 500` texts per split by default to keep runtimes manageable (override with e.g. `--max-samples 1000` for more statistical power).
 
 #### Steps 4–5: Activation Norms (`collect_activation_norms.py` + `plot_activation_norms.py`)
 
@@ -181,8 +177,6 @@ A key output is the **selectivity ratio**: (Wasserstein distance on forget text)
 
 **Why this matters:** This captures something the norms miss — two distributions can have identical norms but completely different *shapes*. If filtering fundamentally restructures the covariance (high Wasserstein, changed effective rank) while unlearning barely disturbs it, that's evidence the representations aren't actually changing.
 
-> This is directly analogous to comparing the covariance ellipsoids of two multivariate Gaussians — same mean and trace (norm) but different eigenstructure.
-
 ---
 
 #### Step 11: Row Space Projection (`row_space_projection_analysis.py`)
@@ -210,8 +204,6 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 | Retain text stays **similar** | Intervention didn't damage general capabilities |
 
 **Why this matters:** A model that becomes rougher on forget text hasn't *learned to not know* something — it's in an unstable regime where small pushes (fine-tuning) can tip it back. Smoothness changes are a direct indicator of whether the loss landscape around forget-domain inputs is fundamentally reshaped or just locally perturbed.
-
-> The Lipschitz constant is essentially the operator norm of the Jacobian — it bounds how much output change you get per unit input change. In physics terms, it's the gain or sensitivity of the system.
 
 ---
 

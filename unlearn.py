@@ -866,6 +866,8 @@ def main():
     model.save_pretrained(args.outdir)
     tokenizer.save_pretrained(args.outdir)
     print("[unlearn] Done ✓")
+    print("[unlearn] ===================================================================")
+    print("[unlearn] ===================================================================")
 
 
 if __name__ == "__main__":

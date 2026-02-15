@@ -186,6 +186,8 @@ def main():
     ap.add_argument("--dtype", default="auto")
     ap.add_argument("--batch-size", type=int, default=4)
     ap.add_argument("--max-length", type=int, default=512)
+    ap.add_argument("--max-samples", type=int, default=500,
+                   help="Max texts per split to process (default: 500)")
     ap.add_argument("--layers-to-analyze", type=str, default=None,
                    help="Comma-separated layer indices (default: every 4th layer)")
     ap.add_argument("--outdir", default="outputs/row_space_projection")
@@ -205,7 +207,13 @@ def main():
     with open(args.retain_text, "r") as f:
         retain_texts = [line.strip() for line in f if line.strip()][:200]
 
-    print(f"[row_space_projection] Loaded {len(forget_texts)} forget texts, {len(retain_texts)} retain texts")
+    # Cap sample count
+    if len(forget_texts) > args.max_samples:
+        forget_texts = forget_texts[:args.max_samples]
+    if len(retain_texts) > args.max_samples:
+        retain_texts = retain_texts[:args.max_samples]
+
+    print(f"[row_space_projection] Loaded {len(forget_texts)} forget texts, {len(retain_texts)} retain texts (max-samples={args.max_samples})")
 
     # Load tokenizer and models
     print(f"[row_space_projection] Loading models...")

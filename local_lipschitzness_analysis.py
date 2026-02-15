@@ -174,6 +174,8 @@ def main():
     ap.add_argument("--num-perturbations", type=int, default=10,
                    help="Number of perturbations for variance estimation")
     ap.add_argument("--max-length", type=int, default=512)
+    ap.add_argument("--max-samples", type=int, default=500,
+                   help="Max texts per split to process (default: 500)")
     ap.add_argument("--outdir", default="outputs/lipschitzness_analysis")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
@@ -191,7 +193,13 @@ def main():
     with open(args.retain_text, "r") as f:
         retain_texts = [line.strip() for line in f if line.strip()]
 
-    print(f"[local_lipschitz] Loaded {len(forget_texts)} forget texts, {len(retain_texts)} retain texts")
+    # Cap sample count
+    if len(forget_texts) > args.max_samples:
+        forget_texts = forget_texts[:args.max_samples]
+    if len(retain_texts) > args.max_samples:
+        retain_texts = retain_texts[:args.max_samples]
+
+    print(f"[local_lipschitz] Loaded {len(forget_texts)} forget texts, {len(retain_texts)} retain texts (max-samples={args.max_samples})")
 
     # Load models
     print(f"[local_lipschitz] Loading models...")

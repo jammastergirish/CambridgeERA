@@ -37,32 +37,30 @@ def compute_nullspace_alignment(W_orig, dW, rank_threshold=0.99):
     if W_orig.ndim != 2 or dW.ndim != 2:
         return None
 
-    # Convert to numpy
-    W_np = W_orig.cpu().float().numpy()
-    dW_np = dW.cpu().float().numpy()
+    # Keep on device (GPU if available), cast to float32 for numerical stability
+    W = W_orig.float()
+    dW_f = dW.float()
 
-    # Compute SVD of original weights
-    U, s, Vt = np.linalg.svd(W_np, full_matrices=True)
+    # Compute SVD of original weights (need full U for nullspace projection)
+    U, s, Vt = torch.linalg.svd(W, full_matrices=True)
 
     # Find effective rank (for nullspace boundary)
     s_squared = s * s
-    total_var = np.sum(s_squared)
+    total_var = s_squared.sum().item()
     if total_var == 0:
         return None
 
-    cumsum = np.cumsum(s_squared)
-    effective_rank = np.searchsorted(cumsum, rank_threshold * total_var) + 1
+    cumsum = torch.cumsum(s_squared, dim=0)
+    effective_rank = int(torch.searchsorted(cumsum, rank_threshold * total_var).item()) + 1
     effective_rank = min(effective_rank, len(s))
 
     # Split into column space and approximate nullspace
-    # U[:, :effective_rank] spans the effective column space
-    # U[:, effective_rank:] spans the approximate nullspace
-    n_rows, n_cols = W_np.shape
+    n_rows, n_cols = W.shape
 
     if effective_rank >= min(n_rows, n_cols):
         # Full rank - no nullspace
         nullspace_dim = 0
-        colspace_proj_norm = np.linalg.norm(dW_np, 'fro')
+        colspace_proj_norm = float(dW_f.norm().item())
         nullspace_proj_norm = 0.0
     else:
         # Project dW onto column space and nullspace
@@ -70,17 +68,17 @@ def compute_nullspace_alignment(W_orig, dW, rank_threshold=0.99):
         U_nullspace = U[:, effective_rank:]
 
         # Project update onto column space
-        dW_colspace = U_colspace @ (U_colspace.T @ dW_np)
-        colspace_proj_norm = np.linalg.norm(dW_colspace, 'fro')
+        dW_colspace = U_colspace @ (U_colspace.T @ dW_f)
+        colspace_proj_norm = float(dW_colspace.norm().item())
 
         # Project update onto nullspace
-        dW_nullspace = U_nullspace @ (U_nullspace.T @ dW_np)
-        nullspace_proj_norm = np.linalg.norm(dW_nullspace, 'fro')
+        dW_nullspace = U_nullspace @ (U_nullspace.T @ dW_f)
+        nullspace_proj_norm = float(dW_nullspace.norm().item())
 
         nullspace_dim = U_nullspace.shape[1]
 
     # Total update norm
-    total_norm = np.linalg.norm(dW_np, 'fro')
+    total_norm = float(dW_f.norm().item())
 
     # Compute alignment ratios
     if total_norm > 0:
@@ -91,24 +89,24 @@ def compute_nullspace_alignment(W_orig, dW, rank_threshold=0.99):
         nullspace_ratio = 0.0
 
     # Also analyze row space (for decoder/output matrices)
-    Ur, sr, Vtr = np.linalg.svd(W_np.T, full_matrices=True)
+    sr = torch.linalg.svdvals(W.T)
     sr_squared = sr * sr
-    total_var_r = np.sum(sr_squared)
+    total_var_r = sr_squared.sum().item()
     if total_var_r > 0:
-        cumsum_r = np.cumsum(sr_squared)
-        effective_rank_r = np.searchsorted(cumsum_r, rank_threshold * total_var_r) + 1
+        cumsum_r = torch.cumsum(sr_squared, dim=0)
+        effective_rank_r = int(torch.searchsorted(cumsum_r, rank_threshold * total_var_r).item()) + 1
         effective_rank_r = min(effective_rank_r, len(sr))
     else:
         effective_rank_r = 0
 
     # Compute rank change
-    W_new = W_np + dW_np
-    _, s_new, _ = np.linalg.svd(W_new, full_matrices=False)
+    W_new = W + dW_f
+    s_new = torch.linalg.svdvals(W_new)
     s_new_squared = s_new * s_new
-    total_var_new = np.sum(s_new_squared)
+    total_var_new = s_new_squared.sum().item()
     if total_var_new > 0:
-        cumsum_new = np.cumsum(s_new_squared)
-        effective_rank_new = np.searchsorted(cumsum_new, rank_threshold * total_var_new) + 1
+        cumsum_new = torch.cumsum(s_new_squared, dim=0)
+        effective_rank_new = int(torch.searchsorted(cumsum_new, rank_threshold * total_var_new).item()) + 1
     else:
         effective_rank_new = 0
 
@@ -120,8 +118,8 @@ def compute_nullspace_alignment(W_orig, dW, rank_threshold=0.99):
         "nullspace_projection_ratio": float(nullspace_ratio),
         "nullspace_dimension": int(nullspace_dim),
         "update_norm": float(total_norm),
-        "original_norm": float(np.linalg.norm(W_np, 'fro')),
-        "relative_update_size": float(total_norm / (np.linalg.norm(W_np, 'fro') + 1e-10)),
+        "original_norm": float(W.norm().item()),
+        "relative_update_size": float(total_norm / (W.norm().item() + 1e-10)),
     }
 
 

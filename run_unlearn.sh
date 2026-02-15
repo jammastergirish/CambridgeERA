@@ -22,21 +22,21 @@ METHOD="${1:?Usage: $0 <ga_simple|ga|grad_diff|dpo|npo|simnpo|rmu|cb|lat|cb_lat>
 BASE="${BASE:-EleutherAI/deep-ignorance-unfiltered}"
 DEVICE="${DEVICE:-auto}"
 DTYPE="${DTYPE:-auto}"
-OUTROOT="${OUTROOT:-outputs}"
+OUTROOT="${OUTROOT:-unlearned_models}"
 
 # Build comparison folder name
 SAFE_BASE="${BASE//\//_}"
 COMP="${SAFE_BASE}__${METHOD}"
 
 echo "=== Unlearning: method=${METHOD}  model=${BASE} ==="
-echo "=== Output: ${OUTROOT}/${COMP}/unlearned_model ==="
+echo "=== Output: ${OUTROOT}/${COMP} ==="
 
 uv run --script unlearn.py \
   --model "$BASE" \
   --method "$METHOD" \
   --forget-data data/forget.txt \
   --retain-data data/retain.txt \
-  --outdir "${OUTROOT}/${COMP}/unlearned_model" \
+  --outdir "${OUTROOT}/${COMP}" \
   --device "$DEVICE" \
   --dtype "$DTYPE" \
   ${LR:+--lr "$LR"} \
