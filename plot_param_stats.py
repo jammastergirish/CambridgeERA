@@ -21,11 +21,14 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     df = pd.read_csv(args.per_layer_csv)
+    print(f"[plot_param_stats] Loaded {len(df)} rows from {args.per_layer_csv}")
 
     for group in ["attn", "mlp"]:
         sub = df[df["group"] == group].sort_values("layer")
         if sub.empty:
             continue
+
+        print(f"[plot_param_stats] Generating plots for {group.upper()} group ({len(sub)} layers)...")
 
         # ---- Plot A: Frobenius norm (layer locality) ----
         plt.figure(figsize=(8, 5))
@@ -88,7 +91,7 @@ def main():
             plt.savefig(os.path.join(args.outdir, f"rank_comparison_{group}.png"))
             plt.close()
 
-    print(f"Plots written to {args.outdir}")
+    print(f"[plot_param_stats] ✓ All plots written to {args.outdir}")
 
 if __name__ == "__main__":
     main()

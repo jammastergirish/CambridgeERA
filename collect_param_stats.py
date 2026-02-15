@@ -161,6 +161,8 @@ def main():
     ap.add_argument("--device", default="auto")
     ap.add_argument("--dtype", default="auto")
     ap.add_argument("--sr-iters", type=int, default=5)
+    ap.add_argument("--empirical-rank", action="store_true", default=False,
+                     help="Compute empirical rank via full SVD (slow, off by default)")
     ap.add_argument("--empirical-threshold", type=float, default=0.99,
                      help="Threshold for empirical rank (fraction of variance to capture, default: 0.99)")
     ap.add_argument("--outdir", default="outputs/param_stats")
@@ -176,9 +178,10 @@ def main():
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
 
-    print(f"Initializing SmartLoaders (Streaming Mode)...")
-    print(f"  Model A: {args.model_a}")
-    print(f"  Model B: {args.model_b}")
+    print(f"[collect_param_stats] Initializing SmartLoaders (streaming mode)")
+    print(f"  Model A (baseline) : {args.model_a}")
+    print(f"  Model B (target)   : {args.model_b}")
+    print(f"  Device: {device}  |  Dtype: {dtype}")
 
     try:
         loader_a = SmartLoader(args.model_a)
@@ -204,9 +207,9 @@ def main():
     rows = []
     per_layer = {}
 
-    print(f"Scanning {len(linear_names)} potential weight matrices...")
+    print(f"[collect_param_stats] Scanning {len(linear_names)} weight matrices for Frobenius norm, stable rank & empirical rank...")
     
-    for name in tqdm(linear_names, desc="Processing"):
+    for name in tqdm(linear_names, desc="Comparing weight matrices", unit="matrix"):
         # Load A
         Wa = loader_a.get_param(name, device, dtype)
         if Wa is None or Wa.ndim != 2:
@@ -230,10 +233,8 @@ def main():
         dW_fro = float(dW.float().norm().item())
         dW_sr = stable_rank(dW, iters=args.sr_iters)
         W_sr = stable_rank(Wa, iters=args.sr_iters)
-        dW_er = empirical_rank(dW, threshold=args.empirical_threshold)
-        W_er = empirical_rank(Wa, threshold=args.empirical_threshold)
 
-        rows.append({
+        row = {
             "name": name,
             "layer": layer if layer is not None else -1,
             "group": group,
@@ -242,16 +243,26 @@ def main():
             "dW_fro": dW_fro,
             "dW_stable_rank": dW_sr,
             "W_stable_rank": W_sr,
-            "dW_empirical_rank": dW_er,
-            "W_empirical_rank": W_er,
-        })
+        }
+
+        if args.empirical_rank:
+            dW_er = empirical_rank(dW, threshold=args.empirical_threshold)
+            W_er = empirical_rank(Wa, threshold=args.empirical_threshold)
+            row["dW_empirical_rank"] = dW_er
+            row["W_empirical_rank"] = W_er
+
+        rows.append(row)
 
         if layer is not None:
             key = (layer, group)
-            st = per_layer.setdefault(key, {"sum_dW_fro_sq": 0.0, "sum_dW_sr": 0.0, "sum_dW_er": 0.0, "count": 0})
+            defaults = {"sum_dW_fro_sq": 0.0, "sum_dW_sr": 0.0, "count": 0}
+            if args.empirical_rank:
+                defaults["sum_dW_er"] = 0.0
+            st = per_layer.setdefault(key, defaults)
             st["sum_dW_fro_sq"] += dW_fro * dW_fro
             st["sum_dW_sr"] += dW_sr
-            st["sum_dW_er"] += dW_er
+            if args.empirical_rank:
+                st["sum_dW_er"] += dW_er
             st["count"] += 1
             
         # Explicit delete to aid GC in loop
@@ -262,30 +273,38 @@ def main():
     # Write Output
     os.makedirs(args.outdir, exist_ok=True)
 
+    per_matrix_fields = ["name", "layer", "group", "shape0", "shape1", "dW_fro", "dW_stable_rank", "W_stable_rank"]
+    if args.empirical_rank:
+        per_matrix_fields += ["dW_empirical_rank", "W_empirical_rank"]
     write_csv(
         os.path.join(args.outdir, "per_matrix.csv"),
         rows,
-        ["name", "layer", "group", "shape0", "shape1", "dW_fro", "dW_stable_rank", "W_stable_rank", "dW_empirical_rank", "W_empirical_rank"],
+        per_matrix_fields,
     )
 
     layer_rows = []
     for (layer, group), st in sorted(per_layer.items(), key=lambda x: (x[0][0], x[0][1])):
-        layer_rows.append({
+        row = {
             "layer": layer,
             "group": group,
             "dW_fro_layer": float(np.sqrt(st["sum_dW_fro_sq"])),
             "mean_dW_stable_rank": st["sum_dW_sr"] / max(st["count"], 1),
-            "mean_dW_empirical_rank": st["sum_dW_er"] / max(st["count"], 1),
             "count_mats": st["count"],
-        })
+        }
+        if args.empirical_rank:
+            row["mean_dW_empirical_rank"] = st["sum_dW_er"] / max(st["count"], 1)
+        layer_rows.append(row)
 
+    per_layer_fields = ["layer", "group", "dW_fro_layer", "mean_dW_stable_rank", "count_mats"]
+    if args.empirical_rank:
+        per_layer_fields.insert(-1, "mean_dW_empirical_rank")
     write_csv(
         os.path.join(args.outdir, "per_layer.csv"),
         layer_rows,
-        ["layer", "group", "dW_fro_layer", "mean_dW_stable_rank", "mean_dW_empirical_rank", "count_mats"],
+        per_layer_fields,
     )
 
-    print(f"Success. Wrote stats to: {args.outdir}")
+    print(f"[collect_param_stats] ✓ Wrote {len(rows)} per-matrix rows and {len(layer_rows)} per-layer rows to {args.outdir}")
 
 if __name__ == "__main__":
     main()

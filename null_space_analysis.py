@@ -14,10 +14,9 @@ import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.linalg import null_space
 from tqdm import tqdm
 
-from utils import resolve_device, resolve_dtype, write_csv
+from utils import resolve_device, resolve_dtype, write_csv, classify_coarse
 from collect_param_stats import SmartLoader
 
 
@@ -27,31 +26,40 @@ def compute_null_space_projection(dW: torch.Tensor, rank_threshold: float = 0.99
     This helps understand if changes are "orthogonal" to the original function.
     """
     if dW.numel() == 0 or dW.ndim != 2:
-        return {"null_proj_ratio": 0.0, "effective_rank": 0}
+        return {
+            "null_proj_ratio": 0.0,
+            "effective_rank": 0,
+            "top10_variance_ratio": 0.0,
+            "max_singular_value": 0.0,
+            "singular_value_decay": 1.0,
+        }
 
-    # Convert to numpy for null space computation
-    dW_np = dW.cpu().float().numpy()
-
-    # Compute SVD of difference matrix
-    U, s, Vt = np.linalg.svd(dW_np, full_matrices=False)
+    # Compute singular values on device (GPU if available)
+    s = torch.linalg.svdvals(dW.float())
 
     # Find effective rank (how many singular values capture threshold of variance)
     s_squared = s * s
-    total_var = np.sum(s_squared)
+    total_var = s_squared.sum().item()
     if total_var == 0:
-        return {"null_proj_ratio": 0.0, "effective_rank": 0}
+        return {
+            "null_proj_ratio": 0.0,
+            "effective_rank": 0,
+            "top10_variance_ratio": 0.0,
+            "max_singular_value": 0.0,
+            "singular_value_decay": 1.0,
+        }
 
-    cumsum = np.cumsum(s_squared)
-    effective_rank = np.searchsorted(cumsum, rank_threshold * total_var) + 1
+    cumsum = torch.cumsum(s_squared, dim=0)
+    effective_rank = int(torch.searchsorted(cumsum, rank_threshold * total_var).item()) + 1
 
     # Compute how concentrated the changes are in top singular vectors
-    top_k_variance = cumsum[min(10, len(s)-1)] / total_var if len(s) > 0 else 0
+    top_k_variance = float(cumsum[min(9, len(s)-1)].item() / total_var) if len(s) > 0 else 0
 
     return {
-        "effective_rank": int(effective_rank),
-        "top10_variance_ratio": float(top_k_variance),
-        "max_singular_value": float(s[0]) if len(s) > 0 else 0,
-        "singular_value_decay": float(s[min(10, len(s)-1)] / (s[0] + 1e-10)) if len(s) > 10 else 1.0,
+        "effective_rank": effective_rank,
+        "top10_variance_ratio": top_k_variance,
+        "max_singular_value": float(s[0].item()) if len(s) > 0 else 0,
+        "singular_value_decay": float((s[min(10, len(s)-1)] / (s[0] + 1e-10)).item()) if len(s) > 10 else 1.0,
     }
 
 
@@ -62,35 +70,30 @@ def analyze_subspace_alignment(Wa: torch.Tensor, Wb: torch.Tensor, k: int = 20) 
     if Wa.numel() == 0 or Wa.ndim != 2:
         return {}
 
-    # Get top-k singular vectors for both matrices
-    Wa_np = Wa.cpu().float().numpy()
-    Wb_np = Wb.cpu().float().numpy()
-
-    # SVD to get principal subspaces
-    Ua, sa, _ = np.linalg.svd(Wa_np, full_matrices=False)
-    Ub, sb, _ = np.linalg.svd(Wb_np, full_matrices=False)
+    # SVD on device (GPU if available) — only need left singular vectors
+    Ua, sa, _ = torch.linalg.svd(Wa.float(), full_matrices=False)
+    Ub, sb, _ = torch.linalg.svd(Wb.float(), full_matrices=False)
 
     k = min(k, Ua.shape[1], Ub.shape[1])
 
     # Compute subspace alignment (Grassmann distance)
-    # This measures how aligned the top-k subspaces are
     Ua_k = Ua[:, :k]
     Ub_k = Ub[:, :k]
 
     # Compute alignment matrix
     M = Ua_k.T @ Ub_k
-    alignment_singular_values = np.linalg.svd(M, compute_uv=False)
+    alignment_singular_values = torch.linalg.svdvals(M)
 
     # Average alignment (higher = more aligned)
-    avg_alignment = np.mean(alignment_singular_values)
+    avg_alignment = float(alignment_singular_values.mean().item())
 
     # Grassmann distance
-    grassmann_dist = np.sqrt(max(0, k - np.sum(alignment_singular_values**2)))
+    grassmann_dist = float(torch.sqrt(torch.clamp(k - (alignment_singular_values**2).sum(), min=0)).item())
 
     return {
-        "subspace_alignment": float(avg_alignment),
-        "grassmann_distance": float(grassmann_dist),
-        "singular_value_ratio": float(sb[0] / (sa[0] + 1e-10)) if len(sa) > 0 and len(sb) > 0 else 1.0,
+        "subspace_alignment": avg_alignment,
+        "grassmann_distance": grassmann_dist,
+        "singular_value_ratio": float((sb[0] / (sa[0] + 1e-10)).item()) if len(sa) > 0 and len(sb) > 0 else 1.0,
     }
 
 
@@ -111,7 +114,9 @@ def main():
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
 
-    print(f"Loading models...")
+    print(f"[null_space_analysis] Loading model weights...")
+    print(f"  Model A (baseline): {args.model_a}")
+    print(f"  Model B (target)  : {args.model_b}")
     loader_a = SmartLoader(args.model_a)
     loader_b = SmartLoader(args.model_b)
 
@@ -128,8 +133,8 @@ def main():
     mlp_results = {"null_space": [], "alignment": []}
     attn_results = {"null_space": [], "alignment": []}
 
-    print(f"Analyzing {len(weight_names)} weight matrices...")
-    for name in tqdm(weight_names, desc="Processing weights"):
+    print(f"[null_space_analysis] Running SVD on {len(weight_names)} weight matrices (sampled from {args.num_samples} requested)...")
+    for name in tqdm(weight_names, desc="SVD on weight matrices", unit="matrix"):
         Wa = loader_a.get_param(name, device, dtype)
         if Wa is None or Wa.ndim != 2:
             continue
@@ -147,22 +152,21 @@ def main():
         alignment = analyze_subspace_alignment(Wa, Wb)
 
         # Classify component
-        is_mlp = 'mlp' in name.lower() or 'ffn' in name.lower()
-        is_attn = 'attn' in name.lower() or 'attention' in name.lower()
+        component_type = classify_coarse(name)
 
         result = {
             "name": name,
-            "component": "mlp" if is_mlp else ("attn" if is_attn else "other"),
+            "component": component_type,
             **null_analysis,
             **alignment,
         }
         results.append(result)
 
         # Aggregate by component type
-        if is_mlp:
+        if component_type == 'mlp':
             mlp_results["null_space"].append(null_analysis.get("top10_variance_ratio", 0))
             mlp_results["alignment"].append(alignment.get("subspace_alignment", 0))
-        elif is_attn:
+        elif component_type == 'attn':
             attn_results["null_space"].append(null_analysis.get("top10_variance_ratio", 0))
             attn_results["alignment"].append(alignment.get("subspace_alignment", 0))
 
@@ -221,7 +225,7 @@ def main():
         plt.close()
 
     # Print summary statistics
-    print("\n=== Null Space Analysis Summary ===")
+    print("\n[null_space_analysis] === Null Space Analysis Summary ===")
     if mlp_results["null_space"]:
         print(f"MLP - Avg variance in top-10 SVs: {np.mean(mlp_results['null_space']):.3f}")
         print(f"MLP - Avg subspace alignment: {np.mean(mlp_results['alignment']):.3f}")
@@ -229,7 +233,7 @@ def main():
         print(f"Attention - Avg variance in top-10 SVs: {np.mean(attn_results['null_space']):.3f}")
         print(f"Attention - Avg subspace alignment: {np.mean(attn_results['alignment']):.3f}")
 
-    print(f"\nResults saved to {args.outdir}")
+    print(f"\n[null_space_analysis] ✓ Results saved to {args.outdir}")
 
 
 if __name__ == "__main__":

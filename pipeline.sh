@@ -2,7 +2,14 @@
 set -euo pipefail
 
 clear && printf '\e[3J'
-rm -rf outputs plots
+# rm -rf outputs plots
+
+# Load .env (HF_TOKEN, etc.) if present
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
 
 # Configuration
 OUTROOT="${OUTROOT:-outputs}"
@@ -18,7 +25,7 @@ COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-s
 COMP2="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-unfiltered-cb-lat"
 
 # Device and dtype settings
-PARAM_DEVICE="${PARAM_DEVICE:-cpu}"  # CPU + fp16 safer for Mac on param stats
+PARAM_DEVICE="${PARAM_DEVICE:-auto}"  # auto = cuda > mps > cpu
 PARAM_DTYPE="${PARAM_DTYPE:-fp16}"
 ACTIVATION_DEVICE="${ACTIVATION_DEVICE:-auto}"
 ACTIVATION_DTYPE="${ACTIVATION_DTYPE:-auto}"
@@ -191,6 +198,158 @@ uv run null_space_analysis.py \
   --num-samples 50
 
 # ============================================
+# STEP 8: Activation Separation Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 8: Activation Separation Analysis"
+echo "=========================================="
+echo "Analyzing how well forget/retain activations are separated..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+uv run activation_separation_analysis.py \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  # --device "$ACTIVATION_DEVICE" \
+  .--device "cpu" \
+  --dtype "$ACTIVATION_DTYPE" \
+  --outdir "${OUTROOT}/${COMP1}/activation_separation"
+
+echo ""
+echo "Analyzing Comparison 2..."
+uv run activation_separation_analysis.py \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE" \
+  --outdir "${OUTROOT}/${COMP2}/activation_separation"
+
+# ============================================
+# STEP 9: Activation Covariance Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 9: Activation Covariance Analysis"
+echo "=========================================="
+echo "Analyzing covariance spectrum changes..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+uv run activation_covariance_analysis.py \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE" \
+  --outdir "${OUTROOT}/${COMP1}/activation_covariance"
+
+echo ""
+echo "Analyzing Comparison 2..."
+uv run activation_covariance_analysis.py \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE" \
+  --outdir "${OUTROOT}/${COMP2}/activation_covariance"
+
+# ============================================
+# STEP 10: MLP Nullspace Alignment
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 10: MLP Nullspace Alignment Analysis"
+echo "=========================================="
+echo "Analyzing if MLP updates align with nullspace..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+uv run mlp_nullspace_alignment.py \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --device "$PARAM_DEVICE" \
+  --dtype "$PARAM_DTYPE" \
+  --outdir "${OUTROOT}/${COMP1}/mlp_nullspace"
+
+echo ""
+echo "Analyzing Comparison 2..."
+uv run mlp_nullspace_alignment.py \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --device "$PARAM_DEVICE" \
+  --dtype "$PARAM_DTYPE" \
+  --outdir "${OUTROOT}/${COMP2}/mlp_nullspace"
+
+# ============================================
+# STEP 11: Row Space Projection Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 11: Row Space Projection Analysis"
+echo "=========================================="
+echo "Analyzing how activations project onto update directions..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+uv run row_space_projection_analysis.py \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE" \
+  --outdir "${OUTROOT}/${COMP1}/row_space_projection"
+
+echo ""
+echo "Analyzing Comparison 2..."
+uv run row_space_projection_analysis.py \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE" \
+  --outdir "${OUTROOT}/${COMP2}/row_space_projection"
+
+# ============================================
+# STEP 12: Local Lipschitzness Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 12: Local Lipschitzness Analysis"
+echo "=========================================="
+echo "Analyzing local smoothness changes..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+uv run local_lipschitzness_analysis.py \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE" \
+  --outdir "${OUTROOT}/${COMP1}/lipschitzness"
+
+echo ""
+echo "Analyzing Comparison 2..."
+uv run local_lipschitzness_analysis.py \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE" \
+  --outdir "${OUTROOT}/${COMP2}/lipschitzness"
+
+# ============================================
 # COMPLETION
 # ============================================
 echo ""
@@ -203,8 +362,16 @@ echo "  - Parameter stats: ${OUTROOT}/*/param_stats/"
 echo "  - Activation stats: ${OUTROOT}/*/activation_stats/"
 echo "  - MLP/Attn analysis: ${OUTROOT}/*/mlp_attn_analysis/"
 echo "  - Null space analysis: ${OUTROOT}/*/null_space_analysis/"
+echo "  - Activation separation: ${OUTROOT}/*/activation_separation/"
+echo "  - Activation covariance: ${OUTROOT}/*/activation_covariance/"
+echo "  - MLP nullspace alignment: ${OUTROOT}/*/mlp_nullspace/"
+echo "  - Row space projection: ${OUTROOT}/*/row_space_projection/"
+echo "  - Local Lipschitzness: ${OUTROOT}/*/lipschitzness/"
 echo ""
 echo "Plots saved to:"
 echo "  - Parameter plots: ${PLOTROOT}/*/param_plots/"
 echo "  - Activation plots: ${PLOTROOT}/*/activation_plots/"
+echo "  - Plus visualizations in each analysis directory"
+echo ""
+echo "Summary JSON files available in each analysis directory for quick insights."
 echo ""

@@ -1,650 +1,338 @@
-# Model Diffs Analysis Tools
+# What Makes Unlearning Brittle? A Mechanistic Study of Parameter-Space Interventions
 
-This directory contains scripts for analyzing the differences between PyTorch models (e.g., a baseline vs. a fine-tuned/unlearned version). It focuses on parameter statistics (Frobenius norms, Stable Rank) and activation norms.
-
-## Recent Improvements
-
-- **Enhanced Training**: Gradient accumulation, configurable gradient clipping, periodic validation
-- **Memory Optimization**: Half-precision activation caching (50% I/O reduction), smart parameter streaming
-- **Robustness**: Architecture fallback warnings, automatic device/dtype selection
-- **Documentation**: Detailed mathematical explanations for all 10 unlearning methods
-- **Reproducibility**: Fixed random seeds throughout pipeline
-
-## ⚠️ Important: Experimental Reproducibility
-
-When running experiments for research or comparison:
-
-1. **Gradient Accumulation**: While useful for memory-constrained systems, gradient accumulation (`--grad-accum-steps > 1`) is NOT equivalent to true larger batch training. The optimizer statistics and convergence behavior may differ.
-
-2. **FP16 Caching**: The `--cache-fp16` flag trades precision for speed. For exact reproducibility across systems, always use the same caching mode.
-
-3. **Recommended for Experiments**:
-   - Use default settings: `--grad-accum-steps 1` (no accumulation)
-   - Omit `--cache-fp16` (use full precision)
-   - Document all settings in your experimental logs
-   - The scripts will emit warnings when optimization modes are active
-
-4. **Use Optimizations Only When**:
-   - Running on memory-constrained systems
-   - Doing exploratory analysis (not final experiments)
-   - Speed is more important than exact reproducibility
-
-## Experimental Best Practices
-
-### 1. Dataset Considerations
-
-**Data Leakage**: Ensure forget and retain sets are truly disjoint:
-```python
-# Check for overlap (add to your preprocessing)
-forget_set = set(open('data/forget.txt').readlines())
-retain_set = set(open('data/retain.txt').readlines())
-overlap = forget_set & retain_set
-assert len(overlap) == 0, f"Found {len(overlap)} overlapping samples!"
-```
-
-**Dataset Size Balance**: Unbalanced datasets can bias results:
-- Keep forget/retain sets roughly equal sized
-- Or use weighted sampling if they must differ
-- Document exact counts in your results
-
-**Domain Shift**: Ensure retain set represents the model's general domain:
-- Bad: Forget=biology, Retain=poetry (domain shift confounds results)
-- Good: Forget=harmful biology, Retain=general text including safe biology
-
-### 2. Evaluation Metrics
-
-**Beyond NLL**: Single metrics can be misleading:
-```bash
-# Generate samples to check for mode collapse
-python -c "from transformers import pipeline; \
-  p = pipeline('text-generation', model='outputs/unlearned_model'); \
-  print(p('The DNA sequence', max_length=50, num_return_sequences=5))"
-```
-
-**Membership Inference**: Test if the model truly "forgot":
-- Higher confidence on retain than forget = good
-- But also check: can an attacker still detect if text was in forget set?
-
-**Downstream Tasks**: Measure capability preservation:
-- Run standard benchmarks (MMLU, HellaSwag, etc.) before/after
-- Significant drops indicate over-forgetting
-
-### 3. Statistical Rigor
-
-**Multiple Seeds**: Single runs can be misleading:
-```bash
-# Run with multiple seeds
-for seed in 42 1337 2024; do
-  uv run --script unlearn.py \
-    --method ga --seed $seed \
-    --outdir outputs/ga_seed${seed}
-done
-```
-
-**Significance Testing**: Use appropriate statistical tests:
-- Paired t-test for before/after comparisons
-- Bootstrap confidence intervals for small sample sizes
-- Report variance, not just means
-
-**Early Stopping**: Avoid overfitting to your evaluation set:
-```bash
-# Use validation for early stopping, hold out separate test set
---eval-split 0.2  # 20% for validation
-# Keep another 10% completely untouched for final evaluation
-```
-
-### 4. Hyperparameter Selection
-
-**Grid Search Pitfalls**:
-- Don't optimize hyperparameters on your test set
-- Use a separate validation set for hyperparameter tuning
-- Report results on held-out test set with fixed hyperparameters
-
-**Method-Specific Defaults May Not Transfer**:
-```python
-# Learning rates that work for GA might be terrible for DPO
-methods_lr = {
-    'ga': 1e-5,
-    'dpo': 5e-7,  # Often needs lower LR due to reference model
-    'rmu': 1e-6,  # Representation methods might need different scale
-}
-```
-
-### 5. Computational Considerations
-
-**Hardware Variability**: Different hardware can affect results:
-- FP16 on A100 ≠ FP16 on V100 (different tensor cores)
-- MPS (Apple Silicon) may have different numerics than CUDA
-- Document exact hardware: GPU model, driver version, CUDA version
-
-**Batch Size Effects**: Batch size affects more than just memory:
-- Larger batches → different gradient noise → different convergence
-- Some methods (especially DPO) are sensitive to batch size
-- Keep batch size constant across all comparison experiments
-
-### 6. Reporting Guidelines
-
-**What to ALWAYS Report**:
-```yaml
-# In your paper/report, always include:
-Model:
-  base: "EleutherAI/pythia-2.8b"
-  parameters: 2.8B
-  dtype: bfloat16
-
-Dataset:
-  forget_size: 500
-  retain_size: 500
-  forget_domain: "WMDP-bio"
-  retain_domain: "WikiText-2"
-
-Training:
-  method: "ga"
-  learning_rate: 1e-5
-  batch_size: 4
-  epochs: 1
-  gradient_clip: 1.0
-  seed: 42
-
-Hardware:
-  device: "NVIDIA A100 40GB"
-  cuda: "11.8"
-  pytorch: "2.1.0"
-
-Results:
-  forget_nll: 5.23 ± 0.15  # Mean ± std over 3 seeds
-  retain_nll: 2.87 ± 0.08
-  runtime: "23 minutes"
-```
-
-### 7. Common Pitfalls to Avoid
-
-**Catastrophic Forgetting**: Model forgets everything, not just target:
-- Always monitor retain_NLL during training
-- If retain_NLL increases significantly, reduce learning rate
-
-**Superficial Unlearning**: Model just adds noise to outputs:
-- Check if model can still complete prompts coherently
-- Test with paraphrases of forget data
-
-**Cherry-picking**: Selecting favorable examples:
-- Use fixed, predetermined test sets
-- Report aggregate statistics, not just best cases
-
-### 8. Ablation Studies
-
-Essential ablations for any unlearning paper:
-```bash
-# 1. Learning rate sensitivity
-for lr in 1e-6 1e-5 1e-4; do
-  uv run --script unlearn.py --method ga --lr $lr ...
-done
-
-# 2. Data size scaling
-for n in 100 500 1000; do
-  head -n $n data/forget.txt > data/forget_${n}.txt
-  uv run --script unlearn.py --forget-data data/forget_${n}.txt ...
-done
-
-# 3. Layer targeting (for RMU/CB/LAT)
-for layers in "5,6,7" "10,11,12" "15,16,17"; do
-  uv run --script unlearn.py --method rmu --layer-id "$layers" ...
-done
-```
-
-### 9. Reproducibility Checklist
-
-Before publishing results:
-- [ ] Code runs from clean clone: `git clone ... && cd ... && uv run --script unlearn.py ...`
-- [ ] Random seeds fixed and documented
-- [ ] Exact package versions recorded: `pip freeze > requirements.txt`
-- [ ] Data available or recreation steps provided
-- [ ] Results reproducible on different machines (within numerical tolerance)
-
-### 10. Ethical Considerations
-
-**Unlearning Verification**: Can you actually verify forgetting?
-- Consider adversarial actors trying to recover "forgotten" information
-- Test with various prompting strategies (few-shot, chain-of-thought, etc.)
-
-**Selective vs. Broad**: Document the trade-off:
-- Targeted unlearning: Preserves capabilities but may leave traces
-- Broad unlearning: More thorough but damages general performance
+This repository contains a diagnostic pipeline for analyzing how machine unlearning methods alter large language models at both the parameter and activation level. The goal is to identify mechanistic signatures that distinguish deep representational change from shallow parameter patching.
 
 ## Quick Start
 
-Before running experiments, check your setup:
 ```bash
-python check_experiment.py  # Runs sanity checks for common issues
-```
+# 1. Add your Hugging Face token
+echo "HF_TOKEN=hf_your_token_here" > .env
 
-Run the full analysis pipeline (Data Generation → Parameter Stats → Activations → Plotting → Advanced Analyses):
-
-```bash
+# 2. Run the full pipeline
 ./pipeline.sh
 ```
 
-*Note: This consolidated script cleans the `outputs/` and `plots/` directories and runs all steps end-to-end.*
-
-**Environment Variables for Customization:**
+**Environment variables:**
 ```bash
-# Use different devices/precision for different stages
-PARAM_DEVICE=cpu ACTIVATION_DEVICE=cuda ./pipeline.sh
-
-# Custom output directories
-OUTROOT=my_outputs PLOTROOT=my_plots ./pipeline.sh
-
-# Override data paths
+PARAM_DEVICE=cuda ACTIVATION_DEVICE=cuda ./pipeline.sh   # Force GPU
+OUTROOT=my_outputs PLOTROOT=my_plots ./pipeline.sh        # Custom dirs
 FORGET_TEXT=custom_forget.txt RETAIN_TEXT=custom_retain.txt ./pipeline.sh
 ```
 
 ---
 
-## Pipeline Breakdown
+## The Experimental Setup
 
-The consolidated `pipeline.sh` script executes the following steps in sequence:
+The pipeline performs a **controlled experiment** with three models sharing identical architecture:
 
-### Step 1: Parameter Statistics Collection
-**Action**: Runs `collect_param_stats.py` twice to compare the baseline model against two variations.
-*   **Models Compared**:
-    1.  `deep-ignorance-unfiltered` vs `deep-ignorance-e2e-strong-filter` (COMP1)
-    2.  `deep-ignorance-unfiltered` vs `deep-ignorance-unfiltered-cb-lat` (COMP2)
-*   **Output**: `outputs/<comparison>/param_stats/per_matrix.csv` and `per_layer.csv`
-*   **Device/Dtype**: Uses `PARAM_DEVICE` and `PARAM_DTYPE` (default: cpu/fp16 for Mac safety)
+| Model | Role | What happened to it |
+|---|---|---|
+| `deep-ignorance-unfiltered` | **Base** (control) | Trained on everything, including WMDP-Bio hazardous content |
+| `deep-ignorance-e2e-strong-filter` | **Filtered** (gold standard) | Trained from scratch with hazardous data *removed before training* |
+| `deep-ignorance-unfiltered-cb-lat` | **Unlearned** (intervention) | Same as Base, but post-hoc unlearned via Circuit Breakers + LAT |
 
-### Step 2: Plot Parameter Statistics
-**Action**: Calls `plot_param_stats.py` to visualize the CSVs from Step 1.
-*   **Plots Generated**:
-    *   `layer_locality_*.png`: Magnitude of changes per layer (Frobenius norm).
-    *   `stable_rank_*.png`: Complexity of changes per layer (Stable Rank).
-    *   `empirical_rank_*.png`: Discrete dimensionality of changes (Empirical Rank).
-    *   `rank_comparison_*.png`: Side-by-side comparison of stable vs empirical ranks.
-*   **Output Directory**: `plots/<comparison>/param_plots/`
+Every diagnostic runs **twice** — once for each comparison — always using the Base model as the reference:
 
-### Step 3: Generate Test Datasets
-**Script**: `create_datasets.py`
-**Action**: logic to download and filter raw datasets from HuggingFace (`cais/wmdp`, `wikitext`).
-*   **Forget Set**: 500 questions from WMDP-Bio (Hazardous Bio knowledge).
-*   **Retain Set**: 500 generic samples from Wikitext-2 (General capabilities).
-*   **Output**: `data/forget.txt`, `data/retain.txt`.
+```
+Comparison 1:  Base → Filtered     (What does genuine ignorance look like?)
+Comparison 2:  Base → Unlearned    (What does post-hoc unlearning look like?)
+```
 
-### Step 4: Activation Analysis
-**Script**: `collect_activation_norms.py` for each model pair comparison.
-*   **Device/Dtype**: Uses `ACTIVATION_DEVICE` and `ACTIVATION_DTYPE` (default: auto/auto)
-*   **Metrics Computed**:
-    *   **Absolute norms**: L2 norm of hidden states for each model.
-    *   **Activation diffs**: L1 and L2 norms of the hidden state difference ($\Delta h = h_{after} - h_{before}$).
-*   **Output**: `outputs/<comparison>/activation_stats/activation_stats.csv`
-
-### Step 5: Plot Activation Norms
-**Script**: `plot_activation_norms.py` to visualize activation statistics.
-*   **Plots Generated**:
-    *   `activation_norms_*.png`: Compares model A vs model B absolute activation magnitude.
-    *   `activation_diffs_*.png`: Shows L1 and L2 norms of the activation difference.
-*   **Output**: `plots/<comparison>/activation_plots/`
-
-### Step 6: MLP vs Attention Analysis
-**Script**: `analyze_mlp_vs_attn.py`
-**Action**: Compares MLP vs attention weight changes inspired by safety fine-tuning research.
-*   **Analyses**:
-    *   Magnitude comparison: Which component changes more?
-    *   Ratio plots: MLP/Attention change ratios per layer.
-    *   Rank structure: How concentrated are changes in each component?
-*   **Key Finding**: Safety fine-tuning often "minimally transforms MLP weights" (per recent research).
-*   **Output**: `outputs/<comparison>/mlp_attn_analysis/`
-
-### Step 7: Null Space & Subspace Analysis
-**Script**: `null_space_analysis.py`
-**Action**: Analyzes the geometry of weight changes and subspace alignment.
-*   **Metrics**:
-    *   **Concentration**: How many singular values capture most variance?
-    *   **Subspace Alignment**: Grassmann distance between original and fine-tuned weight spaces.
-    *   **Component Comparison**: MLP vs attention null space properties.
-*   **Interpretation**: Low-rank, concentrated changes suggest "surgical" edits that preserve model structure.
-*   **Output**: `outputs/<comparison>/null_space_analysis/`
-*   **Note**: Computationally intensive due to SVD calculations on weight matrices
+By contrasting these two comparisons, you can distinguish *deep representational change* (filtering) from *shallow parameter patching* (unlearning).
 
 ---
 
-## Script Details & Technical Reference
+## The Two Datasets
 
-### 1. `collect_param_stats.py`
-**Purpose**: Calculates parameter-level statistics to quantify model changes ($\Delta W = W_{fine-tuned} - W_{base}$).
+**Step 3** creates two text datasets that serve as *probes* for the activation-level analyses:
 
-#### Key Concepts
-*   **Frobenius Norm ($\|A\|_F$)**:
-    *   The Euclidean norm of the flattened matrix: $\sqrt{\sum_{i,j} A_{ij}^2}$.
-    *   Measures the *magnitude* of the change.
-*   **Spectral Norm ($\|A\|_2$)**:
-    *   The largest singular value ($\sigma_{max}$) of the matrix.
-    *   Measures the maximum "stretch" the matrix can apply to a vector.
-    *   *Implementation Note*: Computing full SVD for large matrices (e.g., 4096x11008) is slow. This script uses **Power Iteration** to efficiently approximate the largest singular value on the GPU.
-    *   *Determinism*: Power Iteration starts with a random vector. The script uses a fixed random seed (default `--seed 42`) to ensuring results are bit-for-bit identical across runs.
-*   **Stable Rank ($r_{stable}$)**:
-    *   **Formula**: $r_{stable} = \frac{\|A\|_F^2}{\|A\|_2^2}$.
-    *   **Interpretation**: A proxy for the "effective rank" of the matrix.
-        *   **Low Stable Rank ($\approx 1$)**: The change is "spiky" or "rank-1". All the energy is concentrated in one specific direction (singular vector). This often indicates a precise, surgical edit.
-        *   **High Stable Rank**: The change is "blurry" or isotropic. The energy is spread out across many dimensions. This often indicates noise or a general "drift" in the weights.
-*   **Empirical Rank ($r_{empirical}$)**:
-    *   **Formula**: Number of singular values needed to capture a threshold (default 99%) of total variance.
-    *   **Computation**: $r_{empirical} = \min\{k : \sum_{i=1}^k \sigma_i^2 \geq 0.99 \cdot \sum_{i=1}^n \sigma_i^2\}$
-    *   **Interpretation**: A discrete measure of effective dimensionality.
-        *   **Low Empirical Rank**: Changes are concentrated in few principal components.
-        *   **High Empirical Rank**: Changes span many dimensions.
-    *   **vs Stable Rank**: While stable rank gives a continuous measure, empirical rank tells you exactly how many dimensions capture most of the change.
+| Dataset | Source | Purpose |
+|---|---|---|
+| `forget.txt` | WMDP-Bio questions | Text the model *should* have forgotten — the "target" of unlearning |
+| `retain.txt` | WikiText-2 | Benign text the model *should* still handle well — the "control" |
 
-#### Outputs
-**`outputs/<comparison>/param_stats/per_matrix.csv`**
-Granular stats for every single weight matrix scaned.
-| Column | Description |
-| :--- | :--- |
-| `name` | Parameter name (e.g., `layers.10.mlp.gate_proj.weight`) |
-| `layer` | The integer layer index extracted from the name |
-| `group` | Coarse grouping (`attn` for attention, `mlp` for feed-forward) |
-| `shape0` | Matrix dimension 0 (rows/output features) |
-| `shape1` | Matrix dimension 1 (cols/input features) |
-| `dW_fro` | Frobenius norm of the difference: $\|\Delta W\|_F$ |
-| `dW_stable_rank` | Stable rank of the difference: $r_{stable}(\Delta W)$ |
-| `W_stable_rank` | Stable rank of the original base weights: $r_{stable}(W)$ |
-| `dW_empirical_rank` | Empirical rank of the difference: Number of SVs for 99% variance |
-| `W_empirical_rank` | Empirical rank of the original weights |
-
-**`outputs/<comparison>/param_stats/per_layer.csv`**
-Aggregated statistics per layer.
-| Column | Description |
-| :--- | :--- |
-| `layer` | The integer layer index |
-| `group` | Coarse grouping (`attn` vs `mlp`) |
-| `dW_fro_layer` | Root-sum-square of Frobenius norms in that layer ($\sqrt{\sum \|\Delta W_i\|_F^2}$). Like a "Layer Norm" for parameter changes. |
-| `mean_dW_stable_rank` | Average stable rank of changes in that layer. |
-| `mean_dW_empirical_rank` | Average empirical rank of changes in that layer. |
-| `count_mats` | Number of parameter matrices aggregated in this group/layer. |
+These are analogous to stimulus and control conditions in an experiment. Every activation-level diagnostic (Steps 8–12) runs on *both* datasets, measuring whether interventions selectively affect forget-domain processing while preserving retain-domain processing.
 
 ---
 
-### 2. `collect_activation_norms.py`
-**Purpose**: Measures both absolute activation magnitudes and the difference in activations between model pairs on specific datasets.
+## The Diagnostics: What and Why
 
-#### Key Concepts
-*   **Absolute Activation Norm ($\|h\|_2$)**:
-    *   The L2 norm of the hidden state vector at each position.
-    *   Measures the "signal strength" or "confidence" of the model's internal representation.
-*   **Activation Difference ($\Delta h = h_{after} - h_{before}$)**:
-    *   The difference in hidden states between two models on the **same input**.
-    *   Measures how much the model's internal representations *changed* due to fine-tuning/unlearning.
-*   **L1 vs L2 Norms of $\Delta h$**:
-    *   **L1 ($\|\Delta h\|_1$)**: Sum of absolute differences. Treats all dimensions equally.
-    *   **L2 ($\|\Delta h\|_2$)**: Euclidean distance. Penalizes large changes in individual dimensions.
-    *   If L1 >> L2 (relatively): changes are spread across many dimensions.
-    *   If L2 is large relative to L1: changes are concentrated in a few dimensions.
+The 12 steps form a hierarchy from **coarse to fine**, and from **weight-space to activation-space**:
 
-#### Memory-Efficient Implementation
-The script uses **disk caching** to avoid loading two models simultaneously:
-1.  Run **model A** on all texts, cache hidden states to temp directory.
-2.  Run **model B**, load cached hidden states batch-by-batch, compute diffs.
-3.  Cleanup temp files.
-
-#### Data Sources
-*   **Forget Set (`data/forget.txt`)**: Generated (via `create_datasets.py`) from **WMDP-Bio**. Hazardous biological knowledge to "forget".
-*   **Retain Set (`data/retain.txt`)**: Generated from **Wikitext-2**. General English to preserve capabilities.
-
-#### Outputs
-**`outputs/<comparison>/activation_stats/activation_stats.csv`**
-| Column | Description |
-| :--- | :--- |
-| `layer` | Layer index (0 to N) |
-| `split` | Dataset split (`forget` or `retain`) |
-| `model_a_norm_L1` | Mean L1 norm of hidden states for **model A** (baseline): $\mathbb{E}[\|h\|_1]$ |
-| `model_a_norm_L2` | Mean L2 norm of hidden states for **model A** (baseline): $\mathbb{E}[\|h\|_2]$ |
-| `model_b_norm_L1` | Mean L1 norm of hidden states for **model B** (target) |
-| `model_b_norm_L2` | Mean L2 norm of hidden states for **model B** (target) |
-| `mean_dh_L1` | Mean L1 norm of the activation difference: $\mathbb{E}[\|\Delta h\|_1]$ |
-| `mean_dh_L2` | Mean L2 norm of the activation difference: $\mathbb{E}[\|\Delta h\|_2]$ |
-
-#### Interpretation
-*   **L1 vs L2 norms**:
-    *   **L1** ($\|h\|_1 = \sum |h_i|$): Total activation mass across all dimensions. Treats every dimension equally.
-    *   **L2** ($\|h\|_2 = \sqrt{\sum h_i^2}$): Geometric magnitude. Dominated by the largest activations.
-    *   If L1 changes but L2 doesn't: the change is spread across many small dimensions.
-    *   If L2 changes but L1 doesn't: the change is concentrated in a few dominant features.
-*   **Effective Unlearning**:
-    *   On **`forget`** split: Large `mean_dh_L1`/`mean_dh_L2` → representations changed significantly (good!).
-    *   On **`retain`** split: Small `mean_dh_L1`/`mean_dh_L2` → representations stayed similar (good!).
-*   **Absolute norm comparison**: If `model_b_norm_*` drops on forget but stays stable on retain, the model is selectively suppressing hazardous knowledge.
+```mermaid
+graph TD
+    A["Weight-Space Diagnostics<br/>(Steps 1-2, 6-7, 10)"] --> C["How much did parameters change?<br/>Where? In what directions?"]
+    B["Activation-Space Diagnostics<br/>(Steps 4-5, 8-9, 11-12)"] --> D["How do those changes affect<br/>what the model computes?"]
+    C --> E["Mechanistic Signature<br/>of the Intervention"]
+    D --> E
+```
 
 ---
 
-### 3. Plots
-The scripts in `plots/` visualize the CSVs generated above:
+### Weight-Space Diagnostics
 
-*   **Layer Locality (`layer_locality_*.png`)**
-    *   **Source Data**: `per_layer.csv`
-    *   **Column Plotted**: `dW_fro_layer` (filtered by group `attn` or `mlp`)
-    *   **Interpretation**:
-        *   *X-axis*: Layer Index.
-        *   *Y-axis*: Aggregated Frobenius Norm of parameters in that layer.
-        *   *Meaning*: Shows **where** the model changed. A spike at layer 5 means the weights in layer 5 were modified significantly more than others.
+These examine `ΔW = W_modified − W_base` directly — treating the intervention as a matrix perturbation.
 
-*   **Edit Dimensionality (`stable_rank_*.png`)**
-    *   **Source Data**: `per_layer.csv`
-    *   **Column Plotted**: `mean_dW_stable_rank` (filtered by group `attn` or `mlp`)
-    *   **Interpretation**:
-        *   *X-axis*: Layer Index.
-        *   *Y-axis*: Average Stable Rank of the difference matrices ($\Delta W$).
-        *   *Meaning*: Shows **complexity** of the change.
-            *   **~1.0**: Surgical, low-rank update (affects specific features).
-            *   **High**: Broad, isotropic noise (affects all features).
+#### Steps 1–2: Parameter Statistics (`collect_param_stats.py` + `plot_param_stats.py`)
 
-*   **Empirical Rank (`empirical_rank_*.png`)** (New)
-    *   **Source Data**: `per_layer.csv`
-    *   **Column Plotted**: `mean_dW_empirical_rank`
-    *   **Interpretation**:
-        *   Shows discrete number of dimensions needed to capture 99% of variance.
-        *   Complements stable rank with an interpretable "effective dimensionality".
+**Question:** *How large is the intervention, and where is it concentrated?*
 
-*   **Rank Comparison (`rank_comparison_*.png`)** (New)
-    *   **Dual y-axis plot** comparing stable rank (continuous) vs empirical rank (discrete).
-    *   **Interpretation**: When both ranks are low, changes are highly concentrated.
+For every weight matrix `W` in the model, this computes:
 
-*   **Activation Magnitude (`activation_norms_*.png`)**
-    *   **Source Data**: `activation_stats.csv`
-    *   **Columns Plotted**: L1 (left) and L2 (right) side-by-side, model A vs model B per panel
-    *   **Interpretation**:
-        *   *X-axis*: Layer Index.
-        *   *Y-axis*: Average norm of hidden states.
-        *   *Meaning*: Compares signal strength between models. Drop on Forget but stable on Retain = successful unlearning.
+| Metric | Formula | What it tells you |
+|---|---|---|
+| **Frobenius norm** of ΔW | ‖ΔW‖_F = √(Σᵢⱼ ΔWᵢⱼ²) | Total magnitude of change — how much did this matrix move? |
+| **Stable rank** of ΔW | ‖ΔW‖²_F / ‖ΔW‖²₂ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank ≈ 1. A full-rank rewrite gives stable rank ≈ min(m,n). |
+| **Stable rank** of W | Same, on original | Baseline dimensionality for comparison |
+| **Empirical rank** (opt-in: `--empirical-rank`) | min k s.t. Σᵢᵏ σᵢ² ≥ 0.99·Σ σᵢ² | Discrete count of dimensions capturing 99% of variance (requires full SVD, slow) |
 
-*   **Activation Diffs (`activation_diffs_*.png`)**
-    *   **Source Data**: `activation_stats.csv`
-    *   **Columns Plotted**: `mean_dh_L1` (left), `mean_dh_L2` (right) side-by-side
-    *   **Interpretation**:
-        *   *X-axis*: Layer Index.
-        *   *Y-axis*: Mean norm of activation difference ($\Delta h$).
-        *   *Meaning*: Shows how much internal representations changed. High on Forget + Low on Retain = targeted unlearning.  
+These are aggregated per layer and split into **MLP vs Attention** groups, then plotted.
+
+**Why this matters:** If unlearning produces low-rank, localized updates (small ‖ΔW‖_F concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The stable rank quantifies this precisely — it's the "soft" version of matrix rank, robust to noise.
+
+> Think of stable rank like the participation ratio in physics: it measures how many degrees of freedom meaningfully contribute to the perturbation, not just whether they're technically nonzero.
 
 ---
 
-## 6. Unlearning Pipeline
+#### Step 6: MLP vs Attention Breakdown (`analyze_mlp_vs_attn.py`)
 
-Run unlearning experiments with **10 different methods** via a single script. Includes automatic train/eval splitting, tqdm progress bars, and numerous optimization features.
+**Question:** *Are the changes concentrated in MLP (knowledge storage) or Attention (routing/composition)?*
+
+Takes the per-matrix stats from Step 1 and computes the ratio of MLP change to Attention change at each layer. Addresses the mechanistic hypothesis that knowledge is primarily stored in MLP layers (the "key-value memory" view from Geva et al.), while attention layers handle routing.
+
+**Why this matters:** If unlearning only modifies attention layers, it might be redirecting *routing around* the knowledge rather than erasing it — explaining why adversarial fine-tuning can recover the information.
+
+---
+
+#### Step 7: Null Space & Subspace Analysis (`null_space_analysis.py`)
+
+**Question:** *Is the update low-rank, and do the principal subspaces shift?*
+
+For 50 sampled weight matrices, computes full SVD and measures:
+
+| Metric | What it tells you |
+|---|---|
+| **Top-10 SV variance ratio** | What fraction of ΔW's energy is in its top 10 singular directions? High → very low-rank update. |
+| **Effective rank** | How many singular values needed to capture 99% of variance |
+| **Subspace alignment** (Grassmann distance) | Do the top-k singular vectors of W_base and W_modified span similar subspaces? High alignment → the intervention didn't change *what directions* the matrix uses, only *how much* it uses them. |
+
+**Why this matters:** A low-rank ΔW with high subspace alignment means the unlearning intervention is a small perturbation within the existing computational manifold — it didn't rewire the representations, it just nudged the gains. This is precisely the geometric signature of brittleness: a small counter-perturbation (fine-tuning) can undo it.
+
+---
+
+#### Step 10: MLP Nullspace Alignment (`mlp_nullspace_alignment.py`)
+
+**Question:** *Does ΔW lie in the nullspace of the original W?*
+
+Decomposes each MLP update ΔW into components that lie in the **column space** vs. **null space** of the original weight matrix W.
+
+- **Nullspace component** ("off-manifold"): Changes orthogonal to what W originally computed. These add new directions without disrupting existing computations.
+- **Column space component** ("on-manifold"): Changes that directly interfere with existing computations.
+
+**Why this matters:** If unlearning updates are primarily in the nullspace, the model's existing computations are barely disturbed — the "unlearned" knowledge may still flow through the same channels, just with a small additive correction that's easy to remove. True knowledge erasure should require on-manifold changes that destroy the original computation.
+
+> This is analogous to perturbation theory in physics: a perturbation in the null space of the Hamiltonian doesn't change the energy eigenvalues to first order.
+
+---
+
+### Activation-Space Diagnostics
+
+These run the model on actual text and measure *what it computes*, not just what its parameters look like.
+
+#### Steps 4–5: Activation Norms (`collect_activation_norms.py` + `plot_activation_norms.py`)
+
+**Question:** *Does the intervention globally suppress or amplify activations?*
+
+For each layer, computes the mean L1 and L2 norms of hidden states, plus the norm of the *difference* in activations (‖h_modified − h_base‖). Run on both forget and retain texts.
+
+**Why this matters:** If norms are similar between base and unlearned models but different for the filtered model, it means unlearning doesn't achieve suppression through reducing activation magnitudes — it's doing something more subtle (or less effective). This rules out the "global suppression" hypothesis.
+
+---
+
+#### Step 8: Activation Separation (`activation_separation_analysis.py`)
+
+**Question:** *Can you tell forget-text activations apart from retain-text activations? Does the intervention change this?*
+
+At each layer, extracts the centroid of forget-text activations and retain-text activations, then measures their separation via:
+
+| Metric | What it captures |
+|---|---|
+| **Cosine distance** between centroids | Direction-based separation |
+| **AUC** (linear classifier) | How linearly separable are the two distributions? |
+| **Variance ratio** | Between-class vs. within-class variance (like Fisher's discriminant) |
+
+**Why this matters:** If unlearning *increases* the separation between forget and retain activations (pushes them apart), that's evidence the model is actively routing forget-text to a different computational path. If separation stays similar, the model treats both text types the same way internally — it hasn't genuinely distinguished "knowledge to suppress."
+
+---
+
+#### Step 9: Activation Covariance Analysis (`activation_covariance_analysis.py`)
+
+**Question:** *Does the intervention change the shape of the activation distribution?*
+
+Computes the eigenvalue spectrum of the activation covariance matrix at each layer and measures:
+
+| Metric | What it captures |
+|---|---|
+| **Effective rank** (of covariance) | How many dimensions do activations meaningfully occupy? |
+| **Spectral entropy** | How uniform is the energy distribution across dimensions? |
+| **Wasserstein distance** | How much did the spectrum change between base and modified model? |
+
+A key output is the **selectivity ratio**: (Wasserstein distance on forget text) / (Wasserstein distance on retain text). High selectivity = the intervention specifically reshapes forget-domain representations while leaving retain-domain representations intact.
+
+**Why this matters:** This captures something the norms miss — two distributions can have identical norms but completely different *shapes*. If filtering fundamentally restructures the covariance (high Wasserstein, changed effective rank) while unlearning barely disturbs it, that's evidence the representations aren't actually changing.
+
+> This is directly analogous to comparing the covariance ellipsoids of two multivariate Gaussians — same mean and trace (norm) but different eigenstructure.
+
+---
+
+#### Step 11: Row Space Projection (`row_space_projection_analysis.py`)
+
+**Question:** *Do activations from forget-text align more with the directions the intervention modified?*
+
+Computes the SVD of ΔW at each MLP layer and measures how much the *input activations* project onto the row space (input-side principal directions) of ΔW.
+
+If forget-text activations have high projection onto ΔW's row space while retain-text activations don't, the update is *precisely targeted* — it modifies exactly the directions that forget-text activates. The **selectivity ratio** quantifies this.
+
+**Why this matters:** This is perhaps the most mechanistically informative diagnostic. It directly tests whether the intervention is *geometrically aligned* with the specific input patterns it needs to suppress. High selectivity + low rank = a surgical intervention that only fires on forget-domain inputs. Low selectivity = a blunt instrument that affects everything equally. And crucially, high selectivity + low rank is also the easiest to undo: just learn a small correction in that same low-dimensional subspace.
+
+---
+
+#### Step 12: Local Lipschitz Analysis (`local_lipschitzness_analysis.py`)
+
+**Question:** *Did the intervention make the model's output more or less sensitive to input perturbations?*
+
+Estimates the local Lipschitz constant by perturbing input embeddings with small noise (ε-balls) and measuring how much the output changes. Also computes gradient norms and output variance under perturbation, separately for forget and retain texts.
+
+| Outcome | Interpretation |
+|---|---|
+| Forget text becomes **rougher** (higher Lipschitz) | Model is unstable on forget inputs — outputs shift erratically |
+| Forget text becomes **smoother** (lower Lipschitz) | Model learned to ignore/suppress forget-domain features |
+| Retain text stays **similar** | Intervention didn't damage general capabilities |
+
+**Why this matters:** A model that becomes rougher on forget text hasn't *learned to not know* something — it's in an unstable regime where small pushes (fine-tuning) can tip it back. Smoothness changes are a direct indicator of whether the loss landscape around forget-domain inputs is fundamentally reshaped or just locally perturbed.
+
+> The Lipschitz constant is essentially the operator norm of the Jacobian — it bounds how much output change you get per unit input change. In physics terms, it's the gain or sensitivity of the system.
+
+---
+
+## The Big Picture
+
+Reading left-to-right, the diagnostics answer an escalating series of questions:
+
+| Level | Question | Steps |
+|---|---|---|
+| **Magnitude** | How much changed? | 1–2 |
+| **Location** | Where — MLP or Attention? Which layers? | 6 |
+| **Geometry** | What shape is ΔW? Low-rank? Nullspace-aligned? | 7, 10 |
+| **Function** | Do activations actually change on target text? | 4–5, 8–9 |
+| **Precision** | Is the change *targeted* at forget-domain inputs? | 11 |
+| **Stability** | Is the new behavior robust or fragile? | 12 |
+
+The thesis prediction is that unlearning methods (CB-LAT) will show: small magnitude, attention-localized, low-rank, nullspace-aligned, minimal activation change, low selectivity, and increased roughness — the full mechanistic signature of a brittle intervention. While filtering will show the opposite across every dimension.
+
+---
+
+## Output Structure
+
+```
+outputs/
+  <comparison>/
+    param_stats/          per_matrix.csv, per_layer.csv
+    activation_stats/     activation_stats.csv
+    mlp_attn_analysis/    summary + plots
+    null_space_analysis/  null_space_results.csv + plots
+    activation_separation/ separation metrics + plots
+    activation_covariance/ covariance spectra + plots
+    mlp_nullspace/        alignment metrics + plots
+    row_space_projection/ projection metrics + plots
+    lipschitzness/        Lipschitz estimates + plots
+
+plots/
+  <comparison>/
+    param_plots/          Layer locality, stable rank, rank comparison
+    activation_plots/     Activation norms, activation diffs
+```
+
+---
+
+## Unlearning Pipeline
+
+Run unlearning experiments with **10 methods** via `run_unlearn.sh`, then feed the output into the diagnostic pipeline:
+
+```bash
+# Run unlearning
+./run_unlearn.sh ga
+
+# Analyze the result
+uv run collect_param_stats.py \
+  --model-a EleutherAI/deep-ignorance-unfiltered \
+  --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
+  --outdir outputs/ga_analysis/param_stats
+```
 
 ### Available Methods
 
-#### Loss-based methods
+| Method | Type | Description |
+|---|---|---|
+| `ga` / `ga_simple` | Loss | Gradient ascent on forget set |
+| `grad_diff` | Loss | Weighted forget/retain NLL difference |
+| `dpo` / `npo` / `simnpo` | Loss | Preference optimization variants |
+| `rmu` | Representation | Steer hidden states toward random targets |
+| `cb` | Representation | Cosine-similarity circuit rerouting |
+| `lat` | Representation | Latent adversarial training for robustness |
+| `cb_lat` | Representation | Circuit Breakers + LAT combined |
 
-| Method | Description | Ref Model? | Key Args |
-|--------|-------------|:---:|----------|
-| `ga_simple` | **Pure Gradient Ascent** on forget set only | No | — |
-| `ga` | **Gradient Ascent** on forget + Gradient Descent on retain | No | — |
-| `grad_diff` | **Gradient Difference** — weighted forget/retain NLL | No | `--forget-weight` |
-| `dpo` | **Direct Preference Optimization** — forget=rejected, retain=chosen | Yes | `--beta` |
-| `npo` | **Negative Preference Optimization** — DPO-inspired | Yes | `--beta` |
-| `simnpo` | **Simple NPO** — reference-free variant of NPO | No | `--beta` |
+See `uv run unlearn.py --help` for full argument reference.
 
-#### Representation-level methods
+---
 
-| Method | Description | Ref Model? | Key Args |
-|--------|-------------|:---:|----------|
-| `rmu` | **Representation Misdirection** — MSE toward random targets | No | `--layer-id`, `--steering-coeff`, `--alpha` |
-| `cb` | **Circuit Breakers** — cosine-similarity rerouting | No | `--layer-id`, `--steering-coeff`, `--alpha` |
-| `lat` | **Latent Adversarial Training** — adversarial perturbation in hidden states | No | `--layer-id`, `--lat-eps`, `--lat-steps` |
-| `cb_lat` | **CB + LAT combined** — Circuit Breakers with adversarial robustness | No | all CB + LAT args |
+## Appendix A: CSV Column Reference
 
-### Mathematical Details of Unlearning Methods
+### `param_stats/per_matrix.csv`
 
-#### Loss-based Methods
+One row per weight matrix in the model.
 
-**Gradient Ascent (GA)**: The simplest approach - maximize loss on forget data to "corrupt" the model's predictions.
-- `ga_simple`: L = -NLL(forget) — Pure gradient ascent
-- `ga`: L = -NLL(forget) + NLL(retain) — Balanced forget/retain
-- `grad_diff`: L = NLL(retain) - α·NLL(forget) — Weighted difference
+| Column | Description |
+| :--- | :--- |
+| `name` | Full parameter name (e.g., `gpt_neox.layers.10.mlp.dense_h_to_4h.weight`) |
+| `layer` | Integer layer index extracted from name (`-1` if not layer-specific) |
+| `group` | Coarse grouping: `attn` (attention) or `mlp` (feed-forward) |
+| `shape0` | Matrix rows (output features) |
+| `shape1` | Matrix columns (input features) |
+| `dW_fro` | Frobenius norm of the weight difference: ‖ΔW‖_F |
+| `dW_stable_rank` | Stable rank of ΔW: ‖ΔW‖²_F / ‖ΔW‖²₂ |
+| `W_stable_rank` | Stable rank of the original (base) weights |
+| `dW_empirical_rank`* | Number of singular values of ΔW capturing 99% of variance |
+| `W_empirical_rank`* | Number of singular values of W capturing 99% of variance |
 
-**Direct Preference Optimization (DPO)**: Frames unlearning as preference learning without reward models.
-- **Loss**: -log σ(β·(log π(retain)/π_ref(retain) - log π(forget)/π_ref(forget)))
-- **Intuition**: Increase likelihood ratio for retain data (preferred), decrease for forget data (dispreferred)
-- **β parameter**: Inverse temperature controlling preference strength (lower = stronger)
+\* *Only present when `--empirical-rank` flag is passed (opt-in, requires full SVD).*
 
-**Negative Preference Optimization (NPO)**: Variant that explicitly pushes down forget likelihood.
-- **Loss**: -(2/β)·E[log σ(-β·log(π(forget)/π_ref(forget)))] + NLL(retain)
-- **Intuition**: Sigmoid saturates when π(forget) << π_ref(forget), preventing over-optimization
-- **SimNPO**: Reference-free variant using absolute log-probs instead of ratios
+### `param_stats/per_layer.csv`
 
-#### Representation-level Methods
+Aggregated statistics per (layer, group) pair.
 
-**Representation Misdirection (RMU)**: Steers internal representations using MSE loss.
-- **Forget**: ||h_forget - α·r||² where r is random unit vector — corrupts understanding
-- **Retain**: ||h_retain - h_original||² — preserves capabilities
-- **Key idea**: Random targets act as "attractors" pulling forget representations into meaningless directions
+| Column | Description |
+| :--- | :--- |
+| `layer` | Integer layer index |
+| `group` | `attn` or `mlp` |
+| `dW_fro_layer` | Root-sum-square of Frobenius norms in this group: √(Σ ‖ΔWᵢ‖²_F) |
+| `mean_dW_stable_rank` | Mean stable rank of ΔW across matrices in this group |
+| `mean_dW_empirical_rank`* | Mean empirical rank of ΔW across matrices in this group |
+| `count_mats` | Number of weight matrices aggregated in this group |
 
-**Circuit Breakers (CB)**: Rewires model by changing activation flow directions using cosine similarity.
-- **Forget**: -cos(h_forget, α·r) — align with random directions
-- **Retain**: 1 - cos(h_retain, h_original) — preserve original "circuits"
-- **Advantage**: Scale-invariant (focuses on direction not magnitude)
+\* *Only present when `--empirical-rank` flag is passed.*
 
-**Latent Adversarial Training (LAT)**: Makes unlearning robust against adversarial recovery.
-1. **Inner loop**: Find perturbation δ* = argmin_δ L_forget(x + δ) s.t. ||δ||∞ ≤ ε
-   - Simulates adversary trying to recover forgotten knowledge
-   - Uses projected gradient descent: δ ← clip(δ - ε·sign(∇_δ L), [-ε, ε])
-2. **Outer loop**: Train to forget even WITH optimal perturbation
-   - L = -NLL_forget(x + δ*) + NLL_retain(x)
-   - Prevents brittle unlearning that's easily reversed
+### `activation_stats/activation_stats.csv`
 
-### Enhanced Features (New)
+One row per (layer, split) combination.
 
-#### Training Optimizations
-- **Gradient Accumulation** (`--grad-accum-steps`): Simulate larger batch sizes on limited memory (set to 1 to disable)
-- **Configurable Gradient Clipping** (`--grad-clip`): Adjust or disable gradient clipping (default: 1.0, 0 to disable)
-- **Periodic Validation** (`--eval-interval`): Monitor forget/retain NLL during training for early stopping
-- **Fixed Random Seeds** (`--seed`): Ensures reproducible results across runs
-
-#### Memory Optimizations
-- **Half-precision activation caching**: Optionally reduces disk I/O by 50% during activation analysis (`--cache-fp16`)
-- **Smart parameter loading**: Streams model shards one at a time to avoid OOM
-- **Gradient checkpointing**: Automatically enabled during training to save GPU memory
-
-#### Robustness Features
-- **Architecture fallback warnings**: Clear warnings when LAT/CB-LAT encounter unsupported architectures
-- **Automatic dtype selection**: Chooses optimal precision based on hardware (bf16 for CUDA, fp16 for MPS)
-- **Device auto-detection**: Automatically uses best available accelerator (CUDA > MPS > CPU)
-
-### Quick Start
-
-```bash
-# Run a single method (uses default model: EleutherAI/deep-ignorance-unfiltered)
-./run_unlearn.sh ga
-
-# Override defaults via environment variables
-DEVICE=mps EPOCHS=3 LR=2e-5 ./run_unlearn.sh npo
-
-# Advanced: Use gradient accumulation for larger effective batch size
-uv run --script unlearn.py \
-  --model EleutherAI/deep-ignorance-unfiltered \
-  --method simnpo \
-  --batch-size 2 \
-  --grad-accum-steps 4 \  # Effective batch size = 8
-  --grad-clip 0.5 \        # Stronger clipping for stability
-  --eval-interval 50 \     # Validate every 50 steps
-  --outdir outputs/my_experiment/unlearned_model \
-  --device auto --dtype auto --epochs 1
-
-# Disable gradient accumulation and clipping for simple training
-uv run --script unlearn.py \
-  --model EleutherAI/deep-ignorance-unfiltered \
-  --method ga \
-  --grad-accum-steps 1 \   # No accumulation (default)
-  --grad-clip 0 \           # No gradient clipping
-  --outdir outputs/simple_test/unlearned_model
-```
-
-### Evaluation Split
-
-By default, 10% of forget/retain data is held out for evaluation. After training, the script reports:
-- **forget_NLL** — should be high (model forgot hazardous knowledge)
-- **retain_NLL** — should be low (model still works on general text)
-- **gap** — bigger = better unlearning
-
-```bash
-# Custom eval split (20%)
-uv run --script unlearn.py --model ... --method ga --eval-split 0.2 --outdir ...
-
-# Disable eval split (use all data for training)
-uv run --script unlearn.py --model ... --method ga --eval-split 0 --outdir ...
-
-# Enable periodic validation during training
-uv run --script unlearn.py --model ... --method ga --eval-interval 100 --outdir ...
-```
-
-### Complete Command-Line Arguments
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--model` | (required) | Base model HF ID or local path |
-| `--method` | (required) | Unlearning method (see methods table) |
-| `--forget-data` | `data/forget.txt` | Path to forget prompts |
-| `--retain-data` | `data/retain.txt` | Path to retain prompts |
-| `--outdir` | (required) | Output directory for unlearned model |
-| `--device` | `auto` | Device (auto/cuda/mps/cpu) |
-| `--dtype` | `auto` | Data type (auto/fp32/fp16/bf16) |
-| `--lr` | `1e-5` | Learning rate |
-| `--epochs` | `1` | Number of training epochs |
-| `--batch-size` | `4` | Batch size per gradient step |
-| `--grad-accum-steps` | `1` | Gradient accumulation steps |
-| `--max-length` | `512` | Maximum sequence length |
-| `--beta` | `0.1` | Inverse temperature for DPO/NPO/SimNPO |
-| `--alpha` | `100.0` | Retain weight for RMU/CB |
-| `--steering-coeff` | `20.0` | Steering coefficient for RMU/CB |
-| `--layer-id` | `"5,6,7"` | Target layers for RMU/CB/LAT |
-| `--forget-weight` | `1.0` | Forget weight for GradDiff |
-| `--lat-eps` | `0.1` | Perturbation budget for LAT |
-| `--lat-steps` | `5` | Adversarial steps for LAT |
-| `--eval-split` | `0.1` | Validation data fraction |
-| `--eval-interval` | `0` | Validate every N steps (0=disable) |
-| `--grad-clip` | `1.0` | Gradient clipping norm (0=disable) |
-| `--seed` | `42` | Random seed for reproducibility |
-
-### Output & Integration
-
-Unlearned models are saved to `outputs/<model>__<method>/unlearned_model/` and can be fed directly into the analysis pipeline as `--model-b`:
-
-```bash
-# Parameter stats: compare original vs. unlearned
-uv run --script collect_param_stats.py \
-  --model-a EleutherAI/deep-ignorance-unfiltered \
-  --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
-  --device auto --dtype auto --outdir outputs/EleutherAI_deep-ignorance-unfiltered__ga/param_stats
-
-# Activation norms: measure representation changes on forget vs. retain data
-uv run --script collect_activation_norms.py \
-  --model-a EleutherAI/deep-ignorance-unfiltered \
-  --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
-  --device auto --dtype auto --outdir outputs/EleutherAI_deep-ignorance-unfiltered__ga/activation_stats
-
-# Use half-precision caching to reduce disk I/O by 50%
-uv run --script collect_activation_norms.py \
-  --model-a EleutherAI/deep-ignorance-unfiltered \
-  --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
-  --forget-text data/forget.txt \
-  --retain-text data/retain.txt \
-  --cache-fp16 \  # Enable FP16 caching
-  --device auto --dtype auto --outdir outputs/fast_activation_stats
-```
+| Column | Description |
+| :--- | :--- |
+| `layer` | Layer index (0 to N) |
+| `split` | Dataset split: `forget` or `retain` |
+| `model_a_norm_L1` | Mean L1 norm of hidden states for model A (baseline): E[‖h‖₁] |
+| `model_a_norm_L2` | Mean L2 norm of hidden states for model A (baseline): E[‖h‖₂] |
+| `model_b_norm_L1` | Mean L1 norm of hidden states for model B (target) |
+| `model_b_norm_L2` | Mean L2 norm of hidden states for model B (target) |
+| `mean_dh_L1` | Mean L1 norm of the activation difference: E[‖Δh‖₁] |
+| `mean_dh_L2` | Mean L2 norm of the activation difference: E[‖Δh‖₂] |

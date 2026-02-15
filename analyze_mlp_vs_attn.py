@@ -25,8 +25,10 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     # Load data
+    print(f"[analyze_mlp_vs_attn] Loading per-layer and per-matrix CSVs...")
     df_layer = pd.read_csv(args.per_layer_csv)
     df_matrix = pd.read_csv(args.per_matrix_csv)
+    print(f"[analyze_mlp_vs_attn] Loaded {len(df_layer)} layer rows, {len(df_matrix)} matrix rows")
 
     # 1. Compare total magnitude of changes in MLP vs Attention
     mlp_data = df_layer[df_layer['group'] == 'mlp']
@@ -138,13 +140,13 @@ def main():
         summary_df.to_csv(os.path.join(args.outdir, 'mlp_attn_summary.csv'), index=False)
 
         # Print statistics
-        print(f"\nMLP vs Attention Analysis Summary:")
-        print(f"Average MLP/Attention change ratio: {summary_df['ratio_mlp_attn'].mean():.3f}")
-        print(f"Layers where MLP changes more: {sum(summary_df['ratio_mlp_attn'] > 1)}/{len(summary_df)}")
-        print(f"Max MLP dominance (layer {summary_df.loc[summary_df['ratio_mlp_attn'].idxmax(), 'layer']}): {summary_df['ratio_mlp_attn'].max():.3f}x")
-        print(f"Max Attention dominance (layer {summary_df.loc[summary_df['ratio_mlp_attn'].idxmin(), 'layer']}): {1/summary_df['ratio_mlp_attn'].min():.3f}x")
+        print(f"\n[analyze_mlp_vs_attn] MLP vs Attention Summary:")
+        print(f"  Average MLP/Attention change ratio: {summary_df['ratio_mlp_attn'].mean():.3f}")
+        print(f"  Layers where MLP changes more: {sum(summary_df['ratio_mlp_attn'] > 1)}/{len(summary_df)}")
+        print(f"  Max MLP dominance (layer {summary_df.loc[summary_df['ratio_mlp_attn'].idxmax(), 'layer']}): {summary_df['ratio_mlp_attn'].max():.3f}x")
+        print(f"  Max Attn dominance (layer {summary_df.loc[summary_df['ratio_mlp_attn'].idxmin(), 'layer']}): {1/summary_df['ratio_mlp_attn'].min():.3f}x")
 
-    print(f"\nPlots saved to {args.outdir}")
+    print(f"\n[analyze_mlp_vs_attn] ✓ Plots and summary saved to {args.outdir}")
 
 if __name__ == "__main__":
     main()

@@ -23,8 +23,10 @@ def main():
     csv_files = glob.glob(os.path.join(args.indir, "**/activation_stats/activation_stats.csv"), recursive=True)
 
     if not csv_files:
-        print(f"No activation_stats.csv files found in {args.indir}")
+        print(f"[plot_activation_norms] No activation_stats.csv files found in {args.indir}")
         return
+
+    print(f"[plot_activation_norms] Found {len(csv_files)} comparison(s) to plot")
 
     for csv_path in csv_files:
         # Extract comparison name: outputs/<comparison>/activation_stats/activation_stats.csv
@@ -90,9 +92,9 @@ def main():
             plt.savefig(os.path.join(plot_outdir, f"activation_diffs_{split}.png"))
             plt.close()
 
-        print(f"Wrote: {plot_outdir}")
+        print(f"[plot_activation_norms] ✓ Wrote activation plots to {plot_outdir}")
 
-    print(f"\nActivation plots complete.")
+    print(f"\n[plot_activation_norms] Done — all activation plots complete.")
 
 
 if __name__ == "__main__":

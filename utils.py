@@ -9,24 +9,56 @@ from typing import Dict, List, Optional
 import torch
 
 
-def sanitize_filename(name: str) -> str:
+def load_dotenv(path: str = None):
+    """Load .env file into environment. No external dependencies needed."""
+    if path is None:
+        # Look for .env in the same directory as this file
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(path):
+        return
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if value and not os.environ.get(key):  # Don't override existing env vars
+                os.environ[key] = value
+
+
+# Auto-load .env on import so standalone scripts get HF_TOKEN etc.
+load_dotenv()
+
+
+def compute_spectral_norm(A: torch.Tensor) -> float:
     """
-    Sanitize a string for safe use in filenames.
-    Replaces any character that isn't alphanumeric, underscore, dot, or hyphen with underscore.
+    Compute spectral norm (largest singular value) using SVD.
+    More stable than power iteration but potentially slower.
     """
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
+    if A.numel() == 0 or min(A.shape) == 0:
+        return 0.0
+    try:
+        s = torch.linalg.svdvals(A.float())
+        return float(s[0].item()) if len(s) > 0 else 0.0
+    except:
+        return spectral_norm_power(A)  # Fallback to power iteration
 
 
 # --- Device / dtype resolution ---
 def resolve_device(device: str) -> str:
     """Resolve 'auto' device to the best available (cuda > mps > cpu)."""
     if device != "auto":
-        return device
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        return "mps"
-    return "cpu"
+        resolved = device
+    elif torch.cuda.is_available():
+        resolved = "cuda"
+    elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        resolved = "mps"
+    else:
+        resolved = "cpu"
+    print(f"[device] Using device: {resolved}" + (f" (resolved from '{device}')" if device == "auto" else ""))
+    return resolved
 
 
 def resolve_dtype(dtype: str, device: str) -> torch.dtype:
@@ -73,6 +105,22 @@ def classify_coarse(param_name: str) -> str:
 
 
 # --- Math utilities ---
+def frobenius_norm(A: torch.Tensor) -> float:
+    """Compute Frobenius norm of a tensor."""
+    return float(torch.norm(A.float(), p='fro').item())
+
+
+def nuclear_norm(A: torch.Tensor) -> float:
+    """Compute nuclear norm (sum of singular values)."""
+    if A.numel() == 0 or A.ndim != 2:
+        return 0.0
+    try:
+        s = torch.linalg.svdvals(A.float())
+        return float(s.sum().item())
+    except:
+        return 0.0
+
+
 def spectral_norm_power(A: torch.Tensor, iters: int = 5, eps: float = 1e-12) -> float:
     """Estimate spectral norm using power iteration."""
     m, n = A.shape
@@ -89,15 +137,21 @@ def spectral_norm_power(A: torch.Tensor, iters: int = 5, eps: float = 1e-12) -> 
     return float(u.norm().item())
 
 
-def stable_rank(A: torch.Tensor, iters: int = 5) -> float:
-    """Compute stable rank = ||A||_F^2 / ||A||_2^2 (soft measure of matrix rank)."""
+def stable_rank(A: torch.Tensor, iters: int = 5, use_svd: bool = False) -> float:
+    """Compute stable rank = ||A||_F^2 / ||A||_2^2 (soft measure of matrix rank).
+
+    Args:
+        A: Input matrix
+        iters: Number of power iterations (ignored if use_svd=True)
+        use_svd: Use SVD instead of power iteration (more stable, potentially slower)
+    """
     if A.numel() == 0:
         return 0.0
     Af = A.float()
     fro_sq = float((Af * Af).sum(dtype=torch.float64).item())
     if fro_sq == 0.0:
         return 0.0
-    spec = spectral_norm_power(Af, iters=iters)
+    spec = compute_spectral_norm(Af) if use_svd else spectral_norm_power(Af, iters=iters)
     if spec <= 0:
         return 0.0
     return fro_sq / (spec * spec)
@@ -144,6 +198,39 @@ def empirical_rank(A: torch.Tensor, threshold: float = 0.99) -> int:
 
     # Ensure rank doesn't exceed matrix dimensions
     return min(rank, min(A.shape))
+
+
+def condition_number(A: torch.Tensor, eps: float = 1e-10) -> float:
+    """
+    Compute condition number (ratio of largest to smallest singular value).
+    Large condition numbers indicate numerical instability.
+    """
+    if A.numel() == 0 or A.ndim != 2:
+        return 1.0
+    try:
+        s = torch.linalg.svdvals(A.float())
+        if len(s) == 0:
+            return 1.0
+        s_max = s[0].item()
+        s_min = s[-1].item()
+        return s_max / max(s_min, eps)
+    except:
+        return float('inf')
+
+
+def compute_rank_deficiency(A: torch.Tensor, threshold: float = 1e-6) -> int:
+    """
+    Compute rank deficiency (how many dimensions are effectively zero).
+    Returns min(m, n) - numerical_rank.
+    """
+    if A.numel() == 0:
+        return min(A.shape) if A.ndim == 2 else 0
+    try:
+        s = torch.linalg.svdvals(A.float())
+        numerical_rank = (s > threshold).sum().item()
+        return min(A.shape) - numerical_rank
+    except:
+        return 0
 
 
 # --- I/O utilities ---

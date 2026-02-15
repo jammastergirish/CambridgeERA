@@ -61,7 +61,7 @@ def cache_hidden_states(
     sum_L2 = None
     total_tokens = 0.0
 
-    for batch_idx, i in enumerate(tqdm(range(0, len(texts), batch_size), desc=f"Caching {model_id}")):
+    for batch_idx, i in enumerate(tqdm(range(0, len(texts), batch_size), desc=f"Caching hidden states ({model_id.split('/')[-1]})", unit="batch")):
         batch = texts[i : i + batch_size]
         inp = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=max_length)
         inp = {k: v.to(device) for k, v in inp.items()}
@@ -147,7 +147,7 @@ def compute_activation_diffs(
     sum_diff_L2 = [0.0] * num_layers  # Diff L2 norms
     total_tokens = 0.0
 
-    for batch_idx, i in enumerate(tqdm(range(0, len(texts), batch_size), desc=f"Diffing {model_id}")):
+    for batch_idx, i in enumerate(tqdm(range(0, len(texts), batch_size), desc=f"Computing activation diffs ({model_id.split('/')[-1]})", unit="batch")):
         batch = texts[i : i + batch_size]
         inp = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=max_length)
         inp = {k: v.to(device) for k, v in inp.items()}
@@ -226,10 +226,10 @@ def main():
     args = ap.parse_args()
 
     if not args.forget_text or not os.path.exists(args.forget_text):
-        print("Skipping: forget-text missing/not found")
+        print("[collect_activation_norms] Skipping: forget-text missing/not found")
         return
     if not args.retain_text or not os.path.exists(args.retain_text):
-        print("Skipping: retain-text missing/not found")
+        print("[collect_activation_norms] Skipping: retain-text missing/not found")
         return
 
     device = resolve_device(args.device)
@@ -241,17 +241,19 @@ def main():
     rows = []
 
     # Warn about caching mode for reproducibility
+    print(f"[collect_activation_norms] Model A: {args.model_a}")
+    print(f"[collect_activation_norms] Model B: {args.model_b}")
+    print(f"[collect_activation_norms] Forget samples: {len(forget)}  |  Retain samples: {len(retain)}")
     if args.cache_fp16:
-        print("[WARNING] Using FP16 caching - this reduces precision for faster I/O")
-        print("          For exact reproducibility, omit --cache-fp16")
+        print("[collect_activation_norms] ⚠ Using FP16 caching — reduced precision for faster I/O")
     else:
-        print("[INFO] Using full precision caching (default)")
+        print("[collect_activation_norms] Using full-precision caching")
 
     for split_name, texts in [("forget", forget), ("retain", retain)]:
         cache_dir = tempfile.mkdtemp(prefix="activation_cache_")
 
         try:
-            print(f"\n=== {split_name.upper()} split ===")
+            print(f"\n[collect_activation_norms] ── {split_name.upper()} split ──")
 
             # Step 1: Cache model_a hidden states + get absolute norms
             result_a = cache_hidden_states(
@@ -298,7 +300,7 @@ def main():
     outpath = os.path.join(args.outdir, "activation_stats.csv")
     fieldnames = ["layer", "split", "model_a_norm_L1", "model_a_norm_L2", "model_b_norm_L1", "model_b_norm_L2", "mean_dh_L1", "mean_dh_L2"]
     write_csv(outpath, rows, fieldnames)
-    print(f"\nWrote: {outpath}")
+    print(f"\n[collect_activation_norms] ✓ Wrote activation stats to {outpath}")
 
 
 if __name__ == "__main__":

@@ -1,2 +1,5 @@
+.env
 outputs/
 plots/
+__pycache__/
+*.pyc
