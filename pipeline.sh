@@ -29,6 +29,11 @@ UNLEARNED="EleutherAI/deep-ignorance-unfiltered-cb-lat"
 COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-strong-filter"
 COMP2="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-unfiltered-cb-lat"
 
+# Per-model folder names (for analyses that run once per model, not per comparison)
+MODEL_BASE="EleutherAI_deep-ignorance-unfiltered"
+MODEL_FILTERED="EleutherAI_deep-ignorance-e2e-strong-filter"
+MODEL_UNLEARNED="EleutherAI_deep-ignorance-unfiltered-cb-lat"
+
 # Device and dtype settings
 PARAM_DEVICE="${PARAM_DEVICE:-auto}"  # auto = cuda > mps > cpu
 PARAM_DTYPE="${PARAM_DTYPE:-fp16}"
@@ -452,6 +457,61 @@ else
 fi
 
 # ============================================
+# STEP 13: Linear Probe Analysis (per-model)
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 13: Linear Probe Analysis"
+echo "=========================================="
+echo "Training per-layer linear probes to locate forget-set knowledge..."
+echo "(Results stored per-model, not per-comparison)"
+
+echo ""
+echo "Model: $BASE"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${MODEL_BASE}/linear_probes" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run linear_probe_analysis.py \
+    --model "$BASE" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE" \
+    --outdir "${OUTROOT}/${MODEL_BASE}/linear_probes"
+fi
+
+echo ""
+echo "Model: $FILTERED"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${MODEL_FILTERED}/linear_probes" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run linear_probe_analysis.py \
+    --model "$FILTERED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE" \
+    --outdir "${OUTROOT}/${MODEL_FILTERED}/linear_probes"
+fi
+
+echo ""
+echo "Model: $UNLEARNED"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/linear_probes" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run linear_probe_analysis.py \
+    --model "$UNLEARNED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE" \
+    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/linear_probes"
+fi
+
+# ============================================
 # COMPLETION
 # ============================================
 echo ""
@@ -473,6 +533,9 @@ echo "    activation_covariance/ covariance spectra + plots"
 echo "    mlp_nullspace/         alignment metrics + plots"
 echo "    row_space_projection/  projection metrics + plots"
 echo "    lipschitzness/         Lipschitz estimates + plots"
+echo ""
+echo "  <model>/"
+echo "    linear_probes/         probe_results.csv, summary.json + plot"
 echo ""
 echo "Tip: rerun with --force to regenerate all results."
 echo ""

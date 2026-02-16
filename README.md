@@ -49,14 +49,16 @@ By contrasting these two comparisons, you can distinguish *deep representational
 
 ### The Diagnostics: What and Why
 
-The 12 steps form a hierarchy from **coarse to fine**, and from **weight-space to activation-space**:
+The 13 steps form a hierarchy from **coarse to fine**, and from **weight-space to activation-space**:
 
 ```mermaid
 graph TD
     A["Weight-Space Diagnostics<br/>(Steps 1-2, 6-7, 10)"] --> C["How much did parameters change?<br/>Where? In what directions?"]
     B["Activation-Space Diagnostics<br/>(Steps 4-5, 8-9, 11-12)"] --> D["How do those changes affect<br/>what the model computes?"]
+    F["Knowledge Localization<br/>(Step 13)"] --> G["Where is the forget-set knowledge<br/>encoded in each model?"]
     C --> E["Mechanistic Signature<br/>of the Intervention"]
     D --> E
+    G --> E
 ```
 
 ---
@@ -199,6 +201,30 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ---
 
+#### Knowledge Localization
+
+Unlike Steps 1–12 which compare pairs of models, Step 13 analyzes **each model individually**.
+
+##### Step 13: Linear Probe Analysis (`linear_probe_analysis.py`)
+
+**Question:** *At which layer is the forget-set knowledge most linearly readable?*
+
+For each layer, this script extracts the **last-token hidden state** (the most context-rich position in a causal LM) on both forget and retain texts, then trains a logistic regression "probe" to classify whether an activation came from forget or retain text.
+
+| Metric | What it tells you |
+|---|---|
+| **Probe accuracy** | How well a linear classifier can distinguish forget from retain activations at this layer |
+| **Selectivity** | Accuracy minus majority-class baseline — how much the probe exceeds random guessing. High selectivity = the layer linearly encodes the forget/retain distinction. |
+| **AUC** (Area Under the ROC Curve) | How well the probe ranks forget vs retain samples, regardless of threshold. 0.5 = random, 1.0 = perfect separation. More robust than accuracy when class sizes are imbalanced. |
+
+Default probe: `LogisticRegression(C=1.0, max_iter=1000)` — adjustable via `--C` and `--max-iter`.
+
+**Why this matters:** This identifies *where* in the network the model stores information that distinguishes hazardous content from benign content. In a well-unlearned model, you'd expect low selectivity everywhere — the model genuinely can't tell the domains apart. In a poorly unlearned model, the probes will still find layers with high selectivity, meaning the knowledge is still encoded and a linear readout can recover it. Comparing probe profiles across BASE, FILTERED, and UNLEARNED reveals whether unlearning actually erased the representation or just hid it from the output head.
+
+> **Note:** Unlike other steps, results are stored **per-model** (not per-comparison) since probes analyze a single model's representations.
+
+---
+
 ### The Big Picture
 
 The diagnostics answer an escalating series of questions:
@@ -211,6 +237,7 @@ The diagnostics answer an escalating series of questions:
 | **Function** | Do activations actually change on target text? | 4–5, 8–9 |
 | **Precision** | Is the change *targeted* at forget-domain inputs? | 11 |
 | **Stability** | Is the new behavior robust or fragile? | 12 |
+| **Knowledge Localization** | Where is forget-set knowledge encoded? | 13 |
 
 The thesis prediction is that unlearning methods (CB-LAT) will show: small magnitude, attention-localized, low-rank, nullspace-aligned, minimal activation change, low selectivity, and increased roughness — the full mechanistic signature of a brittle intervention. While filtering will show the opposite across every dimension.
 
@@ -222,7 +249,7 @@ All results are saved under a single root (default `outputs/`):
 
 ```
 outputs/
-  <comparison>/
+  <comparison>/                        # Steps 1–12: per model-pair
     param_stats/           per_matrix.csv, per_layer.csv
     param_plots/           Layer locality, stable rank, rank comparison PNGs
     activation_stats/      activation_stats.csv
@@ -234,6 +261,9 @@ outputs/
     mlp_nullspace/         alignment metrics + plots
     row_space_projection/  projection metrics + plots
     lipschitzness/         Lipschitz estimates + plots
+
+  <model>/                             # Step 13: per individual model
+    linear_probes/         probe_results.csv, summary.json + plot
 ```
 
 > **Tip:** The pipeline automatically skips steps whose output already exists. Use `./pipeline.sh --force` to regenerate everything.
