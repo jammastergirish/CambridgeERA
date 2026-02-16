@@ -4,25 +4,37 @@ This repository contains a diagnostic pipeline for creating unlearned large lang
 
 ## Quick Start
 
-Add `HF_TOKEN` to `.env`
+Add `HF_TOKEN` to `.env` and ensure the `uv` package manager is installed.
 
 ```bash
 ./pipeline.sh
 ```
+---
+
+## Datasets
+
+`uv run create_datasets.py` creates two text datasets that serve in training for unlearning, and as *probes* for activation-level analyses:
+
+| Dataset | Source | Purpose |
+|---|---|---|
+| `forget.txt` | WMDP-Bio questions | Text the model *should* have forgotten — the "target" of unlearning |
+| `retain.txt` | WikiText-2 | Benign text the model *should* still handle well — the "control" |
+
+These are analogous to stimulus and control conditions in an experiment. Every activation-level diagnostic (Steps 8–12) runs on *both* datasets, measuring whether interventions selectively affect forget-domain processing while preserving retain-domain processing.
 
 ---
 
-## EXPERIMENT
+## Experiment
 
 ### The Experimental Setup
 
-The pipeline performs a **controlled experiment** with three models sharing identical architecture:
+The pipeline performs a **controlled experiment** with three models sharing identical architecture. 
 
 | Model | Role | What happened to it |
 |---|---|---|
 | `deep-ignorance-unfiltered` | **Base** (control) | Trained on everything, including WMDP-Bio hazardous content |
 | `deep-ignorance-e2e-strong-filter` | **Filtered** (gold standard) | Trained from scratch with hazardous data *removed before training* |
-| `deep-ignorance-unfiltered-cb-lat` | **Unlearned** (intervention) | Same as Base, but post-hoc unlearned via Circuit Breakers + LAT |
+| `deep-ignorance-unfiltered-XXXXXX` | **Unlearned** (intervention) | Same as Base, but post-hoc unlearned |
 
 Every diagnostic runs **twice** — once for each comparison — always using the Base model as the reference:
 
@@ -32,19 +44,6 @@ Comparison 2:  Base → Unlearned    (What does post-hoc unlearning look like?)
 ```
 
 By contrasting these two comparisons, you can distinguish *deep representational change* (filtering) from *shallow parameter patching* (unlearning).
-
----
-
-### The Two Datasets
-
-**Step 3** creates two text datasets that serve as *probes* for the activation-level analyses:
-
-| Dataset | Source | Purpose |
-|---|---|---|
-| `forget.txt` | WMDP-Bio questions | Text the model *should* have forgotten — the "target" of unlearning |
-| `retain.txt` | WikiText-2 | Benign text the model *should* still handle well — the "control" |
-
-These are analogous to stimulus and control conditions in an experiment. Every activation-level diagnostic (Steps 8–12) runs on *both* datasets, measuring whether interventions selectively affect forget-domain processing while preserving retain-domain processing.
 
 ---
 
@@ -77,7 +76,7 @@ For every weight matrix `W` in the model, this computes:
 | **Frobenius norm** of ΔW | ‖ΔW‖_F = √(Σᵢⱼ ΔWᵢⱼ²) | Total magnitude of change — how much did this matrix move? |
 | **Stable rank** of ΔW | ‖ΔW‖²_F / ‖ΔW‖²₂ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank ≈ 1. A full-rank rewrite gives stable rank ≈ min(m,n). |
 | **Stable rank** of W | Same, on original | Baseline dimensionality for comparison |
-| **Empirical rank** (opt-in: `--empirical-rank`) | min k s.t. Σᵢᵏ σᵢ² ≥ 0.99·Σ σᵢ² | Discrete count of dimensions capturing 99% of variance (requires full SVD, slow) |
+| **Empirical rank** (opt-in: `--empirical-rank`) | min k s.t. Σᵢᵏ σᵢ² ≥ 0.99·Σ σᵢ² | Discrete count of dimensions capturing 99% of variance (requires full SVD, so slow, so we default to not do this) |
 
 These are aggregated per layer and split into **MLP vs Attention** groups, then plotted.
 
@@ -202,7 +201,7 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ### The Big Picture
 
-Reading left-to-right, the diagnostics answer an escalating series of questions:
+The diagnostics answer an escalating series of questions:
 
 | Level | Question | Steps |
 |---|---|---|
@@ -240,15 +239,13 @@ plots/
 
 ---
 
-## UNLEARNING
-
-Run unlearning experiments with **10 methods** via `run_unlearn.sh`, then feed the output into the diagnostic pipeline:
+## Unlearning
 
 ```bash
 # Run unlearning
-./run_unlearn.sh ga
+./create_all_unlearning_models.sh
 
-# Analyze the result
+# Analyze the result(s) per the above experiments
 uv run collect_param_stats.py \
   --model-a EleutherAI/deep-ignorance-unfiltered \
   --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
