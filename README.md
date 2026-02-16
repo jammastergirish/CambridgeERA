@@ -65,7 +65,7 @@ By contrasting these two comparisons, you can distinguish *deep representational
 graph TD
     A["Parameter-Space"] --> C["How much did parameters change?<br/>Where? In what directions?"]
     B["Activation-Space"] --> D["How do those changes affect<br/>what the model computes?"]
-    F["Knowledge Localization"] --> G["At what layer is the forget-set knowledge<br/>encoded in each model?"]
+    B --> G["At what layer is the forget-set knowledge<br/>encoded in each model?"]
     C --> E["Mechanistic Signature<br/>of the Intervention"]
     D --> E
     G --> E
