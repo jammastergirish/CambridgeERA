@@ -4,3 +4,4 @@ plots/
 __pycache__/
 *.pyc
 unlearned_models/
+.DS_Store

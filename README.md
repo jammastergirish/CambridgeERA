@@ -1,6 +1,6 @@
 # What Makes Unlearning Brittle? A Mechanistic Study of Parameter-Space Interventions
 
-This repository contains a diagnostic pipeline for creating unlearned large language models using various unlearning algorihtms, and then analyzing how these methods alter models in both parameter and activation spaces. The goal is to identify mechanistic signatures that distinguish deep representational change from shallow parameter patching.
+This repository contains a pipeline for creating unlearned large language models using various unlearning algorihtms, and then analyzing how these methods alter models in both parameter and activation spaces. The goal is to identify mechanistic signatures that distinguish deep representational change from shallow parameter patching.
 
 ## Quick Start
 
