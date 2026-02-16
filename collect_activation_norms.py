@@ -5,6 +5,8 @@
 #   "transformers",
 #   "numpy",
 #   "tqdm",
+#   "wandb",
+#   "pandas",
 # ]
 # ///
 
@@ -20,7 +22,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils import resolve_device, resolve_dtype
+from utils import resolve_device, resolve_dtype, init_wandb, log_csv_as_table, finish_wandb
 
 
 def read_lines(path: str, max_samples: int) -> List[str]:
@@ -224,6 +226,7 @@ def main():
     ap.add_argument("--cache-fp16", action="store_true",
                     help="Use half-precision caching to reduce disk I/O (default: False)")
     args = ap.parse_args()
+    init_wandb("collect_activation_norms", args)
 
     if not args.forget_text or not os.path.exists(args.forget_text):
         print("[collect_activation_norms] Skipping: forget-text missing/not found")
@@ -301,6 +304,8 @@ def main():
     fieldnames = ["layer", "split", "model_a_norm_L1", "model_a_norm_L2", "model_b_norm_L1", "model_b_norm_L2", "mean_dh_L1", "mean_dh_L2"]
     write_csv(outpath, rows, fieldnames)
     print(f"\n[collect_activation_norms] ✓ Wrote activation stats to {outpath}")
+    log_csv_as_table(outpath, "activation_stats")
+    finish_wandb()
 
 
 if __name__ == "__main__":

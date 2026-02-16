@@ -7,6 +7,8 @@
 #   "tqdm",
 #   "safetensors",
 #   "huggingface_hub",
+#   "wandb",
+#   "pandas",
 # ]
 # ///
 
@@ -31,6 +33,9 @@ from utils import (
     stable_rank,
     empirical_rank,
     write_csv,
+    init_wandb,
+    log_csv_as_table,
+    finish_wandb,
 )
 
 
@@ -168,6 +173,7 @@ def main():
     ap.add_argument("--outdir", default="outputs/param_stats")
     ap.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
     args = ap.parse_args()
+    init_wandb("collect_param_stats", args)
 
     # Set seed for reproducibility (vital for Power Iteration stability)
     torch.manual_seed(args.seed)
@@ -305,6 +311,9 @@ def main():
     )
 
     print(f"[collect_param_stats] ✓ Wrote {len(rows)} per-matrix rows and {len(layer_rows)} per-layer rows to {args.outdir}")
+    log_csv_as_table(os.path.join(args.outdir, "per_matrix.csv"), "per_matrix")
+    log_csv_as_table(os.path.join(args.outdir, "per_layer.csv"), "per_layer")
+    finish_wandb()
 
 if __name__ == "__main__":
     main()

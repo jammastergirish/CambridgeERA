@@ -10,12 +10,15 @@ if [[ "${1:-}" == "--force" ]]; then
   echo "[pipeline] --force: will rerun all steps regardless of existing results"
 fi
 
-# Load .env (HF_TOKEN, etc.) if present
+# Load .env (HF_TOKEN, WANDB_API_KEY, etc.) if present
 if [ -f .env ]; then
     set -a
     source .env
     set +a
 fi
+
+# Group all W&B runs from this pipeline invocation together
+export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-pipeline_$(date +%s)}"
 
 # Configuration — single output root for all results
 OUTROOT="${OUTROOT:-outputs}"

@@ -6,6 +6,8 @@
 #   "numpy",
 #   "matplotlib",
 #   "tqdm",
+#   "wandb",
+#   "pandas",
 # ]
 # ///
 
@@ -24,7 +26,7 @@ from tqdm import tqdm
 import json
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from utils import resolve_device, resolve_dtype, write_csv
+from utils import resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
 
 
 def estimate_local_lipschitz(model, tokenizer, texts, device, dtype,
@@ -179,6 +181,7 @@ def main():
     ap.add_argument("--outdir", default="outputs/lipschitzness_analysis")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    init_wandb("local_lipschitzness", args)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -457,6 +460,9 @@ def main():
     print(f"[local_lipschitz] Forget Lipschitz change: {forget_lip_change:.3f}")
     print(f"[local_lipschitz] Retain Lipschitz change: {retain_lip_change:.3f}")
     print(f"[local_lipschitz] Forget became {'smoother' if forget_lip_ratio < 0.9 else 'rougher' if forget_lip_ratio > 1.1 else 'similar'}")
+    log_csv_as_table(os.path.join(args.outdir, "lipschitzness_summary.csv"), "lipschitzness_summary")
+    log_plots(args.outdir, "lipschitzness")
+    finish_wandb()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@
 #   "matplotlib",
 #   "tqdm",
 #   "scipy",
+#   "wandb",
+#   "pandas",
 # ]
 # ///
 
@@ -25,7 +27,7 @@ import json
 from scipy.stats import wasserstein_distance
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from utils import resolve_device, resolve_dtype, write_csv
+from utils import resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
 
 
 def get_activations_batch(model, tokenizer, texts, layer_idx, device, max_length=512, batch_size=8):
@@ -131,6 +133,7 @@ def main():
     ap.add_argument("--outdir", default="outputs/activation_covariance")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    init_wandb("activation_covariance", args)
 
     # Set seed
     np.random.seed(args.seed)
@@ -395,6 +398,9 @@ def main():
     print(f"[activation_covariance] Forget spectrum change (Wasserstein): {avg_forget_wasserstein:.3f}")
     print(f"[activation_covariance] Retain spectrum change (Wasserstein): {avg_retain_wasserstein:.3f}")
     print(f"[activation_covariance] Selectivity ratio: {summary['selective_ratio']:.2f}x")
+    log_csv_as_table(os.path.join(args.outdir, "covariance_metrics.csv"), "covariance_metrics")
+    log_plots(args.outdir, "activation_covariance")
+    finish_wandb()
 
 
 if __name__ == "__main__":

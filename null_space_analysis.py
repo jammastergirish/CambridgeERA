@@ -6,6 +6,8 @@
 #   "numpy",
 #   "matplotlib",
 #   "scipy",
+#   "wandb",
+#   "pandas",
 # ]
 # ///
 
@@ -16,7 +18,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from utils import resolve_device, resolve_dtype, write_csv, classify_coarse
+from utils import resolve_device, resolve_dtype, write_csv, classify_coarse, init_wandb, log_csv_as_table, log_plots, finish_wandb
 from collect_param_stats import SmartLoader
 
 
@@ -107,6 +109,7 @@ def main():
     ap.add_argument("--num-samples", type=int, default=50, help="Number of weight matrices to sample")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    init_wandb("null_space_analysis", args)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -234,6 +237,9 @@ def main():
         print(f"Attention - Avg subspace alignment: {np.mean(attn_results['alignment']):.3f}")
 
     print(f"\n[null_space_analysis] ✓ Results saved to {args.outdir}")
+    log_csv_as_table(os.path.join(args.outdir, "null_space_results.csv"), "null_space_results")
+    log_plots(args.outdir, "null_space")
+    finish_wandb()
 
 
 if __name__ == "__main__":

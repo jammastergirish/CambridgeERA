@@ -4,7 +4,7 @@ This repository contains a diagnostic pipeline for creating unlearned large lang
 
 ## Quick Start
 
-Add `HF_TOKEN` to `.env` and ensure the `uv` package manager is installed.
+Add `HF_TOKEN`and `WANDB_API_KEY` to `.env` and ensure the `uv` package manager is installed.
 
 ```bash
 ./pipeline.sh

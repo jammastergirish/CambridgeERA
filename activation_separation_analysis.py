@@ -7,6 +7,8 @@
 #   "matplotlib",
 #   "scikit-learn",
 #   "tqdm",
+#   "wandb",
+#   "pandas",
 # ]
 # ///
 
@@ -26,7 +28,7 @@ from tqdm import tqdm
 import json
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from utils import resolve_device, resolve_dtype, write_csv
+from utils import resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
 
 
 def get_activations(model, tokenizer, texts, layer_idx, device, max_length=512, batch_size=8):
@@ -115,6 +117,7 @@ def main():
     ap.add_argument("--outdir", default="outputs/activation_separation")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    init_wandb("activation_separation", args)
 
     # Set seed
     np.random.seed(args.seed)
@@ -340,6 +343,9 @@ def main():
     print(f"\n[activation_separation] ✓ Results saved to {args.outdir}")
     print(f"[activation_separation] Average separation change (cosine): {avg_cosine_change:.3f}")
     print(f"[activation_separation] Maximum separation at layer {summary['max_separation_layer']}: {summary['max_separation_value']:.3f}")
+    log_csv_as_table(os.path.join(args.outdir, "separation_metrics.csv"), "separation_metrics")
+    log_plots(args.outdir, "activation_separation")
+    finish_wandb()
 
 
 if __name__ == "__main__":

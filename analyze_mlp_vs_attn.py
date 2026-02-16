@@ -5,6 +5,7 @@
 #   "pandas",
 #   "matplotlib",
 #   "numpy",
+#   "wandb",
 # ]
 # ///
 
@@ -14,6 +15,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
+from utils import init_wandb, log_csv_as_table, log_plots, finish_wandb
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--per-layer-csv", required=True, help="Path to per_layer.csv from collect_param_stats.py")
@@ -21,6 +24,7 @@ def main():
     ap.add_argument("--outdir", default="outputs/mlp_attn_analysis")
     ap.add_argument("--title", default=None, help="Title for plots")
     args = ap.parse_args()
+    init_wandb("analyze_mlp_vs_attn", args)
 
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -147,6 +151,9 @@ def main():
         print(f"  Max Attn dominance (layer {summary_df.loc[summary_df['ratio_mlp_attn'].idxmin(), 'layer']}): {1/summary_df['ratio_mlp_attn'].min():.3f}x")
 
     print(f"\n[analyze_mlp_vs_attn] ✓ Plots and summary saved to {args.outdir}")
+    log_csv_as_table(os.path.join(args.outdir, "mlp_attn_summary.csv"), "mlp_attn_summary")
+    log_plots(args.outdir, "mlp_attn")
+    finish_wandb()
 
 if __name__ == "__main__":
     main()

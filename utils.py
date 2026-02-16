@@ -243,3 +243,79 @@ def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         w.writerows(rows)
+
+
+# --- Weights & Biases helpers ---
+def _derive_run_name(script_name: str, args) -> str:
+    """Derive a descriptive W&B run name from args.outdir (last 2 path segments)."""
+    outdir = getattr(args, "outdir", None)
+    if not outdir:
+        return script_name
+    # Normalise and grab last 2 non-empty components
+    parts = [p for p in outdir.replace("\\", "/").split("/") if p]
+    # Strip common root prefixes like "outputs" or "unlearned_models"
+    while parts and parts[0] in ("outputs", "unlearned_models", "plots"):
+        parts = parts[1:]
+    if len(parts) >= 2:
+        return "/".join(parts[-2:])
+    if parts:
+        return parts[-1]
+    return script_name
+
+
+def init_wandb(script_name: str, args, project: str = "cambridge_era", **kw):
+    """Initialise a W&B run.  No-ops gracefully if wandb is not installed or WANDB_MODE=disabled."""
+    try:
+        import wandb
+    except ImportError:
+        print(f"[wandb] wandb not installed — skipping logging for {script_name}")
+        return None
+    run_name = _derive_run_name(script_name, args)
+    group = os.environ.get("WANDB_RUN_GROUP", None)
+    run = wandb.init(
+        project=project,
+        name=run_name,
+        config=vars(args) if hasattr(args, "__dict__") else {},
+        group=group,
+        tags=[script_name],
+        reinit=True,
+        **kw,
+    )
+    return run
+
+
+def log_csv_as_table(csv_path: str, key: str = "results"):
+    """Upload a CSV file as a wandb.Table artefact."""
+    try:
+        import wandb
+        if wandb.run is None:
+            return
+        import pandas as pd
+        df = pd.read_csv(csv_path)
+        wandb.log({key: wandb.Table(dataframe=df)})
+    except Exception:
+        pass
+
+
+def log_plots(outdir: str, key_prefix: str = "plots"):
+    """Glob all PNGs in *outdir* and log them as wandb.Images."""
+    try:
+        import wandb
+        import glob as _glob
+        if wandb.run is None:
+            return
+        for png in sorted(_glob.glob(os.path.join(outdir, "*.png"))):
+            name = os.path.splitext(os.path.basename(png))[0]
+            wandb.log({f"{key_prefix}/{name}": wandb.Image(png)})
+    except Exception:
+        pass
+
+
+def finish_wandb():
+    """Finish the current W&B run if active."""
+    try:
+        import wandb
+        if wandb.run is not None:
+            wandb.finish()
+    except Exception:
+        pass

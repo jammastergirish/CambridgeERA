@@ -7,6 +7,8 @@
 #   "tqdm",
 #   "safetensors",
 #   "huggingface_hub",
+#   "wandb",
+#   "pandas",
 # ]
 # ///
 
@@ -23,7 +25,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import json
 
-from utils import resolve_device, resolve_dtype, write_csv, extract_layer, classify_coarse
+from utils import resolve_device, resolve_dtype, write_csv, extract_layer, classify_coarse, init_wandb, log_csv_as_table, log_plots, finish_wandb
 from collect_param_stats import SmartLoader
 
 
@@ -133,6 +135,7 @@ def main():
     ap.add_argument("--outdir", default="outputs/mlp_nullspace_alignment")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    init_wandb("mlp_nullspace_alignment", args)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -368,6 +371,10 @@ def main():
     print(f"[mlp_nullspace_alignment] Average nullspace projection: {summary['avg_nullspace_ratio']:.3f}")
     print(f"[mlp_nullspace_alignment] Average colspace projection: {summary['avg_colspace_ratio']:.3f}")
     print(f"[mlp_nullspace_alignment] Updates are {'primarily off-manifold' if summary['primarily_off_manifold'] else 'mostly on-manifold'}")
+    log_csv_as_table(os.path.join(args.outdir, "mlp_nullspace_metrics.csv"), "mlp_nullspace_metrics")
+    log_csv_as_table(os.path.join(args.outdir, "layer_nullspace_summary.csv"), "layer_nullspace_summary")
+    log_plots(args.outdir, "mlp_nullspace")
+    finish_wandb()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@
 #   "matplotlib",
 #   "scikit-learn",
 #   "tqdm",
+#   "wandb",
+#   "pandas",
 # ]
 # ///
 
@@ -31,7 +33,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils import resolve_device, resolve_dtype, write_csv
+from utils import resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
 
 
 # ---- helpers ----------------------------------------------------------------
@@ -92,6 +94,7 @@ def main():
     ap.add_argument("--max-iter", type=int, default=1000,
                     help="Solver max iterations for logistic regression")
     args = ap.parse_args()
+    init_wandb("linear_probe", args)
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -241,6 +244,9 @@ def main():
     print(f"\n[linear_probe] ✓ Results saved to {args.outdir}")
     print(f"[linear_probe] Best selectivity: layer {best['layer']} "
           f"(selectivity={best['selectivity']:.4f}, acc={best['test_accuracy']:.4f})")
+    log_csv_as_table(os.path.join(args.outdir, "probe_results.csv"), "probe_results")
+    log_plots(args.outdir, "linear_probe")
+    finish_wandb()
 
 
 if __name__ == "__main__":

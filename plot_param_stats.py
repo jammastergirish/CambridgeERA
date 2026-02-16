@@ -2,7 +2,8 @@
 # /// script
 # dependencies = [
 #   "pandas",
-#   "matplotlib"
+#   "matplotlib",
+#   "wandb",
 # ]
 # ///
 
@@ -11,12 +12,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 
+from utils import init_wandb, log_plots, finish_wandb
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--per-layer-csv", required=True)
     ap.add_argument("--outdir", default="plots")
     ap.add_argument("--title", default=None)
     args = ap.parse_args()
+    init_wandb("plot_param_stats", args)
 
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -92,6 +96,8 @@ def main():
             plt.close()
 
     print(f"[plot_param_stats] ✓ All plots written to {args.outdir}")
+    log_plots(args.outdir, "param_plots")
+    finish_wandb()
 
 if __name__ == "__main__":
     main()

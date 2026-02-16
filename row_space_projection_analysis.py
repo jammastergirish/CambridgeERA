@@ -8,6 +8,8 @@
 #   "tqdm",
 #   "safetensors",
 #   "huggingface_hub",
+#   "wandb",
+#   "pandas",
 # ]
 # ///
 
@@ -27,7 +29,7 @@ import tempfile
 import shutil
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from utils import resolve_device, resolve_dtype, write_csv, extract_layer
+from utils import resolve_device, resolve_dtype, write_csv, extract_layer, init_wandb, log_csv_as_table, log_plots, finish_wandb
 from collect_param_stats import SmartLoader
 
 
@@ -193,6 +195,7 @@ def main():
     ap.add_argument("--outdir", default="outputs/row_space_projection")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    init_wandb("row_space_projection", args)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -460,6 +463,10 @@ def main():
         print(f"[row_space_projection] Forget projection: {avg_forget_proj:.3f}")
         print(f"[row_space_projection] Retain projection: {avg_retain_proj:.3f}")
         print(f"[row_space_projection] Selectivity: {summary['projection_ratio']:.2f}x more aligned with forget data")
+        log_csv_as_table(os.path.join(args.outdir, "row_space_projections.csv"), "row_space_projections")
+        log_csv_as_table(os.path.join(args.outdir, "layer_projection_summary.csv"), "layer_projection_summary")
+        log_plots(args.outdir, "row_space")
+        finish_wandb()
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@
 # /// script
 # dependencies = [
 #   "pandas",
-#   "matplotlib"
+#   "matplotlib",
+#   "wandb",
 # ]
 # ///
 
@@ -12,12 +13,15 @@ import matplotlib.pyplot as plt
 import os
 import glob
 
+from utils import init_wandb, log_plots, finish_wandb
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--indir", default="outputs", help="Root outputs directory")
     ap.add_argument("--outdir", default="plots", help="Root plots directory")
     args = ap.parse_args()
+    init_wandb("plot_activation_norms", args)
 
     # Find all activation_stats.csv files
     csv_files = glob.glob(os.path.join(args.indir, "**/activation_stats/activation_stats.csv"), recursive=True)
@@ -95,6 +99,8 @@ def main():
         print(f"[plot_activation_norms] ✓ Wrote activation plots to {plot_outdir}")
 
     print(f"\n[plot_activation_norms] Done — all activation plots complete.")
+    log_plots(args.outdir, "activation_plots")
+    finish_wandb()
 
 
 if __name__ == "__main__":

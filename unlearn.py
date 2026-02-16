@@ -5,6 +5,7 @@
 #     "transformers",
 #     "accelerate",
 #     "tqdm",
+#     "wandb",
 # ]
 # ///
 """
@@ -631,6 +632,10 @@ def main():
                         help="Evaluate every N steps during training (0 to disable)")
     args = parser.parse_args()
 
+    # ---- W&B ----
+    from utils import init_wandb, finish_wandb
+    init_wandb("unlearn", args)
+
     # ---- Setup ----
     device = resolve_device(args.device)
     pt_dtype = resolve_dtype(args.dtype, device)
@@ -845,6 +850,13 @@ def main():
             # Display unscaled loss for consistency
             display_loss = loss.item() * args.grad_accum_steps if args.grad_accum_steps > 1 else loss.item()
             pbar.set_postfix(loss=f"{display_loss:.4f}", avg=f"{avg:.4f}", lr=f"{scheduler.get_last_lr()[0]:.2e}")
+            try:
+                import wandb
+                if wandb.run is not None:
+                    wandb.log({"train/loss": display_loss, "train/avg_loss": avg,
+                               "train/lr": scheduler.get_last_lr()[0], "global_step": global_step})
+            except Exception:
+                pass
 
             # Periodic validation
             if args.eval_interval > 0 and global_step % args.eval_interval == 0:
@@ -863,6 +875,15 @@ def main():
         print(f"[unlearn] Eval  forget_NLL={forget_nll:.4f}  retain_NLL={retain_nll:.4f}")
         print(f"[unlearn] Eval  gap (forget - retain) = {forget_nll - retain_nll:.4f}")
         print(f"[unlearn]   → Good unlearning: high forget_NLL + low retain_NLL\n")
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.log({"eval/forget_nll": forget_nll, "eval/retain_nll": retain_nll,
+                           "eval/gap": forget_nll - retain_nll})
+                wandb.summary.update({"final_forget_nll": forget_nll, "final_retain_nll": retain_nll,
+                                      "final_gap": forget_nll - retain_nll})
+        except Exception:
+            pass
 
     # ---- Save ----
     print(f"[unlearn] Saving model to {args.outdir} ...")
@@ -877,6 +898,7 @@ def main():
     print("[unlearn] Done ✓")
     print("===================================================================")
     print("===================================================================")
+    finish_wandb()
 
 
 if __name__ == "__main__":
