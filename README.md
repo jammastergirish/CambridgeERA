@@ -269,6 +269,31 @@ See `uv run unlearn.py --help` for full argument reference.
 
 ---
 
+## Inference
+
+Run prompts against any model — HuggingFace or local unlearned:
+
+```bash
+# Single prompt
+uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is biotin?"
+
+# Local unlearned model
+uv run infer.py --model unlearned_models/EleutherAI_deep-ignorance-unfiltered__ga --prompt "What is biotin?"
+
+# Side-by-side comparison
+uv run infer.py \
+  --model EleutherAI/deep-ignorance-unfiltered \
+  --model-b EleutherAI/deep-ignorance-unfiltered-cb-lat \
+  --prompt "What is biotin?"
+
+# Interactive mode
+uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --interactive
+```
+
+Options: `--max-new-tokens`, `--temperature`, `--top-p`, `--greedy`. See `uv run infer.py --help`.
+
+---
+
 ## Appendix A: CSV Column Reference
 
 ### `param_stats/per_matrix.csv`
