@@ -85,10 +85,10 @@ For every weight matrix `W` in the model, this computes:
 
 | Metric | Formula | What it tells you |
 |---|---|---|
-| **Relative Frobenius norm** of $\Delta W$ | $\|\Delta W\|_F \;/\; \|W\|_F$ | Normalized magnitude of change—what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
-| **Frobenius norm** of $\Delta W$ | $\|\Delta W\|_F = \sqrt{\sum_{ij} \Delta W_{ij}^2}$ | Raw total magnitude (unnormalized; also recorded for completeness) |
-| **Spectral norm** of $\Delta W$ | $\sigma_1(\Delta W) \;/\; \sigma_1(W)$ | Relative worst-case amplification—how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
-| **Stable rank** of $\Delta W$ | $\|\Delta W\|_F^2 \;/\; \|\Delta W\|_2^2$ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank $\approx 1$. A full-rank rewrite gives stable rank $\approx \min(m,n)$. |
+| **Relative Frobenius norm** of $\Delta W$ | $\lVert \Delta W \rVert_F / \lVert W \rVert_F$ | Normalized magnitude of change—what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
+| **Frobenius norm** of $\Delta W$ | $\lVert \Delta W \rVert_F = \sqrt{\sum_{ij} \Delta W_{ij}^2}$ | Raw total magnitude (unnormalized; also recorded for completeness) |
+| **Spectral norm** of $\Delta W$ | $\sigma_1(\Delta W) / \sigma_1(W)$ | Relative worst-case amplification—how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
+| **Stable rank** of $\Delta W$ | $\lVert \Delta W \rVert_F^2 / \lVert \Delta W \rVert_2^2$ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank $\approx 1$. A full-rank rewrite gives stable rank $\approx \min(m,n)$. |
 | **Stable rank** of $W$ | Same, on original | Baseline dimensionality for comparison |
 | **Empirical rank** (opt-in: `--empirical-rank`) | $\min k$ s.t. $\sum_{i}^{k} \sigma_i^2 \geq 0.99 \cdot \sum \sigma_i^2$ | Discrete count of dimensions capturing 99% of variance (requires full SVD, so slow, so we default to not do this) |
 
