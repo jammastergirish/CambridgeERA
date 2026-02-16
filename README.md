@@ -320,7 +320,24 @@ uv run infer.py \
 uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --interactive
 ```
 
-Options: `--max-new-tokens`, `--temperature`, `--top-p`, `--greedy`. See `uv run infer.py --help`.
+### Sweep Mode
+
+Run the same prompt through **every model** in `unlearned_models/` and save a comparison CSV:
+
+```bash
+# All local unlearned models
+uv run infer.py --sweep --prompt "What is biotin?"
+
+# Include the 3 base HF models (unfiltered, filtered, cb-lat)
+uv run infer.py --sweep --include-base --prompt "What is biotin?"
+
+# Custom models directory
+uv run infer.py --sweep --models-dir path/to/models --prompt "What is biotin?"
+```
+
+Output is saved to `outputs/inference/<sha256_hash>.csv` with columns: `prompt`, `model`, `model_path`, `output`. The same prompt always maps to the same filename.
+
+Options: `--max-new-tokens`, `--temperature`, `--top-p`, `--greedy`, `--models-dir`, `--outdir`. See `uv run infer.py --help`.
 
 ---
 

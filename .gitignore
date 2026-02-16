@@ -3,3 +3,4 @@ outputs/
 plots/
 __pycache__/
 *.pyc
+unlearned_models/
