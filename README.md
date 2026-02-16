@@ -75,14 +75,15 @@ For every weight matrix `W` in the model, this computes:
 
 | Metric | Formula | What it tells you |
 |---|---|---|
-| **Frobenius norm** of ΔW | ‖ΔW‖_F = √(Σᵢⱼ ΔWᵢⱼ²) | Total magnitude of change — how much did this matrix move? |
+| **Relative Frobenius norm** of ΔW | ‖ΔW‖_F / ‖W‖_F | Normalized magnitude of change — what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
+| **Frobenius norm** of ΔW | ‖ΔW‖_F = √(Σᵢⱼ ΔWᵢⱼ²) | Raw total magnitude (unnormalized; also recorded for completeness) |
 | **Stable rank** of ΔW | ‖ΔW‖²_F / ‖ΔW‖²₂ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank ≈ 1. A full-rank rewrite gives stable rank ≈ min(m,n). |
 | **Stable rank** of W | Same, on original | Baseline dimensionality for comparison |
 | **Empirical rank** (opt-in: `--empirical-rank`) | min k s.t. Σᵢᵏ σᵢ² ≥ 0.99·Σ σᵢ² | Discrete count of dimensions capturing 99% of variance (requires full SVD, so slow, so we default to not do this) |
 
-These are aggregated per layer and split into **MLP vs Attention** groups, then plotted.
+These are aggregated per layer and split into **MLP vs Attention** groups, then plotted. The layer locality plot uses the **relative** norm so layers are directly comparable.
 
-**Why this matters:** If unlearning produces low-rank, localized updates (small ‖ΔW‖_F concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The stable rank quantifies this precisely — it's the "soft" version of matrix rank, robust to noise.
+**Why this matters:** If unlearning produces low-rank, localized updates (small relative ‖ΔW‖_F concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The stable rank quantifies this precisely — it's the "soft" version of matrix rank, robust to noise.
 
 ---
 
@@ -133,9 +134,16 @@ These run the model on actual text and measure *what it computes*, not just what
 
 **Question:** *Does the intervention globally suppress or amplify activations?*
 
-For each layer, computes the mean L1 and L2 norms of hidden states, plus the norm of the *difference* in activations (‖h_modified − h_base‖). Run on both forget and retain texts.
+For each layer, computes the mean L1 and L2 norms of hidden states per token, plus the norm of the *difference* in activations (‖h_modified − h_base‖). Run on both forget and retain texts.
 
-**Why this matters:** If norms are similar between base and unlearned models but different for the filtered model, it means unlearning doesn't achieve suppression through reducing activation magnitudes — it's doing something more subtle (or less effective). This rules out the "global suppression" hypothesis.
+| Norm | Formula (per token) | What it captures |
+|---|---|---|
+| **L1** | Σᵢ |hᵢ| | Total activation mass — sensitive to diffuse, low-magnitude changes across many dimensions |
+| **L2** | √(Σᵢ hᵢ²) | Activation magnitude — sensitive to large spikes in individual dimensions |
+
+Both are averaged across all tokens (weighted by attention mask). They are **not** divided by hidden dimension since all models share the same architecture, so they are directly comparable across models and layers.
+
+**Why this matters:** If norms are similar between base and unlearned models but different for the filtered model, it means unlearning doesn't achieve suppression through reducing activation magnitudes — it's doing something more subtle (or less effective). L1 and L2 capture different aspects: L1 is more sensitive to many small changes spread across dimensions, while L2 is dominated by the largest components.
 
 ---
 
@@ -355,6 +363,8 @@ One row per weight matrix in the model.
 | `shape0` | Matrix rows (output features) |
 | `shape1` | Matrix columns (input features) |
 | `dW_fro` | Frobenius norm of the weight difference: ‖ΔW‖_F |
+| `W_fro` | Frobenius norm of the original (base) weight: ‖W‖_F |
+| `dW_fro_rel` | Relative Frobenius norm: ‖ΔW‖_F / ‖W‖_F (fraction of original weight changed) |
 | `dW_stable_rank` | Stable rank of ΔW: ‖ΔW‖²_F / ‖ΔW‖²₂ |
 | `W_stable_rank` | Stable rank of the original (base) weights |
 | `dW_empirical_rank`* | Number of singular values of ΔW capturing 99% of variance |
@@ -371,6 +381,8 @@ Aggregated statistics per (layer, group) pair.
 | `layer` | Integer layer index |
 | `group` | `attn` or `mlp` |
 | `dW_fro_layer` | Root-sum-square of Frobenius norms in this group: √(Σ ‖ΔWᵢ‖²_F) |
+| `W_fro_layer` | Root-sum-square of original weight Frobenius norms: √(Σ ‖Wᵢ‖²_F) |
+| `dW_fro_layer_rel` | Relative change: `dW_fro_layer / W_fro_layer` |
 | `mean_dW_stable_rank` | Mean stable rank of ΔW across matrices in this group |
 | `mean_dW_empirical_rank`* | Mean empirical rank of ΔW across matrices in this group |
 | `count_mats` | Number of weight matrices aggregated in this group |

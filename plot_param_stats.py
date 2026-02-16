@@ -35,11 +35,13 @@ def main():
 
         print(f"[plot_param_stats] Generating plots for {group.upper()} group ({len(sub)} layers)...")
 
-        # ---- Plot A: Frobenius norm (layer locality) ----
+        # ---- Plot A: Relative Frobenius norm (layer locality) ----
         plt.figure(figsize=(8, 5))
-        plt.plot(sub["layer"], sub["dW_fro_layer"], marker="o")
+        col = "dW_fro_layer_rel" if "dW_fro_layer_rel" in sub.columns else "dW_fro_layer"
+        plt.plot(sub["layer"], sub[col], marker="o")
         plt.xlabel("Layer")
-        plt.ylabel(rf"$\|\Delta W\|_F$ per layer ({group.upper()})")
+        ylabel = rf"$\|\Delta W\|_F / \|W\|_F$ ({group.upper()})" if col.endswith("_rel") else rf"$\|\Delta W\|_F$ per layer ({group.upper()})"
+        plt.ylabel(ylabel)
         plt.title(args.title or f"Layer locality ({group})")
         plt.grid(alpha=0.3)
         plt.tight_layout()
