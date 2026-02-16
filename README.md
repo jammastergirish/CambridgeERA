@@ -85,16 +85,16 @@ For every weight matrix `W` in the model, this computes:
 
 | Metric | Formula | What it tells you |
 |---|---|---|
-| **Relative Frobenius norm** of $\Delta W$ | $\lVert \Delta W \rVert_F / \lVert W \rVert_F$ | Normalized magnitude of change—what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
+| **Relative Frobenius norm** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F}{\lVert W \rVert_F}$ | Normalized magnitude of change—what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
 | **Frobenius norm** of $\Delta W$ | $\lVert \Delta W \rVert_F = \sqrt{\sum_{ij} \Delta W_{ij}^2}$ | Raw total magnitude (unnormalized; also recorded for completeness) |
-| **Spectral norm** of $\Delta W$ | $\sigma_1(\Delta W) / \sigma_1(W)$ | Relative worst-case amplification—how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
-| **Stable rank** of $\Delta W$ | $\lVert \Delta W \rVert_F^2 / \lVert \Delta W \rVert_2^2$ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank $\approx 1$. A full-rank rewrite gives stable rank $\approx \min(m,n)$. |
-| **Stable rank** of $W$ | Same, on original | Baseline dimensionality for comparison |
+| **Spectral norm** of $\Delta W$ | $\frac{\sigma_1(\Delta W)}{\sigma_1(W)}$ | Relative worst-case amplification—how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
+| **Stable rank** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F^2}{\lVert \Delta W \rVert_2^2}$ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank $\approx 1$. A full-rank rewrite gives stable rank $\approx \min(m,n)$. |
+| **Stable rank** of $W$ | $\frac{\lVert W \rVert_F^2}{\lVert W \rVert_2^2}$ | Baseline dimensionality for comparison |
 | **Empirical rank** (opt-in: `--empirical-rank`) | $\min k$ s.t. $\sum_{i}^{k} \sigma_i^2 \geq 0.99 \cdot \sum \sigma_i^2$ | Discrete count of dimensions capturing 99% of variance (requires full SVD, so slow, so we default to not do this) |
 
 These are aggregated per layer and split into **MLP vs Attention** groups, then plotted. The layer locality plot uses the **relative** Frobenius norm so layers are directly comparable; a separate spectral norm plot shows worst-case amplification per layer.
 
-**Why this matters:** If unlearning produces low-rank, localized updates (small relative $\|\Delta W\|_F$ concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The stable rank quantifies this precisely—it's the "soft" version of matrix rank, robust to noise.
+**Why this matters:** If unlearning produces low-rank, localized updates (small relative $\lVert \Delta W \rVert_F$ concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The stable rank quantifies this precisely—it's the "soft" version of matrix rank, robust to noise.
 
 ---
 
@@ -145,7 +145,7 @@ These run the model on actual text and measure *what it computes*, not just what
 
 **Question:** *Does the intervention globally suppress or amplify activations?*
 
-For each layer, computes the mean L1 and L2 norms of hidden states per token, plus the norm of the *difference* in activations ($\|h_{\text{modified}} - h_{\text{base}}\|$). Run on both forget and retain texts.
+For each layer, computes the mean L1 and L2 norms of hidden states per token, plus the norm of the *difference* in activations ($\lVert h_{\text{modified}} - h_{\text{base}} \rVert$). Run on both forget and retain texts.
 
 | Norm | Formula (per token) | What it captures |
 |---|---|---|
@@ -373,13 +373,13 @@ One row per weight matrix in the model.
 | `group` | Coarse grouping: `attn` (attention) or `mlp` (feed-forward) |
 | `shape0` | Matrix rows (output features) |
 | `shape1` | Matrix columns (input features) |
-| `dW_fro` | Frobenius norm of the weight difference: $\|\Delta W\|_F$ |
-| `W_fro` | Frobenius norm of the original (base) weight: $\|W\|_F$ |
-| `dW_fro_rel` | Relative Frobenius norm: $\|\Delta W\|_F / \|W\|_F$ (fraction of original weight changed) |
+| `dW_fro` | Frobenius norm of the weight difference: $\lVert \Delta W \rVert_F$ |
+| `W_fro` | Frobenius norm of the original (base) weight: $\lVert W \rVert_F$ |
+| `dW_fro_rel` | Relative Frobenius norm: $\frac{\lVert \Delta W \rVert_F}{\lVert W \rVert_F}$ (fraction of original weight changed) |
 | `dW_spectral` | Spectral norm (largest singular value) of $\Delta W$: $\sigma_1(\Delta W)$ |
 | `W_spectral` | Spectral norm of the original (base) weight: $\sigma_1(W)$ |
-| `dW_spectral_rel` | Relative spectral norm: $\sigma_1(\Delta W) / \sigma_1(W)$ |
-| `dW_stable_rank` | Stable rank of $\Delta W$: $\|\Delta W\|_F^2 / \|\Delta W\|_2^2$ |
+| `dW_spectral_rel` | Relative spectral norm: $\frac{\sigma_1(\Delta W)}{\sigma_1(W)}$ |
+| `dW_stable_rank` | Stable rank of $\Delta W$: $\frac{\lVert \Delta W \rVert_F^2}{\lVert \Delta W \rVert_2^2}$ |
 | `W_stable_rank` | Stable rank of the original (base) weights |
 | `dW_empirical_rank`* | Number of singular values of $\Delta W$ capturing 99% of variance |
 | `W_empirical_rank`* | Number of singular values of W capturing 99% of variance |
@@ -394,8 +394,8 @@ Aggregated statistics per (layer, group) pair.
 | :--- | :--- |
 | `layer` | Integer layer index |
 | `group` | `attn` or `mlp` |
-| `dW_fro_layer` | Root-sum-square of Frobenius norms in this group: $\sqrt{\sum \|\Delta W_i\|_F^2}$ |
-| `W_fro_layer` | Root-sum-square of original weight Frobenius norms: $\sqrt{\sum \|W_i\|_F^2}$ |
+| `dW_fro_layer` | Root-sum-square of Frobenius norms in this group: $\sqrt{\sum \lVert \Delta W_i \rVert_F^2}$ |
+| `W_fro_layer` | Root-sum-square of original weight Frobenius norms: $\sqrt{\sum \lVert W_i \rVert_F^2}$ |
 | `dW_fro_layer_rel` | Relative change: `dW_fro_layer / W_fro_layer` |
 | `max_dW_spectral` | Max spectral norm of $\Delta W$ across matrices in this group |
 | `max_W_spectral` | Max spectral norm of $W$ across matrices in this group |
@@ -414,9 +414,9 @@ One row per (layer, split) combination.
 | :--- | :--- |
 | `layer` | Layer index (0 to N) |
 | `split` | Dataset split: `forget` or `retain` |
-| `model_a_norm_L1` | Mean L1 norm of hidden states for model A (baseline): $\mathbb{E}[\|h\|_1]$ |
-| `model_a_norm_L2` | Mean L2 norm of hidden states for model A (baseline): $\mathbb{E}[\|h\|_2]$ |
+| `model_a_norm_L1` | Mean L1 norm of hidden states for model A (baseline): $\mathbb{E}[\lVert h \rVert_1]$ |
+| `model_a_norm_L2` | Mean L2 norm of hidden states for model A (baseline): $\mathbb{E}[\lVert h \rVert_2]$ |
 | `model_b_norm_L1` | Mean L1 norm of hidden states for model B (target) |
 | `model_b_norm_L2` | Mean L2 norm of hidden states for model B (target) |
-| `mean_dh_L1` | Mean L1 norm of the activation difference: $\mathbb{E}[\|\Delta h\|_1]$ |
-| `mean_dh_L2` | Mean L2 norm of the activation difference: $\mathbb{E}[\|\Delta h\|_2]$ |
+| `mean_dh_L1` | Mean L1 norm of the activation difference: $\mathbb{E}[\lVert \Delta h \rVert_1]$ |
+| `mean_dh_L2` | Mean L2 norm of the activation difference: $\mathbb{E}[\lVert \Delta h \rVert_2]$ |
