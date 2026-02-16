@@ -218,24 +218,25 @@ The thesis prediction is that unlearning methods (CB-LAT) will show: small magni
 
 ### Output Structure
 
+All results are saved under a single root (default `outputs/`):
+
 ```
 outputs/
   <comparison>/
-    param_stats/          per_matrix.csv, per_layer.csv
-    activation_stats/     activation_stats.csv
-    mlp_attn_analysis/    summary + plots
-    null_space_analysis/  null_space_results.csv + plots
+    param_stats/           per_matrix.csv, per_layer.csv
+    param_plots/           Layer locality, stable rank, rank comparison PNGs
+    activation_stats/      activation_stats.csv
+    activation_plots/      Activation norms, activation diffs PNGs
+    mlp_attn_analysis/     summary CSV + plots
+    null_space_analysis/   null_space_results.csv + plots
     activation_separation/ separation metrics + plots
     activation_covariance/ covariance spectra + plots
-    mlp_nullspace/        alignment metrics + plots
-    row_space_projection/ projection metrics + plots
-    lipschitzness/        Lipschitz estimates + plots
-
-plots/
-  <comparison>/
-    param_plots/          Layer locality, stable rank, rank comparison
-    activation_plots/     Activation norms, activation diffs
+    mlp_nullspace/         alignment metrics + plots
+    row_space_projection/  projection metrics + plots
+    lipschitzness/         Lipschitz estimates + plots
 ```
+
+> **Tip:** The pipeline automatically skips steps whose output already exists. Use `./pipeline.sh --force` to regenerate everything.
 
 ---
 
