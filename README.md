@@ -40,7 +40,7 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 ```
 ---
 
-### The Experimental Setup
+### Experimental Pipeline
 
 The pipeline performs experiments on three models sharing identical architecture. 
 
@@ -61,7 +61,7 @@ By contrasting these two comparisons, you can distinguish *deep representational
 
 ---
 
-### The Diagnostics: What and Why
+### Diagnostics
 
 ```mermaid
 graph TD
@@ -75,7 +75,7 @@ graph TD
 
 ---
 
-#### Parameter-Space Diagnostics
+#### Parameter-Space
 
 These examine `W_modified`, `W_base`, and `ΔW = W_modified − W_base` directly—treating the intervention as a matrix perturbation.
 
@@ -139,7 +139,7 @@ Decomposes each MLP update ΔW into components that lie in the **column space** 
 
 ---
 
-#### Activation-Space Diagnostics
+#### Activation-Space
 
 These run the model on actual text and measure *what it computes*, not just what its parameters look like. All activation scripts cap input at `--max-samples 500` texts per split by default to keep runtimes manageable (override with e.g. `--max-samples 1000` for more statistical power).
 
@@ -222,15 +222,11 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ---
 
-#### Knowledge Localization
-
-Unlike Steps 1–12 which compare pairs of models, Step 13 analyzes **each model individually**.
-
 ##### Step 13: Linear Probe Analysis (`linear_probe_analysis.py`)
 
-**Question:** *At which layer is the forget-set knowledge most linearly readable?*
+**Question:** *At which layer is the forget-set knowledge  linearly encoded?*
 
-For each layer, this script extracts the **last-token hidden state** (the most context-rich position in a causal LM) on both forget and retain texts, then trains a logistic regression "probe" to classify whether an activation came from forget or retain text.
+For each layer, this script extracts the **last-token hidden state** on both forget and retain texts, then trains a logistic regression "probe" to classify whether an activation came from forget or retain text.
 
 | Metric | What it tells you |
 |---|---|
