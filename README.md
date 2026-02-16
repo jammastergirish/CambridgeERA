@@ -311,8 +311,6 @@ uv run experiment/collect_param_stats.py \
 | `lat` | Representation | Latent adversarial training for robustness |
 | `cb_lat` | Representation | Circuit Breakers + LAT combined |
 
-See `uv run unlearn/unlearn.py --help` for full argument reference.
-
 ---
 
 ## Inference
