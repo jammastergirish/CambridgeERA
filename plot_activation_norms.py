@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # /// script
 # dependencies = [
+#   "torch",
 #   "pandas",
 #   "matplotlib",
 #   "wandb",
