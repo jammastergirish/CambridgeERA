@@ -149,7 +149,7 @@ For each layer, computes the mean L1 and L2 norms of hidden states per token, pl
 
 | Norm | Formula (per token) | What it captures |
 |---|---|---|
-| **L1** | $\sum_i |h_i|$ | Total activation mass—sensitive to diffuse, low-magnitude changes across many dimensions |
+| **L1** | $\sum_i \lvert h_i \rvert$ | Total activation mass—sensitive to diffuse, low-magnitude changes across many dimensions |
 | **L2** | $\sqrt{\sum_i h_i^2}$ | Activation magnitude—sensitive to large spikes in individual dimensions |
 
 Both are averaged across all tokens (weighted by attention mask). They are **not** divided by hidden dimension since all models share the same architecture, so they are directly comparable across models and layers.
