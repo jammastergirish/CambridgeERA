@@ -75,7 +75,7 @@ graph TD
 
 #### Parameter-Space Diagnostics
 
-These examine `ΔW = W_modified − W_base` directly — treating the intervention as a matrix perturbation.
+These examine `W_modified`, `W_base`, and `ΔW = W_modified − W_base` directly—treating the intervention as a matrix perturbation.
 
 #### Steps 1–2: Parameter Statistics (`collect_param_stats.py` + `plot_param_stats.py`)
 
