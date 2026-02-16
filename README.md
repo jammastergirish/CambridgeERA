@@ -12,7 +12,9 @@ The project will expand across a broader set of unlearning algorithms (e.g., RMU
 
 ## Quick Start
 
-Add `HF_TOKEN`and `WANDB_API_KEY` to `.env` and ensure the `uv` package manager is installed.
+- Add `HF_TOKEN`and `WANDB_API_KEY` to `.env`
+- Ensure the `uv` package manager is installed.
+- And then run:
 
 ```bash
 ./pipeline.sh
