@@ -40,7 +40,7 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 
 ### The Experimental Setup
 
-The pipeline performs a **controlled experiment** with three models sharing identical architecture. 
+The pipeline performs experiments on three models sharing identical architecture. 
 
 | Model | Role | What happened to it |
 |---|---|---|
@@ -61,11 +61,9 @@ By contrasting these two comparisons, you can distinguish *deep representational
 
 ### The Diagnostics: What and Why
 
-The 13 steps form a hierarchy from **coarse to fine**, and from **weight-space to activation-space**:
-
 ```mermaid
 graph TD
-    A["Weight-Space Diagnostics<br/>(Steps 1-2, 6-7, 10)"] --> C["How much did parameters change?<br/>Where? In what directions?"]
+    A["Parameter-Space Diagnostics<br/>(Steps 1-2, 6-7, 10)"] --> C["How much did parameters change?<br/>Where? In what directions?"]
     B["Activation-Space Diagnostics<br/>(Steps 4-5, 8-9, 11-12)"] --> D["How do those changes affect<br/>what the model computes?"]
     F["Knowledge Localization<br/>(Step 13)"] --> G["Where is the forget-set knowledge<br/>encoded in each model?"]
     C --> E["Mechanistic Signature<br/>of the Intervention"]
@@ -75,7 +73,7 @@ graph TD
 
 ---
 
-#### Weight-Space Diagnostics
+#### Parameter-Space Diagnostics
 
 These examine `ΔW = W_modified − W_base` directly — treating the intervention as a matrix perturbation.
 
