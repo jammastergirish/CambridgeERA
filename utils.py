@@ -137,24 +137,29 @@ def spectral_norm_power(A: torch.Tensor, iters: int = 5, eps: float = 1e-12) -> 
     return float(u.norm().item())
 
 
-def stable_rank(A: torch.Tensor, iters: int = 5, use_svd: bool = False) -> float:
-    """Compute stable rank = ||A||_F^2 / ||A||_2^2 (soft measure of matrix rank).
+def stable_rank_and_spectral(A: torch.Tensor, iters: int = 5, use_svd: bool = False) -> tuple[float, float]:
+    """Compute stable rank AND spectral norm in one pass.
 
-    Args:
-        A: Input matrix
-        iters: Number of power iterations (ignored if use_svd=True)
-        use_svd: Use SVD instead of power iteration (more stable, potentially slower)
+    Returns:
+        (stable_rank, spectral_norm)
     """
     if A.numel() == 0:
-        return 0.0
+        return 0.0, 0.0
     Af = A.float()
     fro_sq = float((Af * Af).sum(dtype=torch.float64).item())
     if fro_sq == 0.0:
-        return 0.0
+        return 0.0, 0.0
     spec = compute_spectral_norm(Af) if use_svd else spectral_norm_power(Af, iters=iters)
     if spec <= 0:
-        return 0.0
-    return fro_sq / (spec * spec)
+        return 0.0, 0.0
+    sr = fro_sq / (spec * spec)
+    return sr, float(spec)
+
+
+def stable_rank(A: torch.Tensor, iters: int = 5, use_svd: bool = False) -> float:
+    """Compute stable rank = ||A||_F^2 / ||A||_2^2 (soft measure of matrix rank)."""
+    sr, _ = stable_rank_and_spectral(A, iters=iters, use_svd=use_svd)
+    return sr
 
 
 def empirical_rank(A: torch.Tensor, threshold: float = 0.99) -> int:

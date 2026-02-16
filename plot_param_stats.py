@@ -98,6 +98,19 @@ def main():
             plt.savefig(os.path.join(args.outdir, f"rank_comparison_{group}.png"))
             plt.close()
 
+        # ---- Plot E: Spectral norm (worst-case amplification) ----
+        spec_col = "max_dW_spectral_rel" if "max_dW_spectral_rel" in sub.columns else None
+        if spec_col:
+            plt.figure(figsize=(8, 5))
+            plt.plot(sub["layer"], sub[spec_col], marker="o", color="tab:red")
+            plt.xlabel("Layer")
+            plt.ylabel(rf"$\sigma_1(\Delta W) / \sigma_1(W)$ ({group.upper()})")
+            plt.title(args.title or f"Spectral norm — worst-case amplification ({group})")
+            plt.grid(alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(args.outdir, f"spectral_norm_{group}.png"))
+            plt.close()
+
     print(f"[plot_param_stats] ✓ All plots written to {args.outdir}")
     log_plots(args.outdir, "param_plots")
     finish_wandb()

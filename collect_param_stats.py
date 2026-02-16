@@ -30,7 +30,7 @@ from utils import (
     resolve_dtype,
     extract_layer,
     classify_coarse,
-    stable_rank,
+    stable_rank_and_spectral,
     empirical_rank,
     write_csv,
     init_wandb,
@@ -239,8 +239,9 @@ def main():
         dW_fro = float(dW.float().norm().item())
         W_fro = float(Wa.float().norm().item())
         dW_fro_rel = dW_fro / W_fro if W_fro > 0 else 0.0
-        dW_sr = stable_rank(dW, iters=args.sr_iters)
-        W_sr = stable_rank(Wa, iters=args.sr_iters)
+        dW_sr, dW_spec = stable_rank_and_spectral(dW, iters=args.sr_iters)
+        W_sr, W_spec = stable_rank_and_spectral(Wa, iters=args.sr_iters)
+        dW_spec_rel = dW_spec / W_spec if W_spec > 0 else 0.0
 
         row = {
             "name": name,
@@ -251,6 +252,9 @@ def main():
             "dW_fro": dW_fro,
             "W_fro": W_fro,
             "dW_fro_rel": dW_fro_rel,
+            "dW_spectral": dW_spec,
+            "W_spectral": W_spec,
+            "dW_spectral_rel": dW_spec_rel,
             "dW_stable_rank": dW_sr,
             "W_stable_rank": W_sr,
         }
@@ -265,13 +269,16 @@ def main():
 
         if layer is not None:
             key = (layer, group)
-            defaults = {"sum_dW_fro_sq": 0.0, "sum_W_fro_sq": 0.0, "sum_dW_sr": 0.0, "count": 0}
+            defaults = {"sum_dW_fro_sq": 0.0, "sum_W_fro_sq": 0.0, "sum_dW_sr": 0.0,
+                         "max_dW_spec": 0.0, "max_W_spec": 0.0, "count": 0}
             if args.empirical_rank:
                 defaults["sum_dW_er"] = 0.0
             st = per_layer.setdefault(key, defaults)
             st["sum_dW_fro_sq"] += dW_fro * dW_fro
             st["sum_W_fro_sq"] += W_fro * W_fro
             st["sum_dW_sr"] += dW_sr
+            st["max_dW_spec"] = max(st["max_dW_spec"], dW_spec)
+            st["max_W_spec"] = max(st["max_W_spec"], W_spec)
             if args.empirical_rank:
                 st["sum_dW_er"] += dW_er
             st["count"] += 1
@@ -284,7 +291,10 @@ def main():
     # Write Output
     os.makedirs(args.outdir, exist_ok=True)
 
-    per_matrix_fields = ["name", "layer", "group", "shape0", "shape1", "dW_fro", "W_fro", "dW_fro_rel", "dW_stable_rank", "W_stable_rank"]
+    per_matrix_fields = ["name", "layer", "group", "shape0", "shape1",
+                         "dW_fro", "W_fro", "dW_fro_rel",
+                         "dW_spectral", "W_spectral", "dW_spectral_rel",
+                         "dW_stable_rank", "W_stable_rank"]
     if args.empirical_rank:
         per_matrix_fields += ["dW_empirical_rank", "W_empirical_rank"]
     write_csv(
@@ -297,12 +307,17 @@ def main():
     for (layer, group), st in sorted(per_layer.items(), key=lambda x: (x[0][0], x[0][1])):
         dW_fro_layer = float(np.sqrt(st["sum_dW_fro_sq"]))
         W_fro_layer = float(np.sqrt(st["sum_W_fro_sq"]))
+        max_dW_spec = st["max_dW_spec"]
+        max_W_spec = st["max_W_spec"]
         row = {
             "layer": layer,
             "group": group,
             "dW_fro_layer": dW_fro_layer,
             "W_fro_layer": W_fro_layer,
             "dW_fro_layer_rel": dW_fro_layer / W_fro_layer if W_fro_layer > 0 else 0.0,
+            "max_dW_spectral": max_dW_spec,
+            "max_W_spectral": max_W_spec,
+            "max_dW_spectral_rel": max_dW_spec / max_W_spec if max_W_spec > 0 else 0.0,
             "mean_dW_stable_rank": st["sum_dW_sr"] / max(st["count"], 1),
             "count_mats": st["count"],
         }
@@ -310,7 +325,10 @@ def main():
             row["mean_dW_empirical_rank"] = st["sum_dW_er"] / max(st["count"], 1)
         layer_rows.append(row)
 
-    per_layer_fields = ["layer", "group", "dW_fro_layer", "W_fro_layer", "dW_fro_layer_rel", "mean_dW_stable_rank", "count_mats"]
+    per_layer_fields = ["layer", "group",
+                        "dW_fro_layer", "W_fro_layer", "dW_fro_layer_rel",
+                        "max_dW_spectral", "max_W_spectral", "max_dW_spectral_rel",
+                        "mean_dW_stable_rank", "count_mats"]
     if args.empirical_rank:
         per_layer_fields.insert(-1, "mean_dW_empirical_rank")
     write_csv(

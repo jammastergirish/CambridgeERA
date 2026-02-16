@@ -77,11 +77,12 @@ For every weight matrix `W` in the model, this computes:
 |---|---|---|
 | **Relative Frobenius norm** of ΔW | ‖ΔW‖_F / ‖W‖_F | Normalized magnitude of change — what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
 | **Frobenius norm** of ΔW | ‖ΔW‖_F = √(Σᵢⱼ ΔWᵢⱼ²) | Raw total magnitude (unnormalized; also recorded for completeness) |
+| **Spectral norm** of ΔW | σ₁(ΔW) / σ₁(W) | Relative worst-case amplification — how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
 | **Stable rank** of ΔW | ‖ΔW‖²_F / ‖ΔW‖²₂ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank ≈ 1. A full-rank rewrite gives stable rank ≈ min(m,n). |
 | **Stable rank** of W | Same, on original | Baseline dimensionality for comparison |
 | **Empirical rank** (opt-in: `--empirical-rank`) | min k s.t. Σᵢᵏ σᵢ² ≥ 0.99·Σ σᵢ² | Discrete count of dimensions capturing 99% of variance (requires full SVD, so slow, so we default to not do this) |
 
-These are aggregated per layer and split into **MLP vs Attention** groups, then plotted. The layer locality plot uses the **relative** norm so layers are directly comparable.
+These are aggregated per layer and split into **MLP vs Attention** groups, then plotted. The layer locality plot uses the **relative** Frobenius norm so layers are directly comparable; a separate spectral norm plot shows worst-case amplification per layer.
 
 **Why this matters:** If unlearning produces low-rank, localized updates (small relative ‖ΔW‖_F concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The stable rank quantifies this precisely — it's the "soft" version of matrix rank, robust to noise.
 
@@ -365,6 +366,9 @@ One row per weight matrix in the model.
 | `dW_fro` | Frobenius norm of the weight difference: ‖ΔW‖_F |
 | `W_fro` | Frobenius norm of the original (base) weight: ‖W‖_F |
 | `dW_fro_rel` | Relative Frobenius norm: ‖ΔW‖_F / ‖W‖_F (fraction of original weight changed) |
+| `dW_spectral` | Spectral norm (largest singular value) of ΔW: σ₁(ΔW) |
+| `W_spectral` | Spectral norm of the original (base) weight: σ₁(W) |
+| `dW_spectral_rel` | Relative spectral norm: σ₁(ΔW) / σ₁(W) |
 | `dW_stable_rank` | Stable rank of ΔW: ‖ΔW‖²_F / ‖ΔW‖²₂ |
 | `W_stable_rank` | Stable rank of the original (base) weights |
 | `dW_empirical_rank`* | Number of singular values of ΔW capturing 99% of variance |
@@ -383,6 +387,9 @@ Aggregated statistics per (layer, group) pair.
 | `dW_fro_layer` | Root-sum-square of Frobenius norms in this group: √(Σ ‖ΔWᵢ‖²_F) |
 | `W_fro_layer` | Root-sum-square of original weight Frobenius norms: √(Σ ‖Wᵢ‖²_F) |
 | `dW_fro_layer_rel` | Relative change: `dW_fro_layer / W_fro_layer` |
+| `max_dW_spectral` | Max spectral norm of ΔW across matrices in this group |
+| `max_W_spectral` | Max spectral norm of W across matrices in this group |
+| `max_dW_spectral_rel` | Relative spectral norm: `max_dW_spectral / max_W_spectral` |
 | `mean_dW_stable_rank` | Mean stable rank of ΔW across matrices in this group |
 | `mean_dW_empirical_rank`* | Mean empirical rank of ΔW across matrices in this group |
 | `count_mats` | Number of weight matrices aggregated in this group |
