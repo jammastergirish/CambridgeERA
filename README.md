@@ -25,12 +25,11 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 
 ---
 
-### Pre-Requisites For Experimenting and Unlearning
+## Pre-Requisites For Experimenting and Unlearning
 
 
 - Add `HF_TOKEN`and `WANDB_API_KEY` to `.env`.
 - Ensure the `uv` package manager is installed.
-- Run:
 
 ---
 
