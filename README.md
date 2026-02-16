@@ -63,9 +63,9 @@ By contrasting these two comparisons, you can distinguish *deep representational
 
 ```mermaid
 graph TD
-    A["Parameter-Space Diagnostics<br/>(Steps 1-2, 6-7, 10)"] --> C["How much did parameters change?<br/>Where? In what directions?"]
-    B["Activation-Space Diagnostics<br/>(Steps 4-5, 8-9, 11-12)"] --> D["How do those changes affect<br/>what the model computes?"]
-    F["Knowledge Localization<br/>(Step 13)"] --> G["At what layer is the forget-set knowledge<br/>encoded in each model?"]
+    A["Parameter-Space"] --> C["How much did parameters change?<br/>Where? In what directions?"]
+    B["Activation-Space"] --> D["How do those changes affect<br/>what the model computes?"]
+    F["Knowledge Localization"] --> G["At what layer is the forget-set knowledge<br/>encoded in each model?"]
     C --> E["Mechanistic Signature<br/>of the Intervention"]
     D --> E
     G --> E
