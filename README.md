@@ -1,35 +1,40 @@
 # What Makes Unlearning Brittle? A Mechanistic Study of Parameter-Space Interventions
 
-This repository contains a diagnostic pipeline for analyzing how machine unlearning methods alter large language models at both the parameter and activation level. The goal is to identify mechanistic signatures that distinguish deep representational change from shallow parameter patching.
+This repository contains a diagnostic pipeline for creating unlearned large language models using various unlearning algorihtms, and then analyzing how these methods alter models in both parameter and activation spaces. The goal is to identify mechanistic signatures that distinguish deep representational change from shallow parameter patching.
 
 ## Quick Start
 
-```bash
-# 1. Add your Hugging Face token
-echo "HF_TOKEN=hf_your_token_here" > .env
+Add `HF_TOKEN` to `.env` and ensure the `uv` package manager is installed.
 
-# 2. Run the full pipeline
+```bash
 ./pipeline.sh
 ```
+---
 
-**Environment variables:**
-```bash
-PARAM_DEVICE=cuda ACTIVATION_DEVICE=cuda ./pipeline.sh   # Force GPU
-OUTROOT=my_outputs PLOTROOT=my_plots ./pipeline.sh        # Custom dirs
-FORGET_TEXT=custom_forget.txt RETAIN_TEXT=custom_retain.txt ./pipeline.sh
-```
+## Datasets
+
+`uv run create_datasets.py` creates two text datasets that serve in training for unlearning, and as *probes* for activation-level analyses:
+
+| Dataset | Source | Purpose |
+|---|---|---|
+| `forget.txt` | WMDP-Bio questions | Text the model *should* have forgotten — the "target" of unlearning |
+| `retain.txt` | WikiText-2 | Benign text the model *should* still handle well — the "control" |
+
+These are analogous to stimulus and control conditions in an experiment. Every activation-level diagnostic (Steps 8–12) runs on *both* datasets, measuring whether interventions selectively affect forget-domain processing while preserving retain-domain processing.
 
 ---
 
-## The Experimental Setup
+## Experiment
 
-The pipeline performs a **controlled experiment** with three models sharing identical architecture:
+### The Experimental Setup
+
+The pipeline performs a **controlled experiment** with three models sharing identical architecture. 
 
 | Model | Role | What happened to it |
 |---|---|---|
 | `deep-ignorance-unfiltered` | **Base** (control) | Trained on everything, including WMDP-Bio hazardous content |
 | `deep-ignorance-e2e-strong-filter` | **Filtered** (gold standard) | Trained from scratch with hazardous data *removed before training* |
-| `deep-ignorance-unfiltered-cb-lat` | **Unlearned** (intervention) | Same as Base, but post-hoc unlearned via Circuit Breakers + LAT |
+| `deep-ignorance-unfiltered-XXXXXX` | **Unlearned** (intervention) | Same as Base, but post-hoc unlearned |
 
 Every diagnostic runs **twice** — once for each comparison — always using the Base model as the reference:
 
@@ -42,20 +47,7 @@ By contrasting these two comparisons, you can distinguish *deep representational
 
 ---
 
-## The Two Datasets
-
-**Step 3** creates two text datasets that serve as *probes* for the activation-level analyses:
-
-| Dataset | Source | Purpose |
-|---|---|---|
-| `forget.txt` | WMDP-Bio questions | Text the model *should* have forgotten — the "target" of unlearning |
-| `retain.txt` | WikiText-2 | Benign text the model *should* still handle well — the "control" |
-
-These are analogous to stimulus and control conditions in an experiment. Every activation-level diagnostic (Steps 8–12) runs on *both* datasets, measuring whether interventions selectively affect forget-domain processing while preserving retain-domain processing.
-
----
-
-## The Diagnostics: What and Why
+### The Diagnostics: What and Why
 
 The 12 steps form a hierarchy from **coarse to fine**, and from **weight-space to activation-space**:
 
@@ -69,7 +61,7 @@ graph TD
 
 ---
 
-### Weight-Space Diagnostics
+#### Weight-Space Diagnostics
 
 These examine `ΔW = W_modified − W_base` directly — treating the intervention as a matrix perturbation.
 
@@ -84,7 +76,7 @@ For every weight matrix `W` in the model, this computes:
 | **Frobenius norm** of ΔW | ‖ΔW‖_F = √(Σᵢⱼ ΔWᵢⱼ²) | Total magnitude of change — how much did this matrix move? |
 | **Stable rank** of ΔW | ‖ΔW‖²_F / ‖ΔW‖²₂ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank ≈ 1. A full-rank rewrite gives stable rank ≈ min(m,n). |
 | **Stable rank** of W | Same, on original | Baseline dimensionality for comparison |
-| **Empirical rank** (opt-in: `--empirical-rank`) | min k s.t. Σᵢᵏ σᵢ² ≥ 0.99·Σ σᵢ² | Discrete count of dimensions capturing 99% of variance (requires full SVD, slow) |
+| **Empirical rank** (opt-in: `--empirical-rank`) | min k s.t. Σᵢᵏ σᵢ² ≥ 0.99·Σ σᵢ² | Discrete count of dimensions capturing 99% of variance (requires full SVD, so slow, so we default to not do this) |
 
 These are aggregated per layer and split into **MLP vs Attention** groups, then plotted.
 
@@ -92,17 +84,17 @@ These are aggregated per layer and split into **MLP vs Attention** groups, then 
 
 ---
 
-#### Step 6: MLP vs Attention Breakdown (`analyze_mlp_vs_attn.py`)
+##### Step 6: MLP vs Attention Breakdown (`analyze_mlp_vs_attn.py`)
 
 **Question:** *Are the changes concentrated in MLP (knowledge storage) or Attention (routing/composition)?*
 
-Takes the per-matrix stats from Step 1 and computes the ratio of MLP change to Attention change at each layer. Addresses the mechanistic hypothesis that knowledge is primarily stored in MLP layers (the "key-value memory" view from Geva et al.), while attention layers handle routing.
+Takes the per-matrix stats from Step 1 and computes the ratio of MLP change to Attention change at each layer. Addresses the mechanistic hypothesis that knowledge is primarily stored in MLP layers (the "key-value memory" view from [Geva et al](https://arxiv.org/pdf/2012.14913).), while attention layers handle routing.
 
 **Why this matters:** If unlearning only modifies attention layers, it might be redirecting *routing around* the knowledge rather than erasing it — explaining why adversarial fine-tuning can recover the information.
 
 ---
 
-#### Step 7: Null Space & Subspace Analysis (`null_space_analysis.py`)
+##### Step 7: Null Space & Subspace Analysis (`null_space_analysis.py`)
 
 **Question:** *Is the update low-rank, and do the principal subspaces shift?*
 
@@ -118,7 +110,7 @@ For 50 sampled weight matrices, computes full SVD and measures:
 
 ---
 
-#### Step 10: MLP Nullspace Alignment (`mlp_nullspace_alignment.py`)
+##### Step 10: MLP Nullspace Alignment (`mlp_nullspace_alignment.py`)
 
 **Question:** *Does ΔW lie in the nullspace of the original W?*
 
@@ -131,7 +123,7 @@ Decomposes each MLP update ΔW into components that lie in the **column space** 
 
 ---
 
-### Activation-Space Diagnostics
+#### Activation-Space Diagnostics
 
 These run the model on actual text and measure *what it computes*, not just what its parameters look like. All activation scripts cap input at `--max-samples 500` texts per split by default to keep runtimes manageable (override with e.g. `--max-samples 1000` for more statistical power).
 
@@ -145,7 +137,7 @@ For each layer, computes the mean L1 and L2 norms of hidden states, plus the nor
 
 ---
 
-#### Step 8: Activation Separation (`activation_separation_analysis.py`)
+##### Step 8: Activation Separation (`activation_separation_analysis.py`)
 
 **Question:** *Can you tell forget-text activations apart from retain-text activations? Does the intervention change this?*
 
@@ -161,7 +153,7 @@ At each layer, extracts the centroid of forget-text activations and retain-text 
 
 ---
 
-#### Step 9: Activation Covariance Analysis (`activation_covariance_analysis.py`)
+##### Step 9: Activation Covariance Analysis (`activation_covariance_analysis.py`)
 
 **Question:** *Does the intervention change the shape of the activation distribution?*
 
@@ -179,7 +171,7 @@ A key output is the **selectivity ratio**: (Wasserstein distance on forget text)
 
 ---
 
-#### Step 11: Row Space Projection (`row_space_projection_analysis.py`)
+##### Step 11: Row Space Projection (`row_space_projection_analysis.py`)
 
 **Question:** *Do activations from forget-text align more with the directions the intervention modified?*
 
@@ -191,7 +183,7 @@ If forget-text activations have high projection onto ΔW's row space while retai
 
 ---
 
-#### Step 12: Local Lipschitz Analysis (`local_lipschitzness_analysis.py`)
+##### Step 12: Local Lipschitz Analysis (`local_lipschitzness_analysis.py`)
 
 **Question:** *Did the intervention make the model's output more or less sensitive to input perturbations?*
 
@@ -207,9 +199,9 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ---
 
-## The Big Picture
+### The Big Picture
 
-Reading left-to-right, the diagnostics answer an escalating series of questions:
+The diagnostics answer an escalating series of questions:
 
 | Level | Question | Steps |
 |---|---|---|
@@ -224,7 +216,7 @@ The thesis prediction is that unlearning methods (CB-LAT) will show: small magni
 
 ---
 
-## Output Structure
+### Output Structure
 
 ```
 outputs/
@@ -247,15 +239,13 @@ plots/
 
 ---
 
-## Unlearning Pipeline
-
-Run unlearning experiments with **10 methods** via `run_unlearn.sh`, then feed the output into the diagnostic pipeline:
+## Unlearning
 
 ```bash
 # Run unlearning
-./run_unlearn.sh ga
+./create_all_unlearning_models.sh
 
-# Analyze the result
+# Analyze the result(s) per the above experiments
 uv run collect_param_stats.py \
   --model-a EleutherAI/deep-ignorance-unfiltered \
   --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
