@@ -100,11 +100,18 @@ def tokenize_texts(
     return batches
 
 
-def make_batches(items: list[dict], batch_size: int) -> list[list[dict]]:
-    """Group single-sample dicts into mini-batches."""
+def make_batches(items: list[dict], batch_size: int, drop_last: bool = True) -> list[list[dict]]:
+    """Group single-sample dicts into mini-batches.
+
+    If drop_last is True (default), discard the final batch when it is
+    smaller than batch_size.  This prevents size-mismatch errors when
+    forget and retain batches are paired (e.g. in DPO / NPO).
+    """
     batches = []
     for i in range(0, len(items), batch_size):
         chunk = items[i : i + batch_size]
+        if drop_last and len(chunk) < batch_size:
+            break
         batch = {
             k: torch.cat([c[k] for c in chunk], dim=0) for k in chunk[0]
         }
@@ -286,7 +293,7 @@ def rmu_loss(
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
-    loss = torch.tensor(0.0, device=next(model.parameters()).device)
+    loss = torch.tensor(0.0, device=next(model.parameters()).device, dtype=next(model.parameters()).dtype)
 
     for lid in layer_ids:
         # Forget: MSE toward (steering_coeff * random_direction)
@@ -324,7 +331,7 @@ def cb_loss(
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
-    loss = torch.tensor(0.0, device=next(model.parameters()).device)
+    loss = torch.tensor(0.0, device=next(model.parameters()).device, dtype=next(model.parameters()).dtype)
 
     for lid in layer_ids:
         # Forget: cosine similarity toward (steering_coeff * random target)
@@ -364,6 +371,7 @@ def lat_loss(
        plus standard retain NLL.
     """
     device = next(model.parameters()).device
+    model_dtype = next(model.parameters()).dtype
 
     # --- Forward pass to get shapes ---
     with torch.no_grad():
@@ -377,7 +385,7 @@ def lat_loss(
         hidden_shape = out.hidden_states[target_lid + 1].shape
 
     # --- Inner loop: find adversarial perturbation ---
-    delta = torch.zeros(hidden_shape, device=device, requires_grad=True)
+    delta = torch.zeros(hidden_shape, device=device, dtype=model_dtype, requires_grad=True)
 
     for _adv_step in range(lat_steps):
         # Hook to add perturbation at the target layer
@@ -387,8 +395,8 @@ def lat_loss(
         def make_hook(d):
             def hook_fn(module, input, output):
                 if isinstance(output, tuple):
-                    return (output[0] + d,) + output[1:]
-                return output + d
+                    return ((output[0] + d).to(output[0].dtype),) + output[1:]
+                return (output + d).to(output.dtype)
             return hook_fn
 
         # Find the target layer module
@@ -498,13 +506,14 @@ def cb_lat_loss(
         hidden_shape = out.hidden_states[target_lid + 1].shape
 
     # Inner loop: adversarial perturbation
-    delta = torch.zeros(hidden_shape, device=device, requires_grad=True)
+    model_dtype = next(model.parameters()).dtype
+    delta = torch.zeros(hidden_shape, device=device, dtype=model_dtype, requires_grad=True)
 
     def make_hook(d):
         def hook_fn(module, input, output):
             if isinstance(output, tuple):
-                return (output[0] + d,) + output[1:]
-            return output + d
+                return ((output[0] + d).to(output[0].dtype),) + output[1:]
+            return (output + d).to(output.dtype)
         return hook_fn
 
     for _ in range(lat_steps):
@@ -535,7 +544,7 @@ def cb_lat_loss(
     # Retain activations (no perturbation)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
-    loss = torch.tensor(0.0, device=device)
+    loss = torch.tensor(0.0, device=device, dtype=next(model.parameters()).dtype)
     for lid in layer_ids:
         fa = forget_acts[lid].flatten(0, 1)
         rt = random_targets[lid].unsqueeze(0).expand_as(fa) * steering_coeff
@@ -730,7 +739,7 @@ def main():
 
         # Fixed random target vectors per layer
         for lid in layer_ids:
-            random_targets[lid] = torch.randn(hidden_dim, device=device, dtype=torch.float32)
+            random_targets[lid] = torch.randn(hidden_dim, device=device, dtype=pt_dtype)
             random_targets[lid] = random_targets[lid] / random_targets[lid].norm()
 
         # Cache clean retain activations
@@ -739,7 +748,7 @@ def main():
         with torch.no_grad():
             for rb in retain_batches[:n_steps]:
                 acts = get_layer_activations(model, rb, layer_ids)
-                retain_act_cache.append({lid: a.detach().float() for lid, a in acts.items()})
+                retain_act_cache.append({lid: a.detach().to(pt_dtype) for lid, a in acts.items()})
         model.train()
 
     # ---- Optimizer ----
@@ -866,8 +875,8 @@ def main():
     model.save_pretrained(args.outdir)
     tokenizer.save_pretrained(args.outdir)
     print("[unlearn] Done ✓")
-    print("[unlearn] ===================================================================")
-    print("[unlearn] ===================================================================")
+    print("===================================================================")
+    print("===================================================================")
 
 
 if __name__ == "__main__":
