@@ -25,13 +25,16 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 
 ---
 
-## Experiment
+### Pre-Requisites For Experimenting and Unlearning
 
-### Quick Start
 
 - Add `HF_TOKEN`and `WANDB_API_KEY` to `.env`.
 - Ensure the `uv` package manager is installed.
 - Run:
+
+---
+
+## Experiment
 
 ```bash
 ./pipeline.sh
@@ -292,7 +295,6 @@ outputs/
 ## Unlearning
 
 ```bash
-# Run unlearning
 ./create_all_unlearning_models.sh
 
 # Analyze the result(s) per the above experiments
