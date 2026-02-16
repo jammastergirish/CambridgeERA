@@ -1,27 +1,20 @@
 # What Makes Unlearning Brittle? A Mechanistic Study of Parameter-Space Interventions
 
-This repository contains a diagnostic pipeline for analyzing how machine unlearning methods alter large language models at both the parameter and activation level. The goal is to identify mechanistic signatures that distinguish deep representational change from shallow parameter patching.
+This repository contains a diagnostic pipeline for creating unlearned large language models using various unlearning algorihtms, and then analyzing how these methods alter models in both parameter and activation spaces. The goal is to identify mechanistic signatures that distinguish deep representational change from shallow parameter patching.
 
 ## Quick Start
 
-```bash
-# 1. Add your Hugging Face token
-echo "HF_TOKEN=hf_your_token_here" > .env
+Add `HF_TOKEN` to `.env`
 
-# 2. Run the full pipeline
+```bash
 ./pipeline.sh
-```
-
-**Environment variables:**
-```bash
-PARAM_DEVICE=cuda ACTIVATION_DEVICE=cuda ./pipeline.sh   # Force GPU
-OUTROOT=my_outputs PLOTROOT=my_plots ./pipeline.sh        # Custom dirs
-FORGET_TEXT=custom_forget.txt RETAIN_TEXT=custom_retain.txt ./pipeline.sh
 ```
 
 ---
 
-## The Experimental Setup
+## EXPERIMENT
+
+### The Experimental Setup
 
 The pipeline performs a **controlled experiment** with three models sharing identical architecture:
 
@@ -42,7 +35,7 @@ By contrasting these two comparisons, you can distinguish *deep representational
 
 ---
 
-## The Two Datasets
+### The Two Datasets
 
 **Step 3** creates two text datasets that serve as *probes* for the activation-level analyses:
 
@@ -55,7 +48,7 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 
 ---
 
-## The Diagnostics: What and Why
+### The Diagnostics: What and Why
 
 The 12 steps form a hierarchy from **coarse to fine**, and from **weight-space to activation-space**:
 
@@ -69,7 +62,7 @@ graph TD
 
 ---
 
-### Weight-Space Diagnostics
+#### Weight-Space Diagnostics
 
 These examine `ΔW = W_modified − W_base` directly — treating the intervention as a matrix perturbation.
 
@@ -92,17 +85,17 @@ These are aggregated per layer and split into **MLP vs Attention** groups, then 
 
 ---
 
-#### Step 6: MLP vs Attention Breakdown (`analyze_mlp_vs_attn.py`)
+##### Step 6: MLP vs Attention Breakdown (`analyze_mlp_vs_attn.py`)
 
 **Question:** *Are the changes concentrated in MLP (knowledge storage) or Attention (routing/composition)?*
 
-Takes the per-matrix stats from Step 1 and computes the ratio of MLP change to Attention change at each layer. Addresses the mechanistic hypothesis that knowledge is primarily stored in MLP layers (the "key-value memory" view from Geva et al.), while attention layers handle routing.
+Takes the per-matrix stats from Step 1 and computes the ratio of MLP change to Attention change at each layer. Addresses the mechanistic hypothesis that knowledge is primarily stored in MLP layers (the "key-value memory" view from [Geva et al](https://arxiv.org/pdf/2012.14913).), while attention layers handle routing.
 
 **Why this matters:** If unlearning only modifies attention layers, it might be redirecting *routing around* the knowledge rather than erasing it — explaining why adversarial fine-tuning can recover the information.
 
 ---
 
-#### Step 7: Null Space & Subspace Analysis (`null_space_analysis.py`)
+##### Step 7: Null Space & Subspace Analysis (`null_space_analysis.py`)
 
 **Question:** *Is the update low-rank, and do the principal subspaces shift?*
 
@@ -118,7 +111,7 @@ For 50 sampled weight matrices, computes full SVD and measures:
 
 ---
 
-#### Step 10: MLP Nullspace Alignment (`mlp_nullspace_alignment.py`)
+##### Step 10: MLP Nullspace Alignment (`mlp_nullspace_alignment.py`)
 
 **Question:** *Does ΔW lie in the nullspace of the original W?*
 
@@ -131,7 +124,7 @@ Decomposes each MLP update ΔW into components that lie in the **column space** 
 
 ---
 
-### Activation-Space Diagnostics
+#### Activation-Space Diagnostics
 
 These run the model on actual text and measure *what it computes*, not just what its parameters look like. All activation scripts cap input at `--max-samples 500` texts per split by default to keep runtimes manageable (override with e.g. `--max-samples 1000` for more statistical power).
 
@@ -145,7 +138,7 @@ For each layer, computes the mean L1 and L2 norms of hidden states, plus the nor
 
 ---
 
-#### Step 8: Activation Separation (`activation_separation_analysis.py`)
+##### Step 8: Activation Separation (`activation_separation_analysis.py`)
 
 **Question:** *Can you tell forget-text activations apart from retain-text activations? Does the intervention change this?*
 
@@ -161,7 +154,7 @@ At each layer, extracts the centroid of forget-text activations and retain-text 
 
 ---
 
-#### Step 9: Activation Covariance Analysis (`activation_covariance_analysis.py`)
+##### Step 9: Activation Covariance Analysis (`activation_covariance_analysis.py`)
 
 **Question:** *Does the intervention change the shape of the activation distribution?*
 
@@ -179,7 +172,7 @@ A key output is the **selectivity ratio**: (Wasserstein distance on forget text)
 
 ---
 
-#### Step 11: Row Space Projection (`row_space_projection_analysis.py`)
+##### Step 11: Row Space Projection (`row_space_projection_analysis.py`)
 
 **Question:** *Do activations from forget-text align more with the directions the intervention modified?*
 
@@ -191,7 +184,7 @@ If forget-text activations have high projection onto ΔW's row space while retai
 
 ---
 
-#### Step 12: Local Lipschitz Analysis (`local_lipschitzness_analysis.py`)
+##### Step 12: Local Lipschitz Analysis (`local_lipschitzness_analysis.py`)
 
 **Question:** *Did the intervention make the model's output more or less sensitive to input perturbations?*
 
@@ -207,7 +200,7 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ---
 
-## The Big Picture
+### The Big Picture
 
 Reading left-to-right, the diagnostics answer an escalating series of questions:
 
@@ -224,7 +217,7 @@ The thesis prediction is that unlearning methods (CB-LAT) will show: small magni
 
 ---
 
-## Output Structure
+### Output Structure
 
 ```
 outputs/
@@ -247,7 +240,7 @@ plots/
 
 ---
 
-## Unlearning Pipeline
+## UNLEARNING
 
 Run unlearning experiments with **10 methods** via `run_unlearn.sh`, then feed the output into the diagnostic pipeline:
 
