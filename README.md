@@ -36,7 +36,7 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 ## Experiment
 
 ```bash
-./pipeline.sh
+./experiment/pipeline.sh
 ```
 ---
 
@@ -79,7 +79,7 @@ graph TD
 
 These examine `W_modified`, `W_base`, and `ΔW = W_modified − W_base` directly—treating the intervention as a matrix perturbation.
 
-#### Steps 1–2: Parameter Statistics (`collect_param_stats.py` + `plot_param_stats.py`)
+#### Steps 1–2: Parameter Statistics (`experiment/collect_param_stats.py` + `experiment/plot_param_stats.py`)
 
 **Question:** *How large is the intervention, and where is it concentrated?*
 
@@ -100,7 +100,7 @@ These are aggregated per layer and split into **MLP vs Attention** groups, then 
 
 ---
 
-##### Step 6: MLP vs Attention Breakdown (`analyze_mlp_vs_attn.py`)
+##### Step 6: MLP vs Attention Breakdown (`experiment/analyze_mlp_vs_attn.py`)
 
 **Question:** *Are the changes concentrated in MLP (knowledge storage) or Attention (routing/composition)?*
 
@@ -110,7 +110,7 @@ Takes the per-matrix stats from Step 1 and computes the ratio of MLP change to A
 
 ---
 
-##### Step 7: Null Space & Subspace Analysis (`null_space_analysis.py`)
+##### Step 7: Null Space & Subspace Analysis (`experiment/null_space_analysis.py`)
 
 **Question:** *Is the update low-rank, and do the principal subspaces shift?*
 
@@ -126,7 +126,7 @@ For 50 sampled weight matrices, computes full SVD and measures:
 
 ---
 
-##### Step 10: MLP Nullspace Alignment (`mlp_nullspace_alignment.py`)
+##### Step 10: MLP Nullspace Alignment (`experiment/mlp_nullspace_alignment.py`)
 
 **Question:** *Does ΔW lie in the nullspace of the original W?*
 
@@ -143,7 +143,7 @@ Decomposes each MLP update ΔW into components that lie in the **column space** 
 
 These run the model on actual text and measure *what it computes*, not just what its parameters look like. All activation scripts cap input at `--max-samples 500` texts per split by default to keep runtimes manageable (override with e.g. `--max-samples 1000` for more statistical power).
 
-#### Steps 4–5: Activation Norms (`collect_activation_norms.py` + `plot_activation_norms.py`)
+#### Steps 4–5: Activation Norms (`experiment/collect_activation_norms.py` + `experiment/plot_activation_norms.py`)
 
 **Question:** *Does the intervention globally suppress or amplify activations?*
 
@@ -160,7 +160,7 @@ Both are averaged across all tokens (weighted by attention mask). They are **not
 
 ---
 
-##### Step 8: Activation Separation (`activation_separation_analysis.py`)
+##### Step 8: Activation Separation (`experiment/activation_separation_analysis.py`)
 
 **Question:** *Can you tell forget-text activations apart from retain-text activations? Does the intervention change this?*
 
@@ -176,7 +176,7 @@ At each layer, extracts the centroid of forget-text activations and retain-text 
 
 ---
 
-##### Step 9: Activation Covariance Analysis (`activation_covariance_analysis.py`)
+##### Step 9: Activation Covariance Analysis (`experiment/activation_covariance_analysis.py`)
 
 **Question:** *Does the intervention change the shape of the activation distribution?*
 
@@ -194,7 +194,7 @@ A key output is the **selectivity ratio**: (Wasserstein distance on forget text)
 
 ---
 
-##### Step 11: Row Space Projection (`row_space_projection_analysis.py`)
+##### Step 11: Row Space Projection (`experiment/row_space_projection_analysis.py`)
 
 **Question:** *Do activations from forget-text align more with the directions the intervention modified?*
 
@@ -206,7 +206,7 @@ If forget-text activations have high projection onto ΔW's row space while retai
 
 ---
 
-##### Step 12: Local Lipschitz Analysis (`local_lipschitzness_analysis.py`)
+##### Step 12: Local Lipschitz Analysis (`experiment/local_lipschitzness_analysis.py`)
 
 **Question:** *Did the intervention make the model's output more or less sensitive to input perturbations?*
 
@@ -222,7 +222,7 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ---
 
-##### Step 13: Linear Probe Analysis (`linear_probe_analysis.py`)
+##### Step 13: Linear Probe Analysis (`experiment/linear_probe_analysis.py`)
 
 **Question:** *At which layer is the forget-set knowledge  linearly encoded?*
 
@@ -283,17 +283,17 @@ outputs/
     linear_probes/         probe_results.csv, summary.json + plot
 ```
 
-> **Tip:** The pipeline automatically skips steps whose output already exists. Use `./pipeline.sh --force` to regenerate everything.
+> **Tip:** The pipeline automatically skips steps whose output already exists. Use `./experiment/pipeline.sh --force` to regenerate everything.
 
 ---
 
 ## Unlearning
 
 ```bash
-./create_all_unlearning_models.sh
+./unlearn/create_all_unlearning_models.sh
 
 # Analyze the result(s) per the above experiments
-uv run collect_param_stats.py \
+uv run experiment/collect_param_stats.py \
   --model-a EleutherAI/deep-ignorance-unfiltered \
   --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
   --outdir outputs/ga_analysis/param_stats
@@ -311,7 +311,7 @@ uv run collect_param_stats.py \
 | `lat` | Representation | Latent adversarial training for robustness |
 | `cb_lat` | Representation | Circuit Breakers + LAT combined |
 
-See `uv run unlearn.py --help` for full argument reference.
+See `uv run unlearn/unlearn.py --help` for full argument reference.
 
 ---
 
