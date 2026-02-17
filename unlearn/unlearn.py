@@ -77,9 +77,18 @@ except ImportError:
 # ===================================================================
 # Data loading
 # ===================================================================
+# The unlearning pipeline needs two datasets:
+#   1. "forget" set — text the model should *un*-learn (e.g. hazardous knowledge)
+#   2. "retain" set — text the model should *keep* performing well on
+# Both are plain .txt files with one sample per line.
+# ===================================================================
 
 def load_lines(path: str, max_lines: int | None = None) -> list[str]:
-    """Load non-empty lines from a text file."""
+    """Load non-empty lines from a text file.
+
+    Each non-blank line becomes one training sample.  `max_lines` lets you
+    cap the dataset size for quick debugging runs.
+    """
     with open(path) as f:
         lines = [l.strip() for l in f if l.strip()]
     if max_lines:
@@ -90,9 +99,15 @@ def load_lines(path: str, max_lines: int | None = None) -> list[str]:
 def tokenize_texts(
     texts: list[str], tokenizer, max_length: int, device: str
 ) -> list[dict]:
-    """Tokenize a list of strings into batches of input_ids + attention_mask."""
+    """Tokenize a list of strings into individual dicts of {input_ids, attention_mask}.
+
+    Each text is tokenized independently and padded/truncated to `max_length`.
+    Returns a list of single-sample dicts (batch dim = 1 each), which are
+    later grouped into mini-batches by `make_batches()`.
+    """
     batches = []
     for text in texts:
+        # HuggingFace tokenizer returns {"input_ids": (1, T), "attention_mask": (1, T)}
         enc = tokenizer(
             text,
             return_tensors="pt",
@@ -100,22 +115,27 @@ def tokenize_texts(
             truncation=True,
             padding="max_length",
         )
+        # Move tensors to the target device (GPU/MPS/CPU)
         batches.append({k: v.to(device) for k, v in enc.items()})
     return batches
 
 
 def make_batches(items: list[dict], batch_size: int, drop_last: bool = True) -> list[list[dict]]:
-    """Group single-sample dicts into mini-batches.
+    """Group single-sample dicts into mini-batches by concatenating along dim 0.
 
     If drop_last is True (default), discard the final batch when it is
     smaller than batch_size.  This prevents size-mismatch errors when
     forget and retain batches are paired (e.g. in DPO / NPO).
+
+    Example: 10 items with batch_size=4 → 2 full batches (items 0-3, 4-7),
+    the remaining 2 items are dropped.
     """
     batches = []
     for i in range(0, len(items), batch_size):
         chunk = items[i : i + batch_size]
         if drop_last and len(chunk) < batch_size:
             break
+        # Concatenate single-sample tensors → (batch_size, T) for each key
         batch = {
             k: torch.cat([c[k] for c in chunk], dim=0) for k in chunk[0]
         }
@@ -126,15 +146,34 @@ def make_batches(items: list[dict], batch_size: int, drop_last: bool = True) -> 
 # ===================================================================
 # Loss functions for each method
 # ===================================================================
+# All unlearning methods ultimately manipulate two fundamental quantities:
+#   1. NLL (negative log-likelihood) — how well the model predicts next tokens
+#   2. Log-probabilities — per-token likelihood under a model
+#
+# "Unlearning" means making the model WORSE at predicting forget-set tokens
+# (high NLL on forget) while staying GOOD at predicting retain-set tokens
+# (low NLL on retain).  Each method below achieves this differently.
+# ===================================================================
 
 def nll_loss(model, batch: dict) -> torch.Tensor:
-    """Standard next-token prediction loss (cross-entropy)."""
-    input_ids = batch["input_ids"]
-    attention_mask = batch["attention_mask"]
+    """Standard next-token prediction (causal LM) loss.
+
+    This is the same cross-entropy loss used during normal pre-training.
+    For unlearning, we either MINIMIZE it (on retain data) to preserve
+    capability, or NEGATE it (on forget data) to degrade capability.
+    """
+    input_ids = batch["input_ids"]          # (B, T)
+    attention_mask = batch["attention_mask"]  # (B, T) — 1 for real tokens, 0 for padding
     outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-    logits = outputs.logits[:, :-1, :].contiguous()
-    labels = input_ids[:, 1:].contiguous()
-    mask = attention_mask[:, 1:].contiguous()
+
+    # Shift logits and labels for next-token prediction:
+    #   logits[:, :-1] predicts token at position t+1
+    #   labels[:, 1:]  is the actual token at position t+1
+    logits = outputs.logits[:, :-1, :].contiguous()  # (B, T-1, vocab_size)
+    labels = input_ids[:, 1:].contiguous()            # (B, T-1)
+    mask = attention_mask[:, 1:].contiguous()          # (B, T-1)
+
+    # Per-token cross-entropy, then mask out padding and average over real tokens
     loss = F.cross_entropy(
         logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
     )
@@ -143,21 +182,40 @@ def nll_loss(model, batch: dict) -> torch.Tensor:
 
 
 def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    """Compute per-token log-probs: shape (B, T)."""
-    log_p = F.log_softmax(logits, dim=-1)
+    """Compute per-token log-probabilities for the given labels.
+
+    Args:
+        logits: (B, T, vocab_size) — raw model output
+        labels: (B, T) — ground-truth token indices
+
+    Returns:
+        (B, T) tensor where entry [b, t] = log P(labels[b,t] | context)
+    """
+    log_p = F.log_softmax(logits, dim=-1)  # normalize logits → log-probs
+    # Gather only the log-prob of the correct token at each position
     return torch.gather(log_p, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
 
 
 def avg_log_prob(
     model, batch: dict, return_per_token: bool = False
 ) -> torch.Tensor:
-    """Average per-token log-prob under `model` for the batch."""
+    """Average per-token log-prob under `model` for the batch.
+
+    Used by DPO, NPO, and SimNPO to compute how likely a sequence is
+    under the current policy (or reference) model.  Higher values mean
+    the model assigns higher probability to the sequence.
+
+    Returns shape (B,) — one scalar per sample in the batch.
+    """
     input_ids = batch["input_ids"]
     attention_mask = batch["attention_mask"]
+    # Use no_grad when called on a frozen reference model (not training),
+    # but allow gradients when called on the policy model being trained.
     with torch.no_grad() if not model.training else torch.enable_grad():
         logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
     per_token = log_probs_from_logits(logits[:, :-1, :], input_ids[:, 1:])
     mask = attention_mask[:, 1:].float()
+    # Average log-prob over real (non-padding) tokens in each sample
     avg = (per_token * mask).sum(dim=-1) / mask.sum(dim=-1).clamp(min=1)
     if return_per_token:
         return avg, per_token, mask
@@ -165,22 +223,42 @@ def avg_log_prob(
 
 
 # ---- GA Simple ---------------------------------------------------------
+# The simplest possible unlearning method.  During normal training we
+# MINIMIZE cross-entropy (gradient descent).  Here we MAXIMIZE it on
+# the forget set (gradient ascent) so the model becomes *worse* at
+# predicting those tokens.  No retain term — so there’s a risk of
+# catastrophic forgetting of useful capabilities.
 
 def ga_simple_loss(model, forget_batch: dict) -> torch.Tensor:
-    """Pure Gradient Ascent: negate NLL on forget set only."""
+    """Pure Gradient Ascent: negate NLL on forget set only.
+
+    By returning the negative NLL, the optimizer’s gradient descent
+    effectively becomes gradient ASCENT on the forget data.
+    """
     return -nll_loss(model, forget_batch)
 
 
 # ---- GA ----------------------------------------------------------------
+# Same idea as GA Simple, but adds a standard NLL term on the retain set
+# to preserve the model’s general capabilities.  The total loss is:
+#   L = -NLL_forget + NLL_retain
+# So the optimizer simultaneously pushes UP the forget loss and pushes
+# DOWN the retain loss.
 
 def ga_loss(model, forget_batch: dict, retain_batch: dict) -> torch.Tensor:
     """Gradient Ascent: negate NLL on forget + standard NLL on retain."""
-    l_forget = -nll_loss(model, forget_batch)  # ascent (maximise NLL)
-    l_retain = nll_loss(model, retain_batch)
+    l_forget = -nll_loss(model, forget_batch)  # ascent (maximise forget NLL)
+    l_retain = nll_loss(model, retain_batch)   # descent (minimise retain NLL)
     return l_forget + l_retain
 
 
 # ---- GradDiff ----------------------------------------------------------
+# Gradient Difference is similar to GA but lets you control the relative
+# importance of forgetting vs. retaining via `forget_weight`.
+#   L = NLL_retain - weight * NLL_forget
+# The minus sign on the forget term does gradient ascent (unlearn), while
+# the retain term does gradient descent (preserve).  A higher
+# `forget_weight` pushes harder on forgetting at the cost of retain quality.
 
 def grad_diff_loss(
     model, forget_batch: dict, retain_batch: dict, forget_weight: float = 1.0
@@ -192,6 +270,19 @@ def grad_diff_loss(
 
 
 # ---- DPO ---------------------------------------------------------------
+# Direct Preference Optimization (Rafailov et al., 2023), repurposed for
+# unlearning.  Originally designed to align LLMs with human preferences
+# by treating one response as "chosen" (preferred) and another as
+# "rejected" (dispreferred).  Here:
+#   - "chosen"   = retain data  (model should still be good at this)
+#   - "rejected" = forget data  (model should become bad at this)
+#
+# DPO requires a frozen *reference model* (π_ref) — a copy of the
+# original pre-trained weights — to prevent the policy from drifting
+# too far.  The loss encourages the policy to increase the probability
+# gap between chosen and rejected relative to the reference.
+#
+# β (beta) is an inverse temperature: higher β = more aggressive updates.
 
 def dpo_loss(
     model,
@@ -204,15 +295,18 @@ def dpo_loss(
     DPO loss: chosen=retain, rejected=forget.
     L = -log σ(β * (log π_θ(y_w)/π_ref(y_w) - log π_θ(y_l)/π_ref(y_l)))
     """
-    # Policy log-probs
+    # Policy (trainable) model log-probs for chosen (retain) & rejected (forget)
     lp_chosen = avg_log_prob(model, retain_batch)
     lp_rejected = avg_log_prob(model, forget_batch)
 
-    # Reference log-probs (frozen)
+    # Reference (frozen) model log-probs — serves as the baseline
     with torch.no_grad():
         ref_lp_chosen = avg_log_prob(ref_model, retain_batch)
         ref_lp_rejected = avg_log_prob(ref_model, forget_batch)
 
+    # Core DPO formula: reward margin between chosen and rejected,
+    # relative to the reference model.  The sigmoid maps this to [0, 1];
+    # we minimise the negative log-sigmoid (i.e., maximise log-sigmoid).
     logits_diff = beta * (
         (lp_chosen - ref_lp_chosen) - (lp_rejected - ref_lp_rejected)
     )
@@ -220,6 +314,18 @@ def dpo_loss(
 
 
 # ---- NPO ---------------------------------------------------------------
+# Negative Preference Optimization.  A DPO-inspired approach that only
+# needs the forget set (no explicit "chosen" data in the preference term).
+# It penalises the policy for assigning higher log-probs to forget data
+# than the reference model does.  A separate NLL term on the retain set
+# keeps general capability intact.
+#
+# Mathematically:
+#   L = -(2/β) * E[log σ(-β * (log π_θ - log π_ref))]  on forget
+#       + NLL on retain
+#
+# The -(2/β) scaling ensures the gradient magnitude stays reasonable
+# across different β values.
 
 def npo_loss(
     model,
@@ -232,19 +338,31 @@ def npo_loss(
     NPO: L = -(2/β) * E[log σ(-β * log(π_θ / π_ref))]  on forget
          + NLL on retain
     """
+    # Policy log-prob on forget data
     lp_forget = avg_log_prob(model, forget_batch)
+    # Reference log-prob on forget data (frozen, no gradients)
     with torch.no_grad():
         ref_lp_forget = avg_log_prob(ref_model, forget_batch)
 
+    # NPO term: penalise the policy if it assigns higher prob to forget
+    # data than the reference does  (lp_forget - ref_lp_forget > 0 is bad)
     npo_term = -(2.0 / beta) * F.logsigmoid(
         -beta * (lp_forget - ref_lp_forget)
     ).mean()
 
+    # Standard retain NLL to preserve general capabilities
     retain_nll = nll_loss(model, retain_batch)
     return npo_term + retain_nll
 
 
 # ---- SimNPO ------------------------------------------------------------
+# Simple NPO — a *reference-free* variant of NPO.  Instead of comparing
+# the policy to a frozen reference, it directly penalises the policy’s
+# absolute log-prob on the forget set.  This is cheaper (no ref model
+# needed) but can be less stable since there’s no anchor.
+#
+#   L = -(2/β) * E[log σ(-β * avg_log_prob_θ(forget))]
+#       + NLL on retain
 
 def simnpo_loss(
     model,
@@ -256,26 +374,45 @@ def simnpo_loss(
     SimNPO (reference-free): L = -(2/β) * E[log σ(-β * avg_log_prob_θ)]
                                 + NLL on retain
     """
+    # No reference model — use the policy’s own log-prob directly
     lp_forget = avg_log_prob(model, forget_batch)
 
+    # Penalise high log-prob on forget data (sigmoid pushes it down)
     simnpo_term = -(2.0 / beta) * F.logsigmoid(-beta * lp_forget).mean()
     retain_nll = nll_loss(model, retain_batch)
     return simnpo_term + retain_nll
 
 
 # ---- RMU ---------------------------------------------------------------
+# Representation Misdirection for Unlearning.
+# Unlike the output-space methods above (which manipulate logits/losses),
+# RMU operates in the model’s *internal representation space*.
+#
+# The idea: at selected intermediate layers, push the forget-set hidden
+# states toward a fixed random direction (so the model can’t extract
+# meaningful information from them), while keeping retain-set hidden
+# states close to their original (pre-training) values.
+#
+# This requires:
+#   1. Choosing target layers (e.g., layers 5, 6, 7)
+#   2. Caching the retain-set activations from the *original* model
+#   3. Generating a fixed random unit vector per layer as the “misdirection” target
 
 def get_layer_activations(model, batch: dict, layer_ids: list[int]):
     """
     Run a forward pass and capture hidden states at specified layer indices.
     Returns dict {layer_id: tensor of shape (B, T, D)}.
+
+    HuggingFace models return `output_hidden_states` as a tuple of
+    (n_layers + 1) tensors: [embedding_output, layer_0_output, ..., layer_N_output].
+    We add +1 to the layer ID to skip the embedding tensor.
     """
     outputs = model(
         input_ids=batch["input_ids"],
         attention_mask=batch["attention_mask"],
         output_hidden_states=True,
     )
-    # hidden_states is a tuple of (n_layers + 1) tensors (embedding + each layer)
+    # hidden_states[0] = embedding output, hidden_states[i+1] = layer i output
     hidden = outputs.hidden_states
     return {lid: hidden[lid + 1] for lid in layer_ids}  # +1 to skip embedding
 
@@ -285,15 +422,22 @@ def rmu_loss(
     forget_batch: dict,
     retain_batch: dict,
     layer_ids: list[int],
-    random_targets: dict,  # {layer_id: (D,) tensor — fixed random direction}
+    random_targets: dict,  # {layer_id: (D,) tensor — fixed random unit vector}
     retain_targets: dict,  # {layer_id: (B, T, D) tensor — cached clean activations}
-    steering_coeff: float,
-    alpha: float,
+    steering_coeff: float,  # scales the random target magnitude
+    alpha: float,           # weight for the retain preservation term
 ) -> torch.Tensor:
     """
     RMU: push forget-set activations toward random target,
          pull retain-set activations toward original (cached) activations.
+
+    The loss has two terms per target layer:
+      1. Forget MSE: ||h_forget - (coeff * random_dir)||^2
+         → forces forget-set representations to become meaningless noise
+      2. Retain MSE: α * ||h_retain - h_retain_original||^2
+         → keeps retain-set representations close to their original values
     """
+    # Get current hidden states for both forget and retain inputs
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
@@ -301,12 +445,13 @@ def rmu_loss(
 
     for lid in layer_ids:
         # Forget: MSE toward (steering_coeff * random_direction)
+        # Expand the (D,) random vector to match (B, T, D) activation shape
         target_f = random_targets[lid].unsqueeze(0).unsqueeze(0) * steering_coeff
         loss = loss + F.mse_loss(forget_acts[lid], target_f.expand_as(forget_acts[lid]))
 
-        # Retain: MSE toward cached clean activations
+        # Retain: MSE toward cached clean activations (from before training)
         target_r = retain_targets[lid]
-        # Handle batch-size mismatch by truncating
+        # Handle batch-size mismatch by truncating to the smaller batch
         bsz = min(retain_acts[lid].size(0), target_r.size(0))
         loss = loss + alpha * F.mse_loss(
             retain_acts[lid][:bsz], target_r[:bsz].detach()
@@ -316,6 +461,18 @@ def rmu_loss(
 
 
 # ---- Circuit Breakers --------------------------------------------------
+# Circuit Breakers (aka Representation Rerouting) is similar to RMU but
+# uses *cosine similarity* instead of MSE to steer activations.
+#
+# Why cosine instead of MSE?  Cosine similarity only cares about the
+# *direction* of the activation vector, not its magnitude.  This can be
+# more robust because it doesn’t fight against the model’s natural norm
+# scaling — it just ensures forget-set activations *point* in a random
+# (meaningless) direction.
+#
+# Loss terms per layer:
+#   Forget: -cos_sim(h_forget, random_dir)  → MAXIMIZE alignment with noise
+#   Retain: α * (1 - cos_sim(h_retain, h_retain_orig))  → PRESERVE direction
 
 def cb_loss(
     model,
@@ -338,34 +495,52 @@ def cb_loss(
     loss = torch.tensor(0.0, device=next(model.parameters()).device, dtype=next(model.parameters()).dtype)
 
     for lid in layer_ids:
-        # Forget: cosine similarity toward (steering_coeff * random target)
+        # Forget: flatten (B, T, D) → (B*T, D) so each token position gets
+        # its own cosine similarity measurement against the random target
         fa = forget_acts[lid].flatten(0, 1)  # (B*T, D)
         rt = random_targets[lid].unsqueeze(0).expand_as(fa) * steering_coeff
         # We want fa to ALIGN with rt, so minimize negative cosine sim
         cos_sim = F.cosine_similarity(fa, rt, dim=-1)
-        loss = loss - cos_sim.mean()  # negate: minimize → maximize alignment
+        loss = loss - cos_sim.mean()  # negate: gradient descent on this = push TOWARD rt
 
-        # Retain: cosine similarity toward cached activations
+        # Retain: keep activations pointing in the same direction as the
+        # cached original activations.  (1 - cos_sim) = 0 when perfectly aligned.
         ra = retain_acts[lid]
         tr = retain_targets[lid]
         bsz = min(ra.size(0), tr.size(0))
         ra_flat = ra[:bsz].flatten(0, 1)
         tr_flat = tr[:bsz].detach().flatten(0, 1)
         retain_cos = F.cosine_similarity(ra_flat, tr_flat, dim=-1)
-        loss = loss + alpha * (1.0 - retain_cos.mean())  # keep close
+        loss = loss + alpha * (1.0 - retain_cos.mean())  # penalise directional drift
 
     return loss
 
 
 # ---- LAT ---------------------------------------------------------------
+# Latent Adversarial Training operates differently from all the above:
+# it uses a *two-loop* (min-max) optimisation:
+#
+# INNER LOOP (adversary):
+#   Find a small perturbation δ (added to a hidden layer) that HELPS the
+#   model recall forget-set data.  Think of δ as an attacker trying to
+#   "jailbreak" the unlearning by nudging internal representations.
+#
+# OUTER LOOP (defender):
+#   Train the model so that even WITH the best adversarial δ, it still
+#   can’t produce the forget-set outputs.  This makes unlearning robust
+#   to representation-level attacks.
+#
+# The perturbation δ is constrained to an L∞ ball of radius `lat_eps`
+# (similar to adversarial training in vision).  `lat_steps` controls
+# how many PGD (Projected Gradient Descent) steps the adversary gets.
 
 def lat_loss(
     model,
     forget_batch: dict,
     retain_batch: dict,
     layer_ids: list[int],
-    lat_eps: float,
-    lat_steps: int,
+    lat_eps: float,      # L∞ budget for the adversarial perturbation
+    lat_steps: int,       # number of PGD steps for the inner adversary
 ) -> torch.Tensor:
     """
     Latent Adversarial Training:
@@ -377,33 +552,43 @@ def lat_loss(
     device = next(model.parameters()).device
     model_dtype = next(model.parameters()).dtype
 
-    # --- Forward pass to get shapes ---
+    # --- Forward pass to discover the hidden state shape ---
+    # We need to know (B, T, D) at the target layer before creating δ
     with torch.no_grad():
         out = model(
             input_ids=forget_batch["input_ids"],
             attention_mask=forget_batch["attention_mask"],
             output_hidden_states=True,
         )
-        # Pick a single target layer for perturbation
-        target_lid = layer_ids[len(layer_ids) // 2]  # middle layer
-        hidden_shape = out.hidden_states[target_lid + 1].shape
+        # Pick the middle target layer for perturbation (a heuristic choice)
+        target_lid = layer_ids[len(layer_ids) // 2]
+        hidden_shape = out.hidden_states[target_lid + 1].shape  # (B, T, D)
 
-    # --- Inner loop: find adversarial perturbation ---
+    # --- Inner loop: PGD to find adversarial perturbation δ ---
+    # δ starts as zeros and is iteratively updated via signed gradients
     delta = torch.zeros(hidden_shape, device=device, dtype=model_dtype, requires_grad=True)
 
     for _adv_step in range(lat_steps):
-        # Hook to add perturbation at the target layer
+        # PyTorch "forward hooks" let us intercept & modify a layer’s
+        # output during the forward pass.  We use this to inject δ
+        # into the target layer’s hidden states.
         handle = None
         hook_layer_idx = [0]
 
         def make_hook(d):
+            """Create a hook that adds perturbation `d` to the layer output."""
             def hook_fn(module, input, output):
+                # Some layers return tuples (hidden_state, attention_weights, ...)
                 if isinstance(output, tuple):
                     return ((output[0] + d).to(output[0].dtype),) + output[1:]
                 return (output + d).to(output.dtype)
             return hook_fn
 
-        # Find the target layer module
+        # Find the target layer module in the model’s architecture.
+        # Different HF model families use different attribute paths:
+        #   - LLaMA/Mistral: model.layers
+        #   - GPT-NeoX:      gpt_neox.layers
+        #   - GPT-2:         transformer.h
         layers = None
         for attr in ["model.layers", "gpt_neox.layers", "transformer.h"]:
             parts = attr.split(".")
@@ -417,13 +602,15 @@ def lat_loss(
                 continue
 
         if layers is None:
-            # Fallback: just use GA loss
+            # If we can’t find the layer structure, fall back to simple GA
             print(f"[WARNING] LAT: Could not find model layers structure. Falling back to gradient ascent loss.")
             print(f"[WARNING] LAT: This may happen with non-standard model architectures.")
             return -nll_loss(model, forget_batch) + nll_loss(model, retain_batch)
 
+        # Register the hook to inject δ into the target layer
         handle = layers[target_lid].register_forward_hook(make_hook(delta))
 
+        # Forward pass with perturbation active
         out = model(
             input_ids=forget_batch["input_ids"],
             attention_mask=forget_batch["attention_mask"],
@@ -434,32 +621,44 @@ def lat_loss(
         adv_loss = F.cross_entropy(
             logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
         )
-        # Adversary wants to MINIMIZE loss (make model good at forget)
+        # The adversary wants to MINIMIZE loss (make the model GOOD at forget
+        # data despite unlearning), so we negate the cross-entropy.
         adv_loss = -(adv_loss * mask.view(-1)).sum() / mask.sum().clamp(min=1)
 
-        handle.remove()
+        handle.remove()  # clean up the hook
 
-        adv_loss.backward(inputs=[delta])
+        # PGD step: update δ using signed gradients, then clip to L∞ ball
+        adv_loss.backward(inputs=[delta])  # only compute grad w.r.t. δ
         with torch.no_grad():
-            delta.data = delta.data - lat_eps * delta.grad.sign()
-            delta.data = delta.data.clamp(-lat_eps, lat_eps)
+            delta.data = delta.data - lat_eps * delta.grad.sign()  # FGSM-style step
+            delta.data = delta.data.clamp(-lat_eps, lat_eps)       # project back to L∞ ball
             delta.grad.zero_()
 
-    # --- Outer loop: train with optimal perturbation ---
-    delta = delta.detach()  # freeze perturbation
+    # --- Outer loop: train model with the optimal (frozen) perturbation ---
+    # The adversary found the best δ; now train the model to resist it.
+    delta = delta.detach()  # freeze perturbation (no more adversary updates)
     handle = layers[target_lid].register_forward_hook(make_hook(delta))
 
-    # Forget loss WITH perturbation (gradient ascent)
+    # Forget loss WITH perturbation (gradient ascent — maximize NLL)
     forget_loss = -nll_loss(model, forget_batch)
     handle.remove()
 
-    # Retain loss (standard)
+    # Retain loss (standard next-token prediction — no perturbation)
     retain_loss = nll_loss(model, retain_batch)
 
     return forget_loss + retain_loss
 
 
 # ---- CB-LAT (combined) -------------------------------------------------
+# The most robust method in this file: combines Circuit Breakers with
+# Latent Adversarial Training.  The idea is:
+#   1. Inner loop (LAT): find adversarial perturbation δ that helps the
+#      model recall forget-set data (same as in LAT above)
+#   2. Outer loop (CB): with δ injected, apply representation rerouting
+#      to steer forget activations toward random noise
+#
+# This means the model learns to reroute representations even when an
+# adversary is actively trying to recover the forgotten knowledge.
 
 def cb_lat_loss(
     model,
@@ -509,11 +708,12 @@ def cb_lat_loss(
                     output_hidden_states=True)
         hidden_shape = out.hidden_states[target_lid + 1].shape
 
-    # Inner loop: adversarial perturbation
+    # Inner loop: PGD adversarial perturbation (identical to LAT inner loop)
     model_dtype = next(model.parameters()).dtype
     delta = torch.zeros(hidden_shape, device=device, dtype=model_dtype, requires_grad=True)
 
     def make_hook(d):
+        """Hook that injects perturbation `d` into a layer’s output."""
         def hook_fn(module, input, output):
             if isinstance(output, tuple):
                 return ((output[0] + d).to(output[0].dtype),) + output[1:]
@@ -537,24 +737,29 @@ def cb_lat_loss(
             delta.data = delta.data.clamp(-lat_eps, lat_eps)
             delta.grad.zero_()
 
-    # Outer loop: CB rerouting with perturbation active
+    # Outer loop: CB rerouting with the adversarial perturbation active
+    # This is the key difference from plain CB: the forget activations have
+    # been perturbed by the adversary, so the model must reroute *despite* that.
     delta = delta.detach()
     handle = layers[target_lid].register_forward_hook(make_hook(delta))
 
-    # Get perturbed forget activations
+    # Get perturbed forget activations (with δ injected at the target layer)
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     handle.remove()
 
-    # Retain activations (no perturbation)
+    # Retain activations (clean, no perturbation — we only attack forget data)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
+    # CB loss computation: same as cb_loss() but using perturbed forget acts
     loss = torch.tensor(0.0, device=device, dtype=next(model.parameters()).dtype)
     for lid in layer_ids:
+        # Forget: push perturbed activations toward random noise direction
         fa = forget_acts[lid].flatten(0, 1)
         rt = random_targets[lid].unsqueeze(0).expand_as(fa) * steering_coeff
         cos_sim = F.cosine_similarity(fa, rt, dim=-1)
         loss = loss - cos_sim.mean()
 
+        # Retain: preserve original activation directions
         ra = retain_acts[lid]
         tr = retain_targets[lid]
         bsz = min(ra.size(0), tr.size(0))
@@ -566,6 +771,15 @@ def cb_lat_loss(
 
 
 # ---- Weight Distortion ---------------------------------------------------
+# The simplest weight-space method.  Before training even begins, we add
+# random Gaussian noise to ALL model parameters (controlled by --wt-noise-std).
+# Then we fine-tune on the retain set only.  The intuition is:
+#   - The noise destroys some of the model’s learned associations (including
+#     forget-set knowledge)
+#   - The retain fine-tuning recovers useful capabilities while leaving
+#     the forget-set knowledge degraded
+#
+# The loss during training is just standard NLL on retain data.
 
 def wt_dist_loss(model, retain_batch: dict) -> torch.Tensor:
     """Weight Distortion: just retain NLL (noise was added to weights before training)."""
@@ -573,11 +787,19 @@ def wt_dist_loss(model, retain_batch: dict) -> torch.Tensor:
 
 
 # ---- Weight Distance Regularization --------------------------------------
+# Instead of adding noise upfront (like wt_dist), this method drives the
+# model weights AWAY from their pretrained values by maximising L2 distance:
+#   L = NLL_retain - λ * ||θ - θ_pretrained||²
+#
+# The NLL_retain term keeps the model useful on retain data, while the
+# L2 penalty pushes the weights to change, hopefully destroying the
+# specific associations that encode forget-set knowledge.
+# λ (reg_lambda) controls how aggressively the weights are pushed apart.
 
 def wt_dist_reg_loss(
     model,
     retain_batch: dict,
-    pretrained_params: dict,
+    pretrained_params: dict,  # {name: frozen tensor} — cached before training
     reg_lambda: float,
 ) -> torch.Tensor:
     """
@@ -587,30 +809,41 @@ def wt_dist_reg_loss(
     """
     retain_nll = nll_loss(model, retain_batch)
 
-    # L2 distance between current and pretrained parameters
+    # Compute sum of squared differences between current and original weights
     l2_dist = torch.tensor(0.0, device=next(model.parameters()).device,
                            dtype=next(model.parameters()).dtype)
     for name, param in model.named_parameters():
         if param.requires_grad and name in pretrained_params:
             l2_dist = l2_dist + (param - pretrained_params[name]).pow(2).sum()
 
+    # Subtract the L2 term: minimising this loss = retain quality UP, distance UP
     return retain_nll - reg_lambda * l2_dist
 
 
 # ===================================================================
 # Validation function
 # ===================================================================
+# Periodically check how well unlearning is working by measuring NLL
+# on held-out forget and retain samples.  Good unlearning means:
+#   - HIGH forget_NLL  (model is bad at predicting forget data)
+#   - LOW retain_NLL   (model is still good at predicting retain data)
+#   - Positive "gap" (forget_NLL - retain_NLL)
+# ===================================================================
 
 def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step, verbose=True):
-    """Run validation on held-out data and return metrics."""
+    """Run validation on held-out data and return metrics.
+
+    Returns a dict with forget_nll, retain_nll, and the gap between them.
+    The gap should be positive and increasing for successful unlearning.
+    """
     if not eval_forget_batches or not eval_retain_batches:
         return None
 
-    model.eval()
+    model.eval()  # switch to eval mode (disables dropout, etc.)
     with torch.no_grad():
         forget_nll = sum(nll_loss(model, b).item() for b in eval_forget_batches) / len(eval_forget_batches)
         retain_nll = sum(nll_loss(model, b).item() for b in eval_retain_batches) / len(eval_retain_batches)
-    model.train()
+    model.train()  # switch back to training mode
 
     gap = forget_nll - retain_nll
 
@@ -622,6 +855,15 @@ def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step,
 
 # ===================================================================
 # Main training loop
+# ===================================================================
+# The main() function orchestrates the full unlearning pipeline:
+#   1. Parse CLI args to select method + hyperparameters
+#   2. Load the pre-trained model + tokenizer
+#   3. Prepare forget/retain datasets
+#   4. Run method-specific setup (e.g., cache activations for RMU)
+#   5. Train for the specified number of epochs
+#   6. Evaluate unlearning quality on held-out data
+#   7. Save the unlearned model
 # ===================================================================
 
 def main():
@@ -708,11 +950,15 @@ def main():
     model.to(device)
     model.train()
 
-    # Enable gradient checkpointing to save memory
+    # Enable gradient checkpointing to save GPU memory at the cost of
+    # recomputing activations during the backward pass.
     if hasattr(model, "gradient_checkpointing_enable"):
         model.gradient_checkpointing_enable()
 
     # ---- Load reference model (for DPO / NPO) ----
+    # DPO and NPO compare the trainable "policy" model against a frozen
+    # "reference" model (an unmodified copy of the pretrained weights).
+    # This prevents the policy from drifting too far during unlearning.
     ref_model = None
     if args.method in ("dpo", "npo"):
         print("[unlearn] Loading reference model (frozen copy)...")
@@ -720,9 +966,9 @@ def main():
             args.model, torch_dtype=pt_dtype, trust_remote_code=True
         )
         ref_model.to(device)
-        ref_model.eval()
+        ref_model.eval()  # permanently in eval mode
         for p in ref_model.parameters():
-            p.requires_grad = False
+            p.requires_grad = False  # freeze all weights
 
     # ---- Load and tokenize data ----
     print("[unlearn] Tokenizing data...")
@@ -732,6 +978,9 @@ def main():
     print(f"[unlearn]   retain samples: {len(retain_texts)}")
 
     # ---- Train / eval split ----
+    # Hold out a fraction of data for validation so we can monitor
+    # unlearning quality during training (forget NLL should go UP,
+    # retain NLL should stay LOW).
     eval_forget_batches = []
     eval_retain_batches = []
     if args.eval_split > 0:
@@ -757,6 +1006,8 @@ def main():
     forget_batches = make_batches(forget_items, args.batch_size)
     retain_batches = make_batches(retain_items, args.batch_size)
 
+    # Each step pairs one forget batch with one retain batch, so the total
+    # steps per epoch is limited by whichever dataset has fewer batches.
     n_steps = min(len(forget_batches), len(retain_batches))
     print(f"[unlearn]   steps/epoch: {n_steps}")
 
@@ -781,12 +1032,15 @@ def main():
 
         hidden_dim = model.config.hidden_size
 
-        # Fixed random target vectors per layer
+        # Generate a random unit vector per target layer.  During training,
+        # RMU/CB will push forget-set activations to align with these vectors.
+        # Normalising ensures the direction is what matters, not magnitude.
         for lid in layer_ids:
             random_targets[lid] = torch.randn(hidden_dim, device=device, dtype=pt_dtype)
-            random_targets[lid] = random_targets[lid] / random_targets[lid].norm()
+            random_targets[lid] = random_targets[lid] / random_targets[lid].norm()  # unit norm
 
-        # Cache clean retain activations
+        # Cache the retain-set activations from the ORIGINAL (pre-training)
+        # model.  These become the targets that RMU/CB try to preserve.
         print(f"[unlearn] {args.method.upper()}: caching retain activations...")
         model.eval()
         with torch.no_grad():
@@ -810,7 +1064,9 @@ def main():
             if param.requires_grad:
                 pretrained_params[name] = param.data.clone()
 
-    # ---- Optimizer ----
+    # ---- Optimizer & LR Scheduler ----
+    # AdamW is the standard choice for fine-tuning transformers.
+    # CosineAnnealingLR decays the learning rate from `lr` to ~0 over training.
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad], lr=args.lr
     )
@@ -827,8 +1083,8 @@ def main():
         pbar = tqdm(range(n_steps), desc=f"Epoch {epoch+1}/{args.epochs}", unit="step")
 
         for step_idx in pbar:
-            fb = forget_batches[step_idx]
-            rb = retain_batches[step_idx]
+            fb = forget_batches[step_idx]  # current forget mini-batch
+            rb = retain_batches[step_idx]  # current retain mini-batch
 
             # Zero grad at accumulation boundaries (or every step if no accumulation)
             if args.grad_accum_steps > 1:
@@ -837,6 +1093,11 @@ def main():
             else:
                 optimizer.zero_grad()
 
+            # ---- Dispatch to the selected unlearning method ----
+            # Each method returns a single scalar loss.  The loss encodes
+            # the unlearning objective (e.g., "increase forget NLL while
+            # decreasing retain NLL").  The optimizer then updates the
+            # model weights to minimise this loss.
             if args.method == "ga_simple":
                 loss = ga_simple_loss(model, fb)
             elif args.method == "ga":

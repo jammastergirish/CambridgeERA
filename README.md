@@ -358,18 +358,18 @@ uv run experiment/collect_param_stats.py \
 
 | Method | Type | Key Params | Description |
 |---|---|---|---|
-| `ga_simple` | Loss | — | Gradient ascent on forget set only |
-| `ga` | Loss | — | Gradient ascent on forget + descent on retain |
-| `grad_diff` | Loss | `--forget-weight` | Weighted forget/retain NLL difference |
-| `dpo` | Loss | `--beta` | Direct Preference Optimization (needs ref model) |
-| `npo` | Loss | `--beta` | Negative Preference Optimization (needs ref model) |
-| `simnpo` | Loss | `--beta` | Reference-free NPO variant |
-| `rmu` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Steer hidden states toward random targets (MSE) |
-| `cb` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Cosine-similarity circuit rerouting |
-| `lat` | Representation | `--layer-id`, `--lat-eps`, `--lat-steps` | Latent adversarial training |
-| `cb_lat` | Representation | `--layer-id`, `--steering-coeff`, `--alpha`, `--lat-eps`, `--lat-steps` | Circuit Breakers + LAT combined |
-| `wt_dist` | Weight-Space | `--wt-noise-std` | Weight Distortion (Gaussian noise + retain fine-tuning) |
-| `wt_dist_reg` | Weight-Space | `--wt-reg-lambda` | Weight Distance Regularization (maximize L2 from pretrained) |
+| `ga_simple` | Loss | — | Pure gradient ascent: negates NLL on forget set to make the model *worse* at predicting those tokens. No retain term, so risks catastrophic forgetting of useful capabilities. |
+| `ga` | Loss | — | Gradient ascent on forget + gradient descent on retain. Simultaneously pushes UP forget-set loss and DOWN retain-set loss, balancing unlearning with capability preservation. |
+| `grad_diff` | Loss | `--forget-weight` | Like GA but with an explicit weight controlling the forget vs. retain trade-off. Higher `--forget-weight` unlearns more aggressively at the cost of retain quality. |
+| `dpo` | Loss | `--beta` | Direct Preference Optimization repurposed for unlearning: treats retain data as "chosen" and forget data as "rejected". Requires a frozen reference model to prevent excessive drift. β controls update aggressiveness. |
+| `npo` | Loss | `--beta` | Negative Preference Optimization: penalises the policy for assigning higher probability to forget data than the frozen reference model does, plus a retain NLL term. Only needs the forget set in the preference term. |
+| `simnpo` | Loss | `--beta` | Reference-free NPO: directly penalises the model's own log-probability on forget data instead of comparing to a reference. Cheaper (no ref model) but less stable. |
+| `rmu` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Representation Misdirection: at target layers, pushes forget-set hidden states toward a fixed random direction (MSE) so the model can't extract meaningful information, while anchoring retain-set activations to their original cached values. |
+| `cb` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Circuit Breakers: like RMU but uses cosine similarity instead of MSE, making the loss invariant to activation magnitude — only the *direction* of representations matters. More robust to norm-scaling effects. |
+| `lat` | Representation | `--layer-id`, `--lat-eps`, `--lat-steps` | Latent Adversarial Training: inner PGD loop finds a perturbation δ (injected at a hidden layer) that helps the model recall forget data; outer loop trains the model to unlearn even with δ active. Makes unlearning robust to representation-level attacks. |
+| `cb_lat` | Representation | `--layer-id`, `--steering-coeff`, `--alpha`, `--lat-eps`, `--lat-steps` | Most robust method: combines CB's representation rerouting with LAT's adversarial robustness. Inner loop finds adversarial δ; outer loop applies Circuit Breaker rerouting with δ injected, forcing the model to reroute even under adversarial pressure. |
+| `wt_dist` | Weight-Space | `--wt-noise-std` | Weight Distortion: adds Gaussian noise to ALL weights before training, then fine-tunes on retain data only. The noise destroys learned associations; retain fine-tuning recovers useful capabilities while forget knowledge stays degraded. |
+| `wt_dist_reg` | Weight-Space | `--wt-reg-lambda` | Weight Distance Regularisation: minimises retain NLL while *maximising* L2 distance from pretrained weights. Directly optimises for tamper-resistance — the further weights move, the harder it is to recover the original model via fine-tuning. |
 
 See `uv run unlearn/unlearn.py --help` for full argument reference.
 
