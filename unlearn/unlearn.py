@@ -245,11 +245,11 @@ def ga_simple_loss(model, forget_batch: dict) -> torch.Tensor:
 # So the optimizer simultaneously pushes UP the forget loss and pushes
 # DOWN the retain loss.
 
-def ga_loss(model, forget_batch: dict, retain_batch: dict) -> torch.Tensor:
+def ga_loss(model, forget_batch: dict, retain_batch: dict, retain_weight: float = 1.0) -> torch.Tensor:
     """Gradient Ascent: negate NLL on forget + standard NLL on retain."""
     l_forget = -nll_loss(model, forget_batch)  # ascent (maximise forget NLL)
     l_retain = nll_loss(model, retain_batch)   # descent (minimise retain NLL)
-    return l_forget + l_retain
+    return l_forget + retain_weight * l_retain
 
 
 # ---- GradDiff ----------------------------------------------------------
@@ -333,6 +333,7 @@ def npo_loss(
     forget_batch: dict,
     retain_batch: dict,
     beta: float,
+    retain_weight: float = 1.0,
 ) -> torch.Tensor:
     """
     NPO: L = -(2/β) * E[log σ(-β * log(π_θ / π_ref))]  on forget
@@ -352,7 +353,7 @@ def npo_loss(
 
     # Standard retain NLL to preserve general capabilities
     retain_nll = nll_loss(model, retain_batch)
-    return npo_term + retain_nll
+    return npo_term + retain_weight * retain_nll
 
 
 # ---- SimNPO ------------------------------------------------------------
@@ -369,6 +370,7 @@ def simnpo_loss(
     forget_batch: dict,
     retain_batch: dict,
     beta: float,
+    retain_weight: float = 1.0,
 ) -> torch.Tensor:
     """
     SimNPO (reference-free): L = -(2/β) * E[log σ(-β * avg_log_prob_θ)]
@@ -380,7 +382,7 @@ def simnpo_loss(
     # Penalise high log-prob on forget data (sigmoid pushes it down)
     simnpo_term = -(2.0 / beta) * F.logsigmoid(-beta * lp_forget).mean()
     retain_nll = nll_loss(model, retain_batch)
-    return simnpo_term + retain_nll
+    return simnpo_term + retain_weight * retain_nll
 
 
 # ---- RMU ---------------------------------------------------------------
@@ -541,6 +543,7 @@ def lat_loss(
     layer_ids: list[int],
     lat_eps: float,      # L∞ budget for the adversarial perturbation
     lat_steps: int,       # number of PGD steps for the inner adversary
+    retain_weight: float = 1.0,
 ) -> torch.Tensor:
     """
     Latent Adversarial Training:
@@ -646,7 +649,7 @@ def lat_loss(
     # Retain loss (standard next-token prediction — no perturbation)
     retain_loss = nll_loss(model, retain_batch)
 
-    return forget_loss + retain_loss
+    return forget_loss + retain_weight * retain_loss
 
 
 # ---- CB-LAT (combined) -------------------------------------------------
@@ -898,6 +901,8 @@ def main():
                         help="Perturbation budget for LAT")
     parser.add_argument("--lat-steps", type=int, default=5,
                         help="Number of adversarial inner steps for LAT")
+    parser.add_argument("--retain-weight", type=float, default=1.0,
+                        help="Multiplier for retain loss in ga/npo/simnpo/lat (higher = more stable, less forgetting)")
     parser.add_argument("--wt-noise-std", type=float, default=0.02,
                         help="Std of Gaussian noise for Weight Distortion (wt_dist)")
     parser.add_argument("--wt-reg-lambda", type=float, default=0.1,
@@ -1101,15 +1106,15 @@ def main():
             if args.method == "ga_simple":
                 loss = ga_simple_loss(model, fb)
             elif args.method == "ga":
-                loss = ga_loss(model, fb, rb)
+                loss = ga_loss(model, fb, rb, args.retain_weight)
             elif args.method == "grad_diff":
                 loss = grad_diff_loss(model, fb, rb, args.forget_weight)
             elif args.method == "dpo":
                 loss = dpo_loss(model, ref_model, fb, rb, args.beta)
             elif args.method == "npo":
-                loss = npo_loss(model, ref_model, fb, rb, args.beta)
+                loss = npo_loss(model, ref_model, fb, rb, args.beta, args.retain_weight)
             elif args.method == "simnpo":
-                loss = simnpo_loss(model, fb, rb, args.beta)
+                loss = simnpo_loss(model, fb, rb, args.beta, args.retain_weight)
             elif args.method == "rmu":
                 loss = rmu_loss(
                     model, fb, rb, layer_ids,
@@ -1125,7 +1130,7 @@ def main():
             elif args.method == "lat":
                 loss = lat_loss(
                     model, fb, rb, layer_ids,
-                    args.lat_eps, args.lat_steps,
+                    args.lat_eps, args.lat_steps, args.retain_weight,
                 )
             elif args.method == "cb_lat":
                 loss = cb_lat_loss(

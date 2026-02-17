@@ -359,14 +359,14 @@ uv run experiment/collect_param_stats.py \
 | Method | Type | Key Params | Description |
 |---|---|---|---|
 | `ga_simple` | Loss | — | Pure gradient ascent: negates NLL on forget set to make the model *worse* at predicting those tokens. No retain term, so risks catastrophic forgetting of useful capabilities. |
-| `ga` | Loss | — | Gradient ascent on forget + gradient descent on retain. Simultaneously pushes UP forget-set loss and DOWN retain-set loss, balancing unlearning with capability preservation. |
+| `ga` | Loss | `--retain-weight` | Gradient ascent on forget + gradient descent on retain. Simultaneously pushes UP forget-set loss and DOWN retain-set loss, balancing unlearning with capability preservation. |
 | `grad_diff` | Loss | `--forget-weight` | Like GA but with an explicit weight controlling the forget vs. retain trade-off. Higher `--forget-weight` unlearns more aggressively at the cost of retain quality. |
 | `dpo` | Loss | `--beta` | Direct Preference Optimization repurposed for unlearning: treats retain data as "chosen" and forget data as "rejected". Requires a frozen reference model to prevent excessive drift. β controls update aggressiveness. |
-| `npo` | Loss | `--beta` | Negative Preference Optimization: penalises the policy for assigning higher probability to forget data than the frozen reference model does, plus a retain NLL term. Only needs the forget set in the preference term. |
-| `simnpo` | Loss | `--beta` | Reference-free NPO: directly penalises the model's own log-probability on forget data instead of comparing to a reference. Cheaper (no ref model) but less stable. |
+| `npo` | Loss | `--beta`, `--retain-weight` | Negative Preference Optimization: penalises the policy for assigning higher probability to forget data than the frozen reference model does, plus a retain NLL term. Only needs the forget set in the preference term. |
+| `simnpo` | Loss | `--beta`, `--retain-weight` | Reference-free NPO: directly penalises the model's own log-probability on forget data instead of comparing to a reference. Cheaper (no ref model) but less stable. |
 | `rmu` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Representation Misdirection: at target layers, pushes forget-set hidden states toward a fixed random direction (MSE) so the model can't extract meaningful information, while anchoring retain-set activations to their original cached values. |
 | `cb` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Circuit Breakers: like RMU but uses cosine similarity instead of MSE, making the loss invariant to activation magnitude — only the *direction* of representations matters. More robust to norm-scaling effects. |
-| `lat` | Representation | `--layer-id`, `--lat-eps`, `--lat-steps` | Latent Adversarial Training: inner PGD loop finds a perturbation δ (injected at a hidden layer) that helps the model recall forget data; outer loop trains the model to unlearn even with δ active. Makes unlearning robust to representation-level attacks. |
+| `lat` | Representation | `--layer-id`, `--lat-eps`, `--lat-steps`, `--retain-weight` | Latent Adversarial Training: inner PGD loop finds a perturbation δ (injected at a hidden layer) that helps the model recall forget data; outer loop trains the model to unlearn even with δ active. Makes unlearning robust to representation-level attacks. |
 | `cb_lat` | Representation | `--layer-id`, `--steering-coeff`, `--alpha`, `--lat-eps`, `--lat-steps` | Most robust method: combines CB's representation rerouting with LAT's adversarial robustness. Inner loop finds adversarial δ; outer loop applies Circuit Breaker rerouting with δ injected, forcing the model to reroute even under adversarial pressure. |
 | `wt_dist` | Weight-Space | `--wt-noise-std` | Weight Distortion: adds Gaussian noise to ALL weights before training, then fine-tunes on retain data only. The noise destroys learned associations; retain fine-tuning recovers useful capabilities while forget knowledge stays degraded. |
 | `wt_dist_reg` | Weight-Space | `--wt-reg-lambda` | Weight Distance Regularisation: minimises retain NLL while *maximising* L2 distance from pretrained weights. Directly optimises for tamper-resistance — the further weights move, the harder it is to recover the original model via fine-tuning. |
@@ -476,19 +476,43 @@ Where $\lambda$ is `--wt-reg-lambda` (default 0.1). The paper shows this produce
 
 ---
 
-#### Training Mode Reference
+#### Hyperparameter Defaults & Tuning Guide
 
-All methods use **full-parameter training** by default. Key shared settings:
+All methods use **full-parameter training** with AdamW + cosine annealing. Shared defaults:
 
 | Setting | Default | Flag |
 |---|---|---|
-| Optimizer | AdamW | — |
-| LR schedule | Cosine annealing | — |
+| Learning rate | 1e-5 | `--lr` |
+| Epochs | 1 | `--epochs` |
+| Batch size | 4 | `--batch-size` |
+| Max sequence length | 512 | `--max-length` |
 | Gradient clipping | 1.0 | `--grad-clip` |
 | Gradient accumulation | 1 | `--grad-accum-steps` |
 | Eval split | 10% | `--eval-split` |
 
----
+##### Per-Method Defaults
+
+| Method | Key Param | Default | What to tune if collapsing | What to tune if not unlearning enough |
+|---|---|---|---|---|
+| `ga` | `--retain-weight` | 1.0 | ↑ to 2–10 | ↓ below 1.0 |
+| `grad_diff` | `--forget-weight` | 1.0 | ↓ to 0.1–0.5 | ↑ to 2–5 |
+| `dpo` | `--beta` | 0.1 | ↓ beta (gentler updates) | ↑ beta (sharper preference) |
+| `npo` | `--beta`, `--retain-weight` | 0.1, 1.0 | ↑ retain-weight or ↓ beta | ↑ beta or ↓ retain-weight |
+| `simnpo` | `--beta`, `--retain-weight` | 0.1, 1.0 | ↑ retain-weight or ↓ beta | ↑ beta or ↓ retain-weight |
+| `rmu` | `--alpha`, `--steering-coeff` | 100.0, 20.0 | ↑ alpha or ↓ steering-coeff | ↓ alpha or ↑ steering-coeff |
+| `cb` | `--alpha`, `--steering-coeff` | 100.0, 20.0 | ↑ alpha or ↓ steering-coeff | ↓ alpha or ↑ steering-coeff |
+| `lat` | `--lat-eps`, `--retain-weight` | 0.1, 1.0 | ↑ retain-weight or ↓ lat-eps | ↑ lat-eps or ↓ retain-weight |
+| `cb_lat` | `--alpha`, `--lat-eps` | 100.0, 0.1 | ↑ alpha or ↓ lat-eps | ↓ alpha or ↑ lat-eps |
+| `wt_dist` | `--wt-noise-std` | 0.02 | ↓ noise (less destruction) | ↑ noise (more disruption) |
+| `wt_dist_reg` | `--wt-reg-lambda` | 0.1 | ↓ lambda (less weight push) | ↑ lambda (more distance) |
+
+> [!TIP]
+> **Preventing catastrophic collapse.** If MMLU drops well below the ~45% baseline, the two most effective levers are:
+> 1. **Increase `--retain-weight`** (for ga/npo/simnpo/lat) or **`--alpha`** (for rmu/cb/cb_lat) — this strengthens the retain-preservation term relative to the forget-ascent term.
+> 2. **Lower the learning rate** (`--lr 5e-6` or `1e-6`) — slower updates give the retain term more weight per step.
+> 3. **More epochs with lower LR** — `EPOCHS=3 LR=5e-6` often works better than 1 epoch at 1e-5.
+>
+> The goal is MMLU within ~3% of the 45% baseline while still showing elevated forget-set NLL.
 
 ## Inference
 

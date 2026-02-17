@@ -17,8 +17,8 @@
 #
 # Environment overrides:
 #   BASE, DEVICE, DTYPE, OUTROOT, LR, EPOCHS, BATCH_SIZE, MAX_LENGTH, BETA,
-#   ALPHA, STEERING_COEFF, LAYER_ID, FORGET_WEIGHT, LAT_EPS, LAT_STEPS,
-#   WT_NOISE_STD, WT_REG_LAMBDA, EVAL_SPLIT
+#   ALPHA, STEERING_COEFF, LAYER_ID, FORGET_WEIGHT, RETAIN_WEIGHT, LAT_EPS,
+#   LAT_STEPS, WT_NOISE_STD, WT_REG_LAMBDA, EVAL_SPLIT
 set -euo pipefail
 
 METHOD="${1:?Usage: $0 <ga_simple|ga|grad_diff|dpo|npo|simnpo|rmu|cb|lat|cb_lat|wt_dist|wt_dist_reg>}"
@@ -51,6 +51,7 @@ uv run --script unlearn/unlearn.py \
   ${STEERING_COEFF:+--steering-coeff "$STEERING_COEFF"} \
   ${LAYER_ID:+--layer-id "$LAYER_ID"} \
   ${FORGET_WEIGHT:+--forget-weight "$FORGET_WEIGHT"} \
+  ${RETAIN_WEIGHT:+--retain-weight "$RETAIN_WEIGHT"} \
   ${LAT_EPS:+--lat-eps "$LAT_EPS"} \
   ${LAT_STEPS:+--lat-steps "$LAT_STEPS"} \
   ${WT_NOISE_STD:+--wt-noise-std "$WT_NOISE_STD"} \
