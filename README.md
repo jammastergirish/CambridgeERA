@@ -88,6 +88,21 @@ graph TD
 
 ---
 
+#### Step 0: MMLU Evaluation (`experiment/eval_mmlu.py`)
+
+**Question:** *Does the model still have general capabilities?*
+
+Runs MMLU (Massive Multitask Language Understanding) on each model before the expensive mechanistic diagnostics. This immediately identifies models that have catastrophically collapsed during unlearning (e.g., repeating degenerate tokens). Default 1000 questions sampled uniformly across all 57 MMLU subjects.
+
+| Metric | What it tells you |
+|---|---|
+| **Overall accuracy** | Collapsed models score near random chance (0.25) or below |
+| **Per-subject accuracy** | Reveals whether damage is uniform or domain-specific |
+
+> **Note:** Results are stored **per-model** (not per-comparison) since MMLU evaluates a single model's capabilities.
+
+---
+
 #### Parameter-Space
 
 These examine `W_modified`, `W_base`, and `ΔW = W_modified − W_base` directly—treating the intervention as a matrix perturbation.
@@ -283,6 +298,7 @@ The diagnostics answer an escalating series of questions:
 
 | Level | Question | Steps |
 |---|---|---|
+| **Capabilities** | Does the model still work at all? | 0 |
 | **Magnitude** | How much changed? | 1–2 |
 | **Location** | Where — MLP or Attention? Which layers? | 6 |
 | **Geometry** | What shape is ΔW? Low-rank? Nullspace-aligned? | 7, 10 |
@@ -315,7 +331,8 @@ outputs/
     row_space_projection/  projection metrics + plots
     lipschitzness/         Lipschitz estimates + plots
 
-  <model>/                             # Steps 13–14: per individual model
+  <model>/                             # Steps 0, 13–14: per individual model
+    mmlu/                  mmlu_results.csv, summary.json + plot
     linear_probes/         probe_results.csv, summary.json + plot
     wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot
     wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot

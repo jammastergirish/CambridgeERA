@@ -70,6 +70,54 @@ echo "Output root: $OUTROOT"
 echo ""
 
 # ============================================
+# STEP 0: MMLU Evaluation (per-model)
+# ============================================
+echo "=========================================="
+echo "STEP 0: MMLU Evaluation (General Capabilities)"
+echo "=========================================="
+echo "Quick sanity check — identifies collapsed models before expensive diagnostics."
+echo "(Results stored per-model, not per-comparison)"
+
+echo ""
+echo "Model: $BASE"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${MODEL_BASE}/mmlu" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/eval_mmlu.py \
+    --model "$BASE" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE" \
+    --outdir "${OUTROOT}/${MODEL_BASE}/mmlu"
+fi
+
+echo ""
+echo "Model: $FILTERED"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${MODEL_FILTERED}/mmlu" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/eval_mmlu.py \
+    --model "$FILTERED" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE" \
+    --outdir "${OUTROOT}/${MODEL_FILTERED}/mmlu"
+fi
+
+echo ""
+echo "Model: $UNLEARNED"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/mmlu" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/eval_mmlu.py \
+    --model "$UNLEARNED" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE" \
+    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/mmlu"
+fi
+
+# ============================================
 # STEP 1: Parameter Statistics
 # ============================================
 echo "=========================================="
