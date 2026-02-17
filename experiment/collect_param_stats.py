@@ -32,7 +32,7 @@ from utils import (
     resolve_device,
     resolve_dtype,
     extract_layer,
-    classify_coarse,
+    classify_component,
     stable_rank_and_spectral,
     empirical_rank,
     write_csv,
@@ -237,7 +237,7 @@ def main():
         dW = (Wb - Wa)
         
         layer = extract_layer(name)
-        group = classify_coarse(name)
+        group = classify_component(name)
 
         dW_fro = float(dW.float().norm().item())
         W_fro = float(Wa.float().norm().item())
