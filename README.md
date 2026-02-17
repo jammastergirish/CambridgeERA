@@ -36,8 +36,21 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 ## Experiment
 
 ```bash
+# Run pipeline for the default unlearned model (CB-LAT)
 ./experiment/pipeline.sh
+
+# Run pipeline for a specific unlearned model
+UNLEARNED=girishgupta/EleutherAI_deep-ignorance-unfiltered__ga ./experiment/pipeline.sh
+
+# Sweep all 12 unlearned models from HuggingFace
+./experiment/sweep_all_models.sh
+
+# Sweep only specific models from Girish's HuggingFace models
+./experiment/sweep_all_models.sh ga dpo rmu
 ```
+
+The Base→Filtered comparison runs once and is shared across all sweeps. Already-completed steps are automatically skipped (pass `--force` to rerun).
+
 ---
 
 ### Experimental Pipeline
