@@ -204,33 +204,35 @@ def main():
 
     # ---- plots --------------------------------------------------------------
     layers = [r["layer"] for r in results]
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    # 1. Accuracy
+    # 1. Accuracy + Selectivity (twin y-axis)
     ax = axes[0]
-    ax.plot(layers, [r["test_accuracy"] for r in results], "o-", label="Test accuracy")
+    ax.plot(layers, [r["test_accuracy"] for r in results], "o-", color="tab:blue",
+            label="Test accuracy")
     ax.plot(layers, [r["train_accuracy"] for r in results], "s--", alpha=0.5,
-            label="Train accuracy")
+            color="tab:cyan", label="Train accuracy")
     ax.axhline(majority_baseline, color="gray", ls="--", alpha=0.6,
                label=f"Majority baseline ({majority_baseline:.2f})")
     ax.set_xlabel("Layer")
     ax.set_ylabel("Accuracy")
-    ax.set_title("Probe Accuracy by Layer")
-    ax.legend()
     ax.grid(alpha=0.3)
 
-    # 2. Selectivity
+    ax2 = ax.twinx()
+    sel_vals = [r["selectivity"] for r in results]
+    colors = ["green" if s > 0 else "red" for s in sel_vals]
+    ax2.bar(layers, sel_vals, color=colors, alpha=0.25, label="Selectivity")
+    ax2.axhline(0, color="gray", ls=":", alpha=0.4)
+    ax2.set_ylabel("Selectivity (acc − baseline)")
+
+    # Combined legend from both axes
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, loc="best", fontsize=8)
+    ax.set_title("Probe Accuracy & Selectivity by Layer")
+
+    # 2. AUC
     ax = axes[1]
-    colors = ["green" if s > 0 else "red" for s in [r["selectivity"] for r in results]]
-    ax.bar(layers, [r["selectivity"] for r in results], color=colors, alpha=0.7)
-    ax.axhline(0, color="gray", ls="--", alpha=0.5)
-    ax.set_xlabel("Layer")
-    ax.set_ylabel("Selectivity (acc − baseline)")
-    ax.set_title("Probe Selectivity by Layer")
-    ax.grid(alpha=0.3)
-
-    # 3. AUC
-    ax = axes[2]
     ax.plot(layers, [r["auc"] for r in results], "o-", color="purple")
     ax.axhline(0.5, color="gray", ls="--", alpha=0.5, label="Chance (0.5)")
     ax.set_xlabel("Layer")
