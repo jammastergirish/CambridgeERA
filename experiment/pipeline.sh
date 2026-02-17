@@ -518,6 +518,63 @@ else
 fi
 
 # ============================================
+# STEP 14: Layer-wise WMDP Accuracy (per-model)
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 14: Layer-wise WMDP Accuracy (Logit + Tuned Lens)"
+echo "=========================================="
+echo "Measuring WMDP-Bio MCQ accuracy at every transformer layer..."
+echo "(Results stored per-model, not per-comparison)"
+
+for LENS in logit tuned; do
+  echo ""
+  echo "--- Lens: ${LENS} ---"
+
+  echo ""
+  echo "Model: $BASE"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens" "summary.json"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/layerwise_wmdp_accuracy.py \
+      --model "$BASE" \
+      --lens "$LENS" \
+      --device "$ACTIVATION_DEVICE" \
+      --dtype "$ACTIVATION_DTYPE" \
+      --outdir "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens"
+  fi
+
+  echo ""
+  echo "Model: $FILTERED"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens" "summary.json"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/layerwise_wmdp_accuracy.py \
+      --model "$FILTERED" \
+      --lens "$LENS" \
+      --device "$ACTIVATION_DEVICE" \
+      --dtype "$ACTIVATION_DTYPE" \
+      --outdir "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens"
+  fi
+
+  echo ""
+  echo "Model: $UNLEARNED"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens" "summary.json"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/layerwise_wmdp_accuracy.py \
+      --model "$UNLEARNED" \
+      --lens "$LENS" \
+      --device "$ACTIVATION_DEVICE" \
+      --dtype "$ACTIVATION_DTYPE" \
+      --outdir "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens"
+  fi
+done
+
+# ============================================
 # COMPLETION
 # ============================================
 echo ""
@@ -542,6 +599,8 @@ echo "    lipschitzness/         Lipschitz estimates + plots"
 echo ""
 echo "  <model>/"
 echo "    linear_probes/         probe_results.csv, summary.json + plot"
+echo "    wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot"
+echo "    wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot"
 echo ""
 echo "Tip: rerun with --force to regenerate all results."
 echo ""

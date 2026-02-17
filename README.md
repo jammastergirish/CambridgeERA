@@ -242,6 +242,28 @@ Default probe: `LogisticRegression(C=1.0, max_iter=1000)` — adjustable via `--
 
 ---
 
+##### Step 14: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
+
+**Question:** *At which layer does the model "know" the answer to WMDP-Bio questions?*
+
+Evaluates WMDP-Bio multiple-choice accuracy at every transformer layer using a **logit lens** (default) or **tuned lens**:
+
+- **Logit lens:** Applies the model's own final LayerNorm + unembedding head (`lm_head`) to intermediate hidden states. Zero training cost.
+- **Tuned lens:** Trains a per-layer affine transform (`nn.Linear`) mapping hidden states → vocab logits. More accurate at early layers but requires a training pass.
+
+For each question, the lens computes log-probabilities of each answer choice at the target layer and picks the highest.
+
+| Metric | What it tells you |
+|---|---|
+| **Accuracy** | Fraction of WMDP questions answered correctly using representations up to this layer |
+| **Δ from final** | How much worse/better this layer is compared to reading from the model's final output |
+
+**Why this matters:** A base model will show WMDP accuracy ramping up through mid-to-late layers — knowledge "crystallizes" as representations flow through the network. In a well-unlearned model, you'd expect accuracy to stay near chance (0.25 for 4-way MCQ) at *every* layer, not just the final one. If accuracy is high at intermediate layers but drops at the output, the knowledge is merely hidden, not erased — and a simple probe or fine-tuning attack could recover it.
+
+> **Note:** Like Step 13, results are stored **per-model**.
+
+---
+
 ### The Big Picture
 
 The diagnostics answer an escalating series of questions:
@@ -255,6 +277,7 @@ The diagnostics answer an escalating series of questions:
 | **Precision** | Is the change *targeted* at forget-domain inputs? | 11 |
 | **Stability** | Is the new behavior robust or fragile? | 12 |
 | **Knowledge Localization** | Where is forget-set knowledge encoded? | 13 |
+| **Knowledge Depth** | At which layer does the model know WMDP answers? | 14 |
 
 The thesis prediction is that unlearning methods (CB-LAT) will show: small magnitude, attention-localized, low-rank, nullspace-aligned, minimal activation change, low selectivity, and increased roughness — the full mechanistic signature of a brittle intervention. While filtering will show the opposite across every dimension.
 
@@ -279,8 +302,10 @@ outputs/
     row_space_projection/  projection metrics + plots
     lipschitzness/         Lipschitz estimates + plots
 
-  <model>/                             # Step 13: per individual model
+  <model>/                             # Steps 13–14: per individual model
     linear_probes/         probe_results.csv, summary.json + plot
+    wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot
+    wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot
 ```
 
 > **Tip:** The pipeline automatically skips steps whose output already exists. Use `./experiment/pipeline.sh --force` to regenerate everything.
