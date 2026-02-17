@@ -12,14 +12,9 @@
 """
 Simple inference script for comparing model outputs.
 
-Works with both HuggingFace model IDs and local unlearned models.
-
 Usage:
-  # HuggingFace model
+  # Single HuggingFace model
   uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is biotin?"
-
-  # Local unlearned model
-  uv run infer.py --model unlearned_models/EleutherAI_deep-ignorance-unfiltered__ga --prompt "What is biotin?"
 
   # Interactive mode (keeps prompting)
   uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --interactive
@@ -27,10 +22,9 @@ Usage:
   # Compare two models side by side
   uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --model-b EleutherAI/deep-ignorance-unfiltered-cb-lat --prompt "What is biotin?"
 
-  # Sweep all unlearned models + base models
-  uv run infer.py --sweep --prompt "What is biotin?"
+  # Sweep multiple HuggingFace models
+  uv run infer.py --sweep --models user/model-a --models user/model-b --prompt "What is biotin?"
   uv run infer.py --sweep --include-base --prompt "What is biotin?"
-  uv run infer.py --sweep --models-dir path/to/models --prompt "What is biotin?"
 """
 
 import argparse
@@ -137,17 +131,6 @@ def run_prompt(prompt, model_a, tok_a, label_a, device, args,
 
 # ---- Sweep helpers -----------------------------------------------------------
 
-def discover_models(models_dir: str) -> list[str]:
-    """Return sorted list of local model directories (those containing config.json)."""
-    models = []
-    if not os.path.isdir(models_dir):
-        return models
-    for entry in sorted(os.listdir(models_dir)):
-        candidate = os.path.join(models_dir, entry)
-        if os.path.isdir(candidate) and os.path.isfile(os.path.join(candidate, "config.json")):
-            models.append(candidate)
-    return models
-
 
 def prompt_hash(prompt: str) -> str:
     """Short deterministic hash of the prompt for the output filename."""
@@ -155,13 +138,13 @@ def prompt_hash(prompt: str) -> str:
 
 
 def run_sweep(args):
-    """Run the same prompt through every model in models_dir and save a CSV."""
+    """Run the same prompt through every specified HuggingFace model and save a CSV."""
     import pandas as pd
 
     device = resolve_device(args.device)
     pt_dtype = resolve_dtype(args.dtype, device)
 
-    # Collect model paths
+    # Collect model IDs
     model_paths: list[str] = []
 
     # Optionally include well-known base / filtered / unlearned HF models
@@ -175,12 +158,13 @@ def run_sweep(args):
         ]
         model_paths.extend(base_models)
 
-    # Auto-discover local unlearned models
-    local_models = discover_models(args.models_dir)
-    if not local_models and not model_paths:
-        print(f"[infer] No models found in {args.models_dir} and --include-base not set.", file=sys.stderr)
+    # Add user-specified models
+    if args.models:
+        model_paths.extend(args.models)
+
+    if not model_paths:
+        print("[infer] No models specified. Use --models and/or --include-base.", file=sys.stderr)
         sys.exit(1)
-    model_paths.extend(local_models)
 
     print(f"[infer] Sweep: {len(model_paths)} model(s)")
     for p in model_paths:
@@ -246,9 +230,9 @@ def main():
 
     # Sweep mode
     parser.add_argument("--sweep", action="store_true",
-                        help="Run prompt through all models in --models-dir and save CSV")
-    parser.add_argument("--models-dir", default="unlearned_models",
-                        help="Directory containing unlearned model folders (default: unlearned_models)")
+                        help="Run prompt through all --models and save CSV")
+    parser.add_argument("--models", action="append", default=None,
+                        help="HuggingFace model ID to include in sweep (repeatable)")
     parser.add_argument("--include-base", action="store_true",
                         help="Also include the base HF models (unfiltered, filtered, cb-lat)")
     parser.add_argument("--outdir", default="outputs/inference",
