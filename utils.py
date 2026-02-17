@@ -95,12 +95,57 @@ def extract_layer(param_name: str) -> Optional[int]:
 
 
 def classify_coarse(param_name: str) -> str:
+    # UNUSED AS WE DO THINGS MORE GRANULARLY NOW, but keeping for comparison if necessary in the future.
     """Classify parameter into coarse groups: 'attn', 'mlp', or 'other'."""
     s = param_name.lower()
     if any(k in s for k in COARSE_ATTN_KEYS):
         return "attn"
     if any(k in s for k in COARSE_MLP_KEYS):
         return "mlp"
+    return "other"
+
+
+# Component-level classification (granular sub-component within attn / mlp)
+# Maps param name fragments → component label
+_COMP_RULES = [
+    # Attention QKV (fused or separate)
+    ("attention.query_key_value", "qkv"),
+    ("self_attn.qkv", "qkv"),
+    ("self_attn.q_proj", "qkv"),
+    ("self_attn.k_proj", "qkv"),
+    ("self_attn.v_proj", "qkv"),
+    ("attn.q_proj", "qkv"),
+    ("attn.k_proj", "qkv"),
+    ("attn.v_proj", "qkv"),
+    ("query_key_value", "qkv"),
+    # Attention output projection
+    ("attention.dense", "proj"),
+    ("self_attn.o_proj", "proj"),
+    ("attn.o_proj", "proj"),
+    ("attn.out_proj", "proj"),
+    # MLP expand (hidden → 4h)
+    ("mlp.dense_h_to_4h", "mlp_expand"),
+    ("mlp.gate_proj", "mlp_expand"),
+    ("mlp.up_proj", "mlp_expand"),
+    ("mlp.fc1", "mlp_expand"),
+    ("mlp.c_fc", "mlp_expand"),
+    ("mlp.w1", "mlp_expand"),
+    ("mlp.w3", "mlp_expand"),
+    # MLP contract (4h → hidden)
+    ("mlp.dense_4h_to_h", "mlp_contract"),
+    ("mlp.down_proj", "mlp_contract"),
+    ("mlp.fc2", "mlp_contract"),
+    ("mlp.c_proj", "mlp_contract"),
+    ("mlp.w2", "mlp_contract"),
+]
+
+
+def classify_granular(param_name: str) -> str:
+    """Classify parameter into granular component: 'qkv', 'proj', 'mlp_expand', 'mlp_contract', or 'other'."""
+    s = param_name.lower()
+    for fragment, label in _COMP_RULES:
+        if fragment in s:
+            return label
     return "other"
 
 

@@ -21,7 +21,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from utils import resolve_device, resolve_dtype, write_csv, classify_coarse, init_wandb, log_csv_as_table, log_plots, finish_wandb
+from utils import resolve_device, resolve_dtype, write_csv, classify_granular, init_wandb, log_csv_as_table, log_plots, finish_wandb
 from collect_param_stats import SmartLoader
 
 
@@ -136,8 +136,8 @@ def main():
         weight_names = np.random.choice(weight_names, args.num_samples, replace=False).tolist()
 
     results = []
-    mlp_results = {"null_space": [], "alignment": []}
-    attn_results = {"null_space": [], "alignment": []}
+    _COMP_LABELS = ('qkv', 'proj', 'mlp_expand', 'mlp_contract')
+    comp_results = {c: {"null_space": [], "alignment": []} for c in _COMP_LABELS}
 
     print(f"[null_space_analysis] Running SVD on {len(weight_names)} weight matrices (sampled from {args.num_samples} requested)...")
     for name in tqdm(weight_names, desc="SVD on weight matrices", unit="matrix"):
@@ -157,8 +157,8 @@ def main():
         # Subspace alignment
         alignment = analyze_subspace_alignment(Wa, Wb)
 
-        # Classify component
-        component_type = classify_coarse(name)
+        # Classify component (granular)
+        component_type = classify_granular(name)
 
         result = {
             "name": name,
@@ -169,12 +169,9 @@ def main():
         results.append(result)
 
         # Aggregate by component type
-        if component_type == 'mlp':
-            mlp_results["null_space"].append(null_analysis.get("top10_variance_ratio", 0))
-            mlp_results["alignment"].append(alignment.get("subspace_alignment", 0))
-        elif component_type == 'attn':
-            attn_results["null_space"].append(null_analysis.get("top10_variance_ratio", 0))
-            attn_results["alignment"].append(alignment.get("subspace_alignment", 0))
+        if component_type in comp_results:
+            comp_results[component_type]["null_space"].append(null_analysis.get("top10_variance_ratio", 0))
+            comp_results[component_type]["alignment"].append(alignment.get("subspace_alignment", 0))
 
         del Wa, Wb, dW
 
@@ -190,19 +187,18 @@ def main():
         )
 
     # Create visualizations
-    if mlp_results["null_space"] or attn_results["null_space"]:
+    has_data = any(comp_results[c]["null_space"] for c in _COMP_LABELS)
+    if has_data:
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
         # Null space concentration
         ax = axes[0]
         data_to_plot = []
         labels = []
-        if mlp_results["null_space"]:
-            data_to_plot.append(mlp_results["null_space"])
-            labels.append("MLP")
-        if attn_results["null_space"]:
-            data_to_plot.append(attn_results["null_space"])
-            labels.append("Attention")
+        for c in _COMP_LABELS:
+            if comp_results[c]["null_space"]:
+                data_to_plot.append(comp_results[c]["null_space"])
+                labels.append(c)
 
         bp = ax.boxplot(data_to_plot, labels=labels)
         ax.set_ylabel("Top-10 SV Variance Ratio")
@@ -213,12 +209,10 @@ def main():
         ax = axes[1]
         data_to_plot = []
         labels = []
-        if mlp_results["alignment"]:
-            data_to_plot.append(mlp_results["alignment"])
-            labels.append("MLP")
-        if attn_results["alignment"]:
-            data_to_plot.append(attn_results["alignment"])
-            labels.append("Attention")
+        for c in _COMP_LABELS:
+            if comp_results[c]["alignment"]:
+                data_to_plot.append(comp_results[c]["alignment"])
+                labels.append(c)
 
         bp = ax.boxplot(data_to_plot, labels=labels)
         ax.set_ylabel("Subspace Alignment")
@@ -232,12 +226,10 @@ def main():
 
     # Print summary statistics
     print("\n[null_space_analysis] === Null Space Analysis Summary ===")
-    if mlp_results["null_space"]:
-        print(f"MLP - Avg variance in top-10 SVs: {np.mean(mlp_results['null_space']):.3f}")
-        print(f"MLP - Avg subspace alignment: {np.mean(mlp_results['alignment']):.3f}")
-    if attn_results["null_space"]:
-        print(f"Attention - Avg variance in top-10 SVs: {np.mean(attn_results['null_space']):.3f}")
-        print(f"Attention - Avg subspace alignment: {np.mean(attn_results['alignment']):.3f}")
+    for c in _COMP_LABELS:
+        if comp_results[c]["null_space"]:
+            print(f"{c} - Avg variance in top-10 SVs: {np.mean(comp_results[c]['null_space']):.3f}")
+            print(f"{c} - Avg subspace alignment: {np.mean(comp_results[c]['alignment']):.3f}")
 
     print(f"\n[null_space_analysis] ✓ Results saved to {args.outdir}")
     log_csv_as_table(os.path.join(args.outdir, "null_space_results.csv"), "null_space_results")

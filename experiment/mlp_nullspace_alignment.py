@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import json
 
-from utils import resolve_device, resolve_dtype, write_csv, extract_layer, classify_coarse, init_wandb, log_csv_as_table, log_plots, finish_wandb
+from utils import resolve_device, resolve_dtype, write_csv, extract_layer, classify_granular, init_wandb, log_csv_as_table, log_plots, finish_wandb
 from collect_param_stats import SmartLoader
 
 
@@ -161,7 +161,7 @@ def main():
     mlp_names = []
     for name in sorted(names_a.intersection(names_b)):
         if name.endswith('.weight'):
-            if classify_coarse(name) == 'mlp' or 'fc' in name.lower():
+            if classify_granular(name) in ('mlp_expand', 'mlp_contract'):
                 mlp_names.append(name)
 
     print(f"[mlp_nullspace_alignment] Found {len(mlp_names)} MLP weight matrices")
