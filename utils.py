@@ -95,6 +95,7 @@ def extract_layer(param_name: str) -> Optional[int]:
 
 
 def classify_coarse(param_name: str) -> str:
+    # UNUSED AS WE DO THINGS MORE GRANULARLY NOW, but keeping for comparison if necessary in the future.
     """Classify parameter into coarse groups: 'attn', 'mlp', or 'other'."""
     s = param_name.lower()
     if any(k in s for k in COARSE_ATTN_KEYS):
