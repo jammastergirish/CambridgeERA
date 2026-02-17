@@ -26,19 +26,19 @@ export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-pipeline_$(date +%s)}"
 # Configuration — single output root for all results
 OUTROOT="${OUTROOT:-outputs}"
 
-# Models
+# Models (UNLEARNED can be overridden: UNLEARNED=user/model ./experiment/pipeline.sh)
 BASE="EleutherAI/deep-ignorance-unfiltered"
 FILTERED="EleutherAI/deep-ignorance-e2e-strong-filter"
-UNLEARNED="EleutherAI/deep-ignorance-unfiltered-cb-lat"
+UNLEARNED="${UNLEARNED:-EleutherAI/deep-ignorance-unfiltered-cb-lat}"
 
-# Comparison names
+# Comparison names (derived from model IDs: / → _)
 COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-strong-filter"
-COMP2="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-unfiltered-cb-lat"
+COMP2="EleutherAI_deep-ignorance-unfiltered__to__${UNLEARNED//\//_}"
 
 # Per-model folder names (for analyses that run once per model, not per comparison)
 MODEL_BASE="EleutherAI_deep-ignorance-unfiltered"
 MODEL_FILTERED="EleutherAI_deep-ignorance-e2e-strong-filter"
-MODEL_UNLEARNED="EleutherAI_deep-ignorance-unfiltered-cb-lat"
+MODEL_UNLEARNED="${UNLEARNED//\//_}"
 
 # Device and dtype settings
 PARAM_DEVICE="${PARAM_DEVICE:-auto}"  # auto = cuda > mps > cpu
@@ -131,7 +131,7 @@ else
   uv run experiment/plot_param_stats.py \
     --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
     --outdir "${OUTROOT}/${COMP2}/param_plots" \
-    --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-unfiltered-cb-lat"
+    --title "$BASE → $UNLEARNED"
 fi
 
 # ============================================
@@ -235,7 +235,7 @@ else
     --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
     --per-matrix-csv "${OUTROOT}/${COMP2}/param_stats/per_matrix.csv" \
     --outdir "${OUTROOT}/${COMP2}/mlp_attn_analysis" \
-    --title "CB-LAT: MLP vs Attention"
+    --title "${UNLEARNED##*/}: MLP vs Attention"
 fi
 
 # ============================================
