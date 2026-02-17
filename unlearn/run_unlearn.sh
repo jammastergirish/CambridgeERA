@@ -12,13 +12,16 @@
 #   ./run_unlearn.sh cb            # Circuit Breakers
 #   ./run_unlearn.sh lat           # Latent Adversarial Training
 #   ./run_unlearn.sh cb_lat        # CB + LAT combined
+#   ./run_unlearn.sh wt_dist       # Weight Distortion (Gaussian noise + retain FT)
+#   ./run_unlearn.sh wt_dist_reg   # Weight Distance Regularization
 #
 # Environment overrides:
 #   BASE, DEVICE, DTYPE, OUTROOT, LR, EPOCHS, BATCH_SIZE, MAX_LENGTH, BETA,
-#   ALPHA, STEERING_COEFF, LAYER_ID, FORGET_WEIGHT, LAT_EPS, LAT_STEPS, EVAL_SPLIT
+#   ALPHA, STEERING_COEFF, LAYER_ID, FORGET_WEIGHT, LAT_EPS, LAT_STEPS,
+#   WT_NOISE_STD, WT_REG_LAMBDA, EVAL_SPLIT
 set -euo pipefail
 
-METHOD="${1:?Usage: $0 <ga_simple|ga|grad_diff|dpo|npo|simnpo|rmu|cb|lat|cb_lat>}"
+METHOD="${1:?Usage: $0 <ga_simple|ga|grad_diff|dpo|npo|simnpo|rmu|cb|lat|cb_lat|wt_dist|wt_dist_reg>}"
 BASE="${BASE:-EleutherAI/deep-ignorance-unfiltered}"
 DEVICE="${DEVICE:-auto}"
 DTYPE="${DTYPE:-auto}"
@@ -50,6 +53,8 @@ uv run --script unlearn/unlearn.py \
   ${FORGET_WEIGHT:+--forget-weight "$FORGET_WEIGHT"} \
   ${LAT_EPS:+--lat-eps "$LAT_EPS"} \
   ${LAT_STEPS:+--lat-steps "$LAT_STEPS"} \
+  ${WT_NOISE_STD:+--wt-noise-std "$WT_NOISE_STD"} \
+  ${WT_REG_LAMBDA:+--wt-reg-lambda "$WT_REG_LAMBDA"} \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
   --seed 42
 

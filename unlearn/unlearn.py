@@ -12,15 +12,17 @@
 Multi-method LLM unlearning pipeline.
 
 Supported methods:
-  ga_simple — Pure Gradient Ascent on forget set only (no retain loss)
-  ga       — Gradient Ascent on forget set + Gradient Descent on retain set
-  grad_diff — Gradient Difference (weighted forget ascent + retain descent)
-  dpo      — Direct Preference Optimization (forget=rejected, retain=chosen)
-  npo      — Negative Preference Optimization (DPO-inspired, with reference model)
-  simnpo   — Simple NPO (reference-free variant of NPO + retain NLL)
-  rmu      — Representation Misdirection for Unlearning
-  cb       — Circuit Breakers (representation rerouting via cosine similarity)
-  lat      — Latent Adversarial Training (adversarial perturbations in hidden states)
+  ga_simple   — Pure Gradient Ascent on forget set only (no retain loss)
+  ga         — Gradient Ascent on forget set + Gradient Descent on retain set
+  grad_diff  — Gradient Difference (weighted forget ascent + retain descent)
+  dpo        — Direct Preference Optimization (forget=rejected, retain=chosen)
+  npo        — Negative Preference Optimization (DPO-inspired, with reference model)
+  simnpo     — Simple NPO (reference-free variant of NPO + retain NLL)
+  rmu        — Representation Misdirection for Unlearning
+  cb         — Circuit Breakers (representation rerouting via cosine similarity)
+  lat        — Latent Adversarial Training (adversarial perturbations in hidden states)
+  wt_dist    — Weight Distortion (Gaussian noise + retain fine-tuning)
+  wt_dist_reg — Weight Distance Regularization (maximize L2 distance from pretrained)
 
 Usage:
   uv run --script unlearn.py --model <HF_ID> --method ga --outdir outputs/test
@@ -563,6 +565,38 @@ def cb_lat_loss(
     return loss
 
 
+# ---- Weight Distortion ---------------------------------------------------
+
+def wt_dist_loss(model, retain_batch: dict) -> torch.Tensor:
+    """Weight Distortion: just retain NLL (noise was added to weights before training)."""
+    return nll_loss(model, retain_batch)
+
+
+# ---- Weight Distance Regularization --------------------------------------
+
+def wt_dist_reg_loss(
+    model,
+    retain_batch: dict,
+    pretrained_params: dict,
+    reg_lambda: float,
+) -> torch.Tensor:
+    """
+    Weight Distance Regularization:
+    Minimize retain NLL while MAXIMIZING L2 distance from pretrained weights.
+    L = NLL_retain - λ * ||θ - θ_pretrained||_2^2
+    """
+    retain_nll = nll_loss(model, retain_batch)
+
+    # L2 distance between current and pretrained parameters
+    l2_dist = torch.tensor(0.0, device=next(model.parameters()).device,
+                           dtype=next(model.parameters()).dtype)
+    for name, param in model.named_parameters():
+        if param.requires_grad and name in pretrained_params:
+            l2_dist = l2_dist + (param - pretrained_params[name]).pow(2).sum()
+
+    return retain_nll - reg_lambda * l2_dist
+
+
 # ===================================================================
 # Validation function
 # ===================================================================
@@ -596,7 +630,7 @@ def main():
     parser.add_argument(
         "--method",
         required=True,
-        choices=["ga_simple", "ga", "grad_diff", "dpo", "npo", "simnpo", "rmu", "cb", "lat", "cb_lat"],
+        choices=["ga_simple", "ga", "grad_diff", "dpo", "npo", "simnpo", "rmu", "cb", "lat", "cb_lat", "wt_dist", "wt_dist_reg"],
         help="Unlearning method",
     )
     parser.add_argument("--forget-data", default="data/forget.txt")
@@ -622,6 +656,10 @@ def main():
                         help="Perturbation budget for LAT")
     parser.add_argument("--lat-steps", type=int, default=5,
                         help="Number of adversarial inner steps for LAT")
+    parser.add_argument("--wt-noise-std", type=float, default=0.02,
+                        help="Std of Gaussian noise for Weight Distortion (wt_dist)")
+    parser.add_argument("--wt-reg-lambda", type=float, default=0.1,
+                        help="Regularizer weight for Weight Dist Reg (wt_dist_reg)")
     parser.add_argument("--eval-split", type=float, default=0.1,
                         help="Fraction of data to hold out for evaluation (0 to disable)")
     parser.add_argument("--seed", type=int, default=42)
@@ -757,6 +795,21 @@ def main():
                 retain_act_cache.append({lid: a.detach().to(pt_dtype) for lid, a in acts.items()})
         model.train()
 
+    # ---- Weight Distortion: add Gaussian noise to all parameters ----
+    if args.method == "wt_dist":
+        print(f"[unlearn] WT_DIST: adding Gaussian noise (std={args.wt_noise_std}) to all parameters...")
+        with torch.no_grad():
+            for p in model.parameters():
+                p.add_(torch.randn_like(p) * args.wt_noise_std)
+
+    # ---- Weight Dist Reg: cache frozen copy of pretrained parameters ----
+    pretrained_params = {}
+    if args.method == "wt_dist_reg":
+        print("[unlearn] WT_DIST_REG: caching pretrained parameters for L2 regularization...")
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                pretrained_params[name] = param.data.clone()
+
     # ---- Optimizer ----
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad], lr=args.lr
@@ -819,6 +872,12 @@ def main():
                     random_targets, retain_act_cache[step_idx % len(retain_act_cache)],
                     args.steering_coeff, args.alpha,
                     args.lat_eps, args.lat_steps,
+                )
+            elif args.method == "wt_dist":
+                loss = wt_dist_loss(model, rb)
+            elif args.method == "wt_dist_reg":
+                loss = wt_dist_reg_loss(
+                    model, rb, pretrained_params, args.wt_reg_lambda,
                 )
             else:
                 raise ValueError(f"Unknown method: {args.method}")

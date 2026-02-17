@@ -313,11 +313,13 @@ uv run experiment/collect_param_stats.py \
 | `cb` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Cosine-similarity circuit rerouting |
 | `lat` | Representation | `--layer-id`, `--lat-eps`, `--lat-steps` | Latent adversarial training |
 | `cb_lat` | Representation | `--layer-id`, `--steering-coeff`, `--alpha`, `--lat-eps`, `--lat-steps` | Circuit Breakers + LAT combined |
+| `wt_dist` | Weight-Space | `--wt-noise-std` | Weight Distortion (Gaussian noise + retain fine-tuning) |
+| `wt_dist_reg` | Weight-Space | `--wt-reg-lambda` | Weight Distance Regularization (maximize L2 from pretrained) |
 
 See `uv run unlearn/unlearn.py --help` for full argument reference.
 
 > [!NOTE]
-> **PEFT / LoRA compatibility.** The current script does **full-parameter** fine-tuning (all weights receive gradients). However, every method is compatible with LoRA in principle — the optimizer trains whatever parameters have `requires_grad=True`, and all loss functions operate on **activations/logits**, not weight matrices directly. To use LoRA, wrap the model with a PEFT adapter before the training loop; only the adapter weights will be updated. The adversarial inner loop in LAT/CB-LAT perturbs hidden states (not weights), so it is unaffected.
+> **PEFT / LoRA compatibility.** The current script does **full-parameter** fine-tuning (all weights receive gradients). However, every method is compatible with LoRA in principle — the optimizer trains whatever parameters have `requires_grad=True`, and all loss functions operate on **activations/logits**, not weight matrices directly. To use LoRA, wrap the model with a PEFT adapter before the training loop; only the adapter weights will be updated. The adversarial inner loop in LAT/CB-LAT perturbs hidden states (not weights), so it is unaffected. Note: `wt_dist` and `wt_dist_reg` operate directly on weight space, so they are **not** compatible with LoRA adaptors — they require full-parameter access by design.
 
 ---
 
@@ -401,6 +403,21 @@ The most robust method. Combines the adversarial robustness of LAT with the repr
 2. **Outer loop (CB):** With $\delta$ frozen and injected, compute the Circuit Breaker loss — rerouting forget-set activations toward random targets while preserving retain-set activations. The key difference from standalone CB is that the forget activations are collected **with the adversarial perturbation active**, so the model must reroute representations even when an adversary is trying to restore them.
 
 $$L_{\text{outer}} = \sum_{\ell} \Big[ -\cos\!\big(h_\ell^{\text{forget}(\delta^*)},\; c \cdot \hat{r}_\ell\big) + \alpha \cdot \big(1 - \cos(h_\ell^{\text{retain}},\; h_\ell^{\text{cached}})\big) \Big]$$
+
+##### Weight Distortion — Gaussian Noise + Retain Fine-Tuning
+
+From [*From Dormant to Deleted*](https://arxiv.org/abs/2505.22310). Adds isotropic Gaussian noise (σ = `--wt-noise-std`, default 0.02) to **all** model weights before training, then fine-tunes on the retain set only. The noise displaces the model far from the pretrained basin in weight space, making it hard for an adversary to fine-tune back.
+
+$$\theta_0 \leftarrow \theta_{\text{pretrained}} + \mathcal{N}(0, \sigma^2 I)$$
+$$L = \text{NLL}_{\text{retain}}$$
+
+##### Weight Distance Regularization — Maximize L2 from Pretrained
+
+Also from [*From Dormant to Deleted*](https://arxiv.org/abs/2505.22310). Minimizes retain NLL while **explicitly maximizing** the L2 distance between the current and pretrained weights. This directly optimizes for tamper-resistance — the larger the distance, the harder it is to recover the original model via fine-tuning.
+
+$$L = \text{NLL}_{\text{retain}} - \lambda \cdot \|\theta - \theta_{\text{pretrained}}\|_2^2$$
+
+Where $\lambda$ is `--wt-reg-lambda` (default 0.1). The paper shows this produces the highest tamper-resistance of all methods tested, outperforming CB, RMU, SCRUB, and even CB-LAT under relearning attacks.
 
 ---
 
