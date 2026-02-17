@@ -301,17 +301,120 @@ uv run experiment/collect_param_stats.py \
 
 ### Available Methods
 
-| Method | Type | Description |
-|---|---|---|
-| `ga` / `ga_simple` | Loss | Gradient ascent on forget set |
-| `grad_diff` | Loss | Weighted forget/retain NLL difference |
-| `dpo` / `npo` / `simnpo` | Loss | Preference optimization variants |
-| `rmu` | Representation | Steer hidden states toward random targets |
-| `cb` | Representation | Cosine-similarity circuit rerouting |
-| `lat` | Representation | Latent adversarial training for robustness |
-| `cb_lat` | Representation | Circuit Breakers + LAT combined |
+| Method | Type | Key Params | Description |
+|---|---|---|---|
+| `ga_simple` | Loss | — | Gradient ascent on forget set only |
+| `ga` | Loss | — | Gradient ascent on forget + descent on retain |
+| `grad_diff` | Loss | `--forget-weight` | Weighted forget/retain NLL difference |
+| `dpo` | Loss | `--beta` | Direct Preference Optimization (needs ref model) |
+| `npo` | Loss | `--beta` | Negative Preference Optimization (needs ref model) |
+| `simnpo` | Loss | `--beta` | Reference-free NPO variant |
+| `rmu` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Steer hidden states toward random targets (MSE) |
+| `cb` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Cosine-similarity circuit rerouting |
+| `lat` | Representation | `--layer-id`, `--lat-eps`, `--lat-steps` | Latent adversarial training |
+| `cb_lat` | Representation | `--layer-id`, `--steering-coeff`, `--alpha`, `--lat-eps`, `--lat-steps` | Circuit Breakers + LAT combined |
 
 See `uv run unlearn/unlearn.py --help` for full argument reference.
+
+> [!NOTE]
+> **PEFT / LoRA compatibility.** The current script does **full-parameter** fine-tuning (all weights receive gradients). However, every method is compatible with LoRA in principle — the optimizer trains whatever parameters have `requires_grad=True`, and all loss functions operate on **activations/logits**, not weight matrices directly. To use LoRA, wrap the model with a PEFT adapter before the training loop; only the adapter weights will be updated. The adversarial inner loop in LAT/CB-LAT perturbs hidden states (not weights), so it is unaffected.
+
+---
+
+#### Algorithm Details
+
+##### GA Simple — Pure Gradient Ascent
+
+The simplest unlearning baseline. Maximizes the cross-entropy loss on the forget set, pushing the model to produce *worse* predictions on forget data. No retain-set regularization.
+
+$$L = -\text{NLL}_{\text{forget}}$$
+
+**Risk:** Without retain loss, the model can degrade globally (catastrophic forgetting of general capabilities).
+
+##### GA — Gradient Ascent with Retain Regularization
+
+Adds a standard NLL term on the retain set to stabilize the model while performing gradient ascent on the forget set.
+
+$$L = -\text{NLL}_{\text{forget}} + \text{NLL}_{\text{retain}}$$
+
+##### GradDiff — Gradient Difference
+
+Similar to GA but explicitly weights the forget-ascent and retain-descent terms separately. The `--forget-weight` parameter controls the trade-off.
+
+$$L = \text{NLL}_{\text{retain}} - w \cdot \text{NLL}_{\text{forget}}$$
+
+When $w = 1$, this is equivalent to GA. Higher $w$ makes the model unlearn more aggressively at the cost of retain performance.
+
+##### DPO — Direct Preference Optimization
+
+Treats unlearning as a preference problem: retain texts are "chosen" (preferred) and forget texts are "rejected". Requires a frozen **reference model** (a copy of the original).
+
+$$L = -\log \sigma\!\Big(\beta \cdot \big[\log \frac{\pi_\theta(y_w)}{\pi_{\text{ref}}(y_w)} - \log \frac{\pi_\theta(y_l)}{\pi_{\text{ref}}(y_l)}\big]\Big)$$
+
+Where $y_w$ = retain (chosen), $y_l$ = forget (rejected), and $\beta$ is the inverse temperature.
+
+##### NPO — Negative Preference Optimization
+
+DPO-inspired but focuses the preference term only on the forget set. The model is penalized for assigning higher log-probability to forget data than the reference model does, plus a standard retain NLL term.
+
+$$L = -\frac{2}{\beta} \cdot \mathbb{E}\!\big[\log \sigma\!\big(-\beta \cdot \log \frac{\pi_\theta}{\pi_{\text{ref}}}\big)\big]_{\text{forget}} + \text{NLL}_{\text{retain}}$$
+
+##### SimNPO — Simple NPO (Reference-Free)
+
+Removes the need for a reference model by directly penalizing the model's own log-probabilities on the forget set. Simpler and cheaper than NPO.
+
+$$L = -\frac{2}{\beta} \cdot \mathbb{E}\!\big[\log \sigma\!\big(-\beta \cdot \text{avg\_logprob}_\theta\big)\big]_{\text{forget}} + \text{NLL}_{\text{retain}}$$
+
+##### RMU — Representation Misdirection for Unlearning
+
+Operates on **hidden-state activations** rather than output logits. At specified layers (`--layer-id`), it pushes forget-set activations toward a fixed random direction while anchoring retain-set activations to their original values (cached before training).
+
+$$L = \sum_{\ell \in \text{layers}} \Big[ \text{MSE}\!\big(h_\ell^{\text{forget}},\; c \cdot \hat{r}_\ell\big) + \alpha \cdot \text{MSE}\!\big(h_\ell^{\text{retain}},\; h_\ell^{\text{cached}}\big) \Big]$$
+
+Where $\hat{r}_\ell$ is a unit-norm random target per layer and $c$ is `--steering-coeff`.
+
+##### CB — Circuit Breakers (Representation Rerouting)
+
+Like RMU but uses **cosine similarity** instead of MSE. This makes the loss invariant to activation magnitude — it only cares about *direction*.
+
+- **Forget:** Maximize cosine similarity between forget activations and the random target direction.
+- **Retain:** Minimize `1 − cos(current, cached)` to keep retain activations directionally aligned with originals.
+
+$$L = \sum_{\ell} \Big[ -\cos(h_\ell^{\text{forget}},\; c \cdot \hat{r}_\ell) + \alpha \cdot \big(1 - \cos(h_\ell^{\text{retain}},\; h_\ell^{\text{cached}})\big) \Big]$$
+
+##### LAT — Latent Adversarial Training
+
+Introduces a two-phase optimization to make unlearning robust to adversarial attacks:
+
+1. **Inner loop** (adversary): Find a perturbation $\delta$ injected at the **middle target layer** that *minimizes* the forget-set NLL — i.e., helps the model recall forget data. Uses PGD (Projected Gradient Descent) for `--lat-steps` iterations, constrained to $\|\delta\|_\infty \leq$ `--lat-eps`. Gradients flow only into $\delta$, not the model.
+
+2. **Outer loop** (defender): With $\delta$ frozen and injected, perform gradient ascent on forget NLL + gradient descent on retain NLL. This forces the model to unlearn **even under adversarial pressure**.
+
+$$L_{\text{outer}} = -\text{NLL}_{\text{forget}}^{(\delta^*)} + \text{NLL}_{\text{retain}}$$
+
+##### CB-LAT — Circuit Breakers + Latent Adversarial Training
+
+The most robust method. Combines the adversarial robustness of LAT with the representation-level rerouting of CB:
+
+1. **Inner loop (LAT):** Find adversarial $\delta$ at the middle target layer that helps the model recall forget data (same PGD procedure as LAT).
+
+2. **Outer loop (CB):** With $\delta$ frozen and injected, compute the Circuit Breaker loss — rerouting forget-set activations toward random targets while preserving retain-set activations. The key difference from standalone CB is that the forget activations are collected **with the adversarial perturbation active**, so the model must reroute representations even when an adversary is trying to restore them.
+
+$$L_{\text{outer}} = \sum_{\ell} \Big[ -\cos\!\big(h_\ell^{\text{forget}(\delta^*)},\; c \cdot \hat{r}_\ell\big) + \alpha \cdot \big(1 - \cos(h_\ell^{\text{retain}},\; h_\ell^{\text{cached}})\big) \Big]$$
+
+---
+
+#### Training Mode Reference
+
+All methods use **full-parameter training** by default. Key shared settings:
+
+| Setting | Default | Flag |
+|---|---|---|
+| Optimizer | AdamW | — |
+| LR schedule | Cosine annealing | — |
+| Gradient clipping | 1.0 | `--grad-clip` |
+| Gradient accumulation | 1 | `--grad-accum-steps` |
+| Eval split | 10% | `--eval-split` |
 
 ---
 
