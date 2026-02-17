@@ -139,7 +139,7 @@ _COMP_RULES = [
 ]
 
 
-def classify_component(param_name: str) -> str:
+def classify_granular(param_name: str) -> str:
     """Classify parameter into granular component: 'qkv', 'proj', 'mlp_expand', 'mlp_contract', or 'other'."""
     s = param_name.lower()
     for fragment, label in _COMP_RULES:
