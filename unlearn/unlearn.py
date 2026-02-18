@@ -857,6 +857,69 @@ def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step,
 
 
 # ===================================================================
+# Output directory auto-generation
+# ===================================================================
+# The output folder name encodes the method plus all hyperparameters
+# relevant to that method, so different runs never overwrite each other.
+#
+# Example:
+#   unlearned_models/EleutherAI_deep-ignorance-unfiltered__cb_lat__ep2_lr5e-06_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7
+# ===================================================================
+
+# Which parameters are relevant for each method
+METHOD_PARAMS: dict[str, list[str]] = {
+    "ga_simple":    ["epochs", "lr", "batch_size"],
+    "ga":           ["epochs", "lr", "batch_size", "retain_weight"],
+    "grad_diff":    ["epochs", "lr", "batch_size", "forget_weight"],
+    "dpo":          ["epochs", "lr", "batch_size", "beta"],
+    "npo":          ["epochs", "lr", "batch_size", "beta", "retain_weight"],
+    "simnpo":       ["epochs", "lr", "batch_size", "beta", "retain_weight"],
+    "rmu":          ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id"],
+    "cb":           ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id"],
+    "lat":          ["epochs", "lr", "batch_size", "lat_eps", "lat_steps", "retain_weight", "layer_id"],
+    "cb_lat":       ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "lat_eps", "lat_steps", "layer_id"],
+    "wt_dist":      ["epochs", "lr", "batch_size", "wt_noise_std"],
+    "wt_dist_reg":  ["epochs", "lr", "batch_size", "wt_reg_lambda"],
+}
+
+# Short abbreviations for folder name suffixes
+PARAM_ABBREV: dict[str, str] = {
+    "epochs": "ep",
+    "lr": "lr",
+    "batch_size": "bs",
+    "retain_weight": "rw",
+    "forget_weight": "fw",
+    "beta": "b",
+    "alpha": "a",
+    "steering_coeff": "sc",
+    "layer_id": "ly",
+    "lat_eps": "le",
+    "lat_steps": "ls",
+    "wt_noise_std": "wn",
+    "wt_reg_lambda": "wr",
+}
+
+
+def build_outdir(args) -> str:
+    """Build the output directory path from the method and its relevant parameters."""
+    safe_model = args.model.replace("/", "_")
+    method = args.method
+
+    # Build parameter suffix from all relevant params for this method
+    parts = []
+    for param in METHOD_PARAMS[method]:
+        abbrev = PARAM_ABBREV[param]
+        value = getattr(args, param)
+        # layer_id is a string like "5,6,7" — use dashes for folder safety
+        if param == "layer_id":
+            value = str(value).replace(",", "-")
+        parts.append(f"{abbrev}{value}")
+
+    suffix = "_".join(parts)
+    return os.path.join("unlearned_models", f"{safe_model}__{method}__{suffix}")
+
+
+# ===================================================================
 # Main training loop
 # ===================================================================
 # The main() function orchestrates the full unlearning pipeline:
@@ -880,7 +943,7 @@ def main():
     )
     parser.add_argument("--forget-data", default="data/forget.txt")
     parser.add_argument("--retain-data", default="data/retain.txt")
-    parser.add_argument("--outdir", required=True, help="Output directory for unlearned model")
+    # --outdir is auto-generated from the method and hyperparameters (see build_outdir)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="auto")
     parser.add_argument("--lr", type=float, default=1e-5)
@@ -917,6 +980,10 @@ def main():
     parser.add_argument("--eval-interval", type=int, default=0,
                         help="Evaluate every N steps during training (0 to disable)")
     args = parser.parse_args()
+
+    # Auto-generate output directory from method + all relevant params
+    args.outdir = build_outdir(args)
+    print(f"[unlearn] Output directory: {args.outdir}")
 
     # ---- W&B ----
     from utils import init_wandb, finish_wandb
