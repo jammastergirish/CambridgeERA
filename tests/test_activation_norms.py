@@ -1,4 +1,4 @@
-"""Tests for experiment/collect_activation_norms.py — read_lines, caching, and diff logic."""
+"""Tests for experiment/activation_norms.py — read_lines, caching, and diff logic."""
 
 import os
 import sys
@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from unittest.mock import patch, MagicMock
 
-from collect_activation_norms import read_lines, cache_hidden_states, compute_activation_diffs
+from activation_norms import read_lines, cache_hidden_states, compute_activation_diffs
 
 
 # ---------------------------------------------------------------------------
@@ -124,8 +124,8 @@ class TestCacheHiddenStates:
         model.side_effect = fake_forward
         return model, tokenizer
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_returns_correct_keys(self, mock_model_cls, mock_tok_cls, temp_dir):
         model, tokenizer = self._make_mock_model_and_tokenizer()
         mock_tok_cls.from_pretrained.return_value = tokenizer
@@ -144,8 +144,8 @@ class TestCacheHiddenStates:
         assert "mean_l2_norm" in result
         assert "num_layers" in result
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_correct_number_of_layers(self, mock_model_cls, mock_tok_cls, temp_dir):
         num_layers = 5
         model, tokenizer = self._make_mock_model_and_tokenizer(num_layers=num_layers)
@@ -164,8 +164,8 @@ class TestCacheHiddenStates:
         assert len(result["mean_l1_norm"]) == num_layers
         assert len(result["mean_l2_norm"]) == num_layers
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_norms_are_positive(self, mock_model_cls, mock_tok_cls, temp_dir):
         model, tokenizer = self._make_mock_model_and_tokenizer()
         mock_tok_cls.from_pretrained.return_value = tokenizer
@@ -184,8 +184,8 @@ class TestCacheHiddenStates:
         for norm in result["mean_l2_norm"]:
             assert norm > 0
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_l1_norm_increases_with_layer(self, mock_model_cls, mock_tok_cls, temp_dir):
         """Since layer i is filled with (i+1), L1 norms should increase with layer."""
         model, tokenizer = self._make_mock_model_and_tokenizer(num_layers=4, hidden_dim=8)
@@ -204,8 +204,8 @@ class TestCacheHiddenStates:
         for i in range(1, len(l1_norms)):
             assert l1_norms[i] > l1_norms[i - 1], f"Layer {i} L1 norm should be > layer {i-1}"
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_cache_files_created(self, mock_model_cls, mock_tok_cls, temp_dir):
         model, tokenizer = self._make_mock_model_and_tokenizer()
         mock_tok_cls.from_pretrained.return_value = tokenizer
@@ -224,8 +224,8 @@ class TestCacheHiddenStates:
         assert os.path.isfile(os.path.join(cache_dir, "batch_0.pt"))
         assert os.path.isfile(os.path.join(cache_dir, "batch_1.pt"))
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_cached_data_has_correct_structure(self, mock_model_cls, mock_tok_cls, temp_dir):
         num_layers = 3
         model, tokenizer = self._make_mock_model_and_tokenizer(num_layers=num_layers)
@@ -245,8 +245,8 @@ class TestCacheHiddenStates:
         assert "attention_mask" in cached
         assert len(cached["hidden_states"]) == num_layers
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_half_precision_cache(self, mock_model_cls, mock_tok_cls, temp_dir):
         model, tokenizer = self._make_mock_model_and_tokenizer()
         mock_tok_cls.from_pretrained.return_value = tokenizer
@@ -269,8 +269,8 @@ class TestCacheHiddenStates:
 # compute_activation_diffs  (using mocked model + real cached files)
 # ---------------------------------------------------------------------------
 class TestComputeActivationDiffs:
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_returns_correct_keys(self, mock_model_cls, mock_tok_cls, temp_dir):
         """Diff computation should return absolute norms + diff norms."""
         num_layers = 3
@@ -330,8 +330,8 @@ class TestComputeActivationDiffs:
         assert "mean_diff_l2" in result
         assert len(result["mean_diff_l1"]) == num_layers
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_diff_norms_are_positive_when_models_differ(self, mock_model_cls, mock_tok_cls, temp_dir):
         """If model A and B have different hidden states, diff norms should be > 0."""
         num_layers = 2
@@ -382,8 +382,8 @@ class TestComputeActivationDiffs:
         for norm in result["mean_diff_l2"]:
             assert norm > 0
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_diff_norms_zero_when_identical(self, mock_model_cls, mock_tok_cls, temp_dir):
         """If model B produces same hidden states as cached model A, diff norms should be 0."""
         num_layers = 2
@@ -437,8 +437,8 @@ class TestComputeActivationDiffs:
         for norm in result["mean_diff_l2"]:
             assert abs(norm) < 1e-6
 
-    @patch("collect_activation_norms.AutoTokenizer")
-    @patch("collect_activation_norms.AutoModelForCausalLM")
+    @patch("activation_norms.AutoTokenizer")
+    @patch("activation_norms.AutoModelForCausalLM")
     def test_known_diff_values(self, mock_model_cls, mock_tok_cls, temp_dir):
         """Verify diff norm math: model A = zeros, model B = ones → known norms."""
         num_layers = 1
@@ -486,3 +486,45 @@ class TestComputeActivationDiffs:
         assert abs(result["mean_diff_l1"][0] - 4.0) < 1e-5
         # L2 norm of [1,1,1,1] = sqrt(4) = 2.0, per token → mean = 2.0
         assert abs(result["mean_diff_l2"][0] - 2.0) < 1e-5
+
+
+# ---------------------------------------------------------------------------
+# plot_activation_norms  (smoke test — just verify it runs and produces files)
+# ---------------------------------------------------------------------------
+class TestPlotActivationNorms:
+    def test_smoke_produces_png_files(self, temp_dir):
+        """Smoke test: plot_activation_norms creates expected PNGs from valid CSV."""
+        from activation_norms import plot_activation_norms
+        from utils import write_csv
+
+        csv_path = os.path.join(temp_dir, "activation_stats.csv")
+        fieldnames = [
+            "layer", "split",
+            "model_a_l1_norm", "model_a_l2_norm",
+            "model_b_l1_norm", "model_b_l2_norm",
+            "mean_diff_l1", "mean_diff_l2",
+        ]
+        rows = []
+        for layer in range(4):
+            for split in ["forget", "retain"]:
+                rows.append({
+                    "layer": layer,
+                    "split": split,
+                    "model_a_l1_norm": 1.0 + layer,
+                    "model_a_l2_norm": 0.5 + layer,
+                    "model_b_l1_norm": 1.2 + layer,
+                    "model_b_l2_norm": 0.6 + layer,
+                    "mean_diff_l1": 0.2,
+                    "mean_diff_l2": 0.1,
+                })
+        write_csv(csv_path, rows, fieldnames)
+
+        plot_outdir = os.path.join(temp_dir, "plots")
+        plot_activation_norms(csv_path, plot_outdir, title="Test Title")
+
+        # Check that all 4 expected PNGs were created (2 splits × 2 plot types)
+        assert os.path.isfile(os.path.join(plot_outdir, "activation_norms_forget.png"))
+        assert os.path.isfile(os.path.join(plot_outdir, "activation_norms_retain.png"))
+        assert os.path.isfile(os.path.join(plot_outdir, "activation_diffs_forget.png"))
+        assert os.path.isfile(os.path.join(plot_outdir, "activation_diffs_retain.png"))
+
