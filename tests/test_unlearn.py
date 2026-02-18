@@ -147,3 +147,127 @@ class TestMethodParamsConsistency:
             assert "epochs" in params, f"{method} missing epochs"
             assert "lr" in params, f"{method} missing lr"
             assert "batch_size" in params, f"{method} missing batch_size"
+
+
+# ---------------------------------------------------------------------------
+# Argument parser (--push-to-hub)
+# ---------------------------------------------------------------------------
+class TestArgParser:
+    """Test argument parsing changes."""
+
+    def test_push_to_hub_defaults_false(self):
+        """--push-to-hub should default to False."""
+        from unlearn import main
+        import argparse
+        # Build the parser the same way main() does
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--push-to-hub", action="store_true")
+        args = parser.parse_args([])
+        assert args.push_to_hub is False
+
+    def test_push_to_hub_set_when_passed(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--push-to-hub", action="store_true")
+        args = parser.parse_args(["--push-to-hub"])
+        assert args.push_to_hub is True
+
+
+# ---------------------------------------------------------------------------
+# eval_summary.py — parsing and method inference
+# ---------------------------------------------------------------------------
+class TestEvalSummaryParsing:
+    """Test parse_model_name handles all folder name formats."""
+
+    @pytest.fixture(autouse=True)
+    def _import(self):
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from eval_summary import parse_model_name, _infer_method_from_params
+        self.parse = parse_model_name
+        self.infer = _infer_method_from_params
+
+    # -- New format: base__method__params --
+    def test_new_format_cb_lat(self):
+        r = self.parse("outputs/EleutherAI_deep-ignorance-unfiltered__cb_lat__ep2_lr1e-05_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7")
+        assert r["method"] == "cb_lat"
+        assert r["params"]["epochs"] == "2"
+        assert r["params"]["lat_eps"] == "0.1"
+        assert r["params"]["layers"] == "5-6-7"
+
+    def test_new_format_ga_simple(self):
+        r = self.parse("outputs/EleutherAI_deep-ignorance-unfiltered__ga_simple__ep1_lr1e-05_bs4")
+        assert r["method"] == "ga_simple"
+        assert r["params"]["epochs"] == "1"
+        assert len(r["params"]) == 3  # epochs, lr, batch
+
+    def test_new_format_wt_dist_reg(self):
+        r = self.parse("outputs/EleutherAI_deep-ignorance-unfiltered__wt_dist_reg__ep1_lr1e-05_bs4_wr0.1")
+        assert r["method"] == "wt_dist_reg"
+        assert r["params"]["lambda"] == "0.1"
+
+    # -- HuggingFace format: girishgupta_base__method__params --
+    def test_hf_format_with_method(self):
+        r = self.parse("outputs/girishgupta_EleutherAI_deep-ignorance-unfiltered__cb__ep2_lr1e-05_bs4_a100.0_sc20.0_ly5-6-7")
+        assert r["method"] == "cb"
+        assert r["params"]["alpha"] == "100.0"
+
+    # -- Old/short format: girishgupta_method__params (no base model) --
+    def test_short_name_rmu_inferred(self):
+        r = self.parse("outputs/girishgupta_rmu__ep2_lr1e-05_bs4_a100.0_sc20.0_ly5-6-7")
+        assert r["method"] == "rmu"
+        assert r["params"]["epochs"] == "2"
+
+    def test_short_name_cb_lat_inferred(self):
+        r = self.parse("outputs/girishgupta_cb_lat__ep2_lr5e-06_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7")
+        assert r["method"] == "cb_lat"
+        assert r["params"]["lr"] == "5e-06"
+
+    # -- Baselines --
+    def test_baseline_returns_none(self):
+        r = self.parse("outputs/EleutherAI_deep-ignorance-unfiltered")
+        assert r is None
+
+    def test_baseline_filtered_returns_none(self):
+        r = self.parse("outputs/EleutherAI_deep-ignorance-e2e-strong-filter")
+        assert r is None
+
+
+class TestInferMethod:
+    """Test _infer_method_from_params for each method type."""
+
+    @pytest.fixture(autouse=True)
+    def _import(self):
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from eval_summary import _infer_method_from_params
+        self.infer = _infer_method_from_params
+
+    def test_cb_lat(self):
+        assert self.infer({"lat_eps": "0.1", "alpha": "100", "steer": "20"}) == "cb_lat"
+
+    def test_lat(self):
+        assert self.infer({"lat_eps": "0.1"}) == "lat"
+
+    def test_rmu(self):
+        assert self.infer({"alpha": "100", "steer": "20"}) == "rmu"
+
+    def test_wt_dist(self):
+        assert self.infer({"noise": "0.02"}) == "wt_dist"
+
+    def test_wt_dist_reg(self):
+        assert self.infer({"lambda": "0.1"}) == "wt_dist_reg"
+
+    def test_dpo(self):
+        assert self.infer({"beta": "0.1"}) == "dpo"
+
+    def test_npo(self):
+        assert self.infer({"beta": "0.1", "ret_wt": "1.0"}) == "npo"
+
+    def test_ga(self):
+        assert self.infer({"ret_wt": "1.0"}) == "ga"
+
+    def test_grad_diff(self):
+        assert self.infer({"fgt_wt": "1.0"}) == "grad_diff"
+
+    def test_unknown(self):
+        assert self.infer({}) == "unknown"
+
