@@ -164,10 +164,49 @@ def main():
     with open(summary_path, "w") as f:
         json.dump(save_data, f, indent=2, default=str)
 
+    # High-level markdown summary
+    _write_high_level_summary(results["results"], args.model, args.outdir)
+
     print(f"\n[eval] ✓ Results saved to {args.outdir}/")
     for task_name in sorted(results["results"]):
         print(f"         {task_name}.json")
     print(f"         summary.json")
+    print(f"         high_level_summary.md")
+
+
+def _write_high_level_summary(results: dict, model: str, outdir: str) -> None:
+    """Write a concise markdown table with headline metrics."""
+    # Rows: (label, task_key, metric_key)
+    rows = [
+        ("MMLU",                       "mmlu",                       "acc,none"),
+        ("WikiText (word perplexity)",  "wikitext",                   "word_perplexity,none"),
+        ("WMDP Bio (categorized MCQ)",  "wmdp_bio_categorized_mcqa",  "acc,none"),
+        ("↳ Robust subset",            "wmdp_bio_robust",            "acc,none"),
+        ("↳ Shortcut subset",          "wmdp_bio_shortcut",          "acc,none"),
+        ("WMDP Bio (cloze verified)",   "wmdp_bio_cloze_verified",    "acc_norm,none"),
+        ("WMDP Bio (robust rewritten)", "wmdp_bio_robust_rewritten",  "acc,none"),
+    ]
+
+    lines = [
+        f"# Eval Summary: `{model}`\n",
+        "| Benchmark | Score |",
+        "|-----------|-------|",
+    ]
+    for label, task_key, metric_key in rows:
+        task_data = results.get(task_key)
+        if task_data is None:
+            continue
+        value = task_data.get(metric_key)
+        if value is None:
+            continue
+        if metric_key.startswith("word_perplexity"):
+            lines.append(f"| {label} | {value:.2f} |")
+        else:
+            lines.append(f"| {label} | {value:.1%} |")
+
+    md_path = os.path.join(outdir, "high_level_summary.md")
+    with open(md_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
