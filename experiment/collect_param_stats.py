@@ -43,6 +43,16 @@ from utils import (
 
 
 class SmartLoader:
+    """Stream model weights one shard at a time from safetensors/bin files.
+
+    We deliberately avoid AutoModelForCausalLM here because this script
+    compares TWO models weight-by-weight.  Loading both full models would
+    require ~2× model size in memory.  SmartLoader instead loads one shard
+    file at a time, extracts individual weight tensors, computes stats, and
+    frees them — so peak memory is roughly 2× one shard rather than 2× one
+    full model.
+    """
+
     def __init__(self, model_path: str):
         # Handle HF Hub IDs: If path doesn't exist locally, try downloading
         if not os.path.exists(model_path):
