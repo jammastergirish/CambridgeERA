@@ -49,8 +49,35 @@ PARAM_RE = re.compile(
 BASE_MODEL = "EleutherAI_deep-ignorance-unfiltered"
 
 
+def _infer_method_from_params(params: dict) -> str:
+    """Infer the unlearning method from which parameters are present."""
+    has = set(params.keys())
+    if "lat_eps" in has and "alpha" in has:
+        return "cb_lat"
+    if "lat_eps" in has:
+        return "lat"
+    if "alpha" in has and "steer" in has:
+        return "rmu"  # could also be cb, but can't distinguish without more info
+    if "noise" in has:
+        return "wt_dist"
+    if "lambda" in has:
+        return "wt_dist_reg"
+    if "beta" in has and "ret_wt" in has:
+        return "npo"
+    if "beta" in has:
+        return "dpo"
+    if "fgt_wt" in has:
+        return "grad_diff"
+    if "ret_wt" in has:
+        return "ga"
+    return "unknown"
+
+
 def parse_model_name(model_dir: str) -> dict | None:
-    """Parse model directory name into method + params."""
+    """Parse model directory name into method + params.
+
+    Handles both new format (base__method__params) and old format (base__params).
+    """
     basename = os.path.basename(model_dir)
     parts = basename.split("__")
     if len(parts) < 2:
@@ -64,12 +91,20 @@ def parse_model_name(model_dir: str) -> dict | None:
             break
         method_parts.append(part)
 
-    method = "_".join(method_parts) if method_parts else parts[1]
+    # Parse parameters from the suffix
     params = {}
     if param_suffix:
         for match in PARAM_RE.finditer(param_suffix):
             abbrev, value = match.group(1), match.group(2)
             params[ABBREV_TO_NAME.get(abbrev, abbrev)] = value
+
+    # Determine method: use parsed method if present, otherwise infer from params
+    if method_parts:
+        method = "_".join(method_parts)
+    elif params:
+        method = _infer_method_from_params(params)
+    else:
+        return None
 
     return {"base_model": parts[0], "method": method, "params": params, "dir": basename}
 
