@@ -993,7 +993,19 @@ def main():
 
     # ---- W&B ----
     from utils import init_wandb, finish_wandb
-    init_wandb("unlearn", args)
+    run = init_wandb("unlearn", args)
+
+    # Log method-specific hyperparameters as a dedicated config group
+    if run is not None:
+        import wandb
+        hyperparameters = {
+            "model": args.model,
+            "method": args.method,
+            "outdir": args.outdir,
+        }
+        for param in METHOD_PARAMS[args.method]:
+            hyperparameters[param] = getattr(args, param)
+        wandb.config.update({"hyperparameters": hyperparameters})
 
     # ---- Setup ----
     device = resolve_device(args.device)
