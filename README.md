@@ -139,7 +139,7 @@ Runs MMLU (Massive Multitask Language Understanding) on each model before the ex
 
 These examine `W_modified`, `W_base`, and `ΔW = W_modified − W_base` directly—treating the intervention as a matrix perturbation.
 
-#### Steps 1–2: Parameter Statistics (`experiment/collect_param_stats.py` + `experiment/plot_param_stats.py`)
+#### Step 1: Parameter Statistics (`experiment/param_stats.py`)
 
 **Question:** *How large is the intervention, and where is it concentrated?*
 
@@ -160,7 +160,7 @@ These are aggregated per layer and split into **MLP vs Attention** groups, then 
 
 ---
 
-##### Step 6: MLP vs Attention Breakdown (`experiment/analyze_mlp_vs_attn.py`)
+##### Step 5: MLP vs Attention Breakdown (`experiment/analyze_mlp_vs_attn.py`)
 
 **Question:** *Are the changes concentrated in MLP (knowledge storage) or Attention (routing/composition)?*
 
@@ -170,7 +170,7 @@ Takes the per-matrix stats from Step 1 and computes the ratio of MLP change to A
 
 ---
 
-##### Step 7: Null Space & Subspace Analysis (`experiment/null_space_analysis.py`)
+##### Step 6: Null Space & Subspace Analysis (`experiment/null_space_analysis.py`)
 
 **Question:** *Is the update low-rank, and do the principal subspaces shift?*
 
@@ -186,7 +186,7 @@ For 50 sampled weight matrices, computes full SVD and measures:
 
 ---
 
-##### Step 10: MLP Nullspace Alignment (`experiment/mlp_nullspace_alignment.py`)
+##### Step 9: MLP Nullspace Alignment (`experiment/mlp_nullspace_alignment.py`)
 
 **Question:** *Does ΔW lie in the nullspace of the original W?*
 
@@ -220,7 +220,7 @@ Both are averaged across all tokens (weighted by attention mask). They are **not
 
 ---
 
-##### Step 8: Activation Separation (`experiment/activation_separation_analysis.py`)
+##### Step 7: Activation Separation (`experiment/activation_separation_analysis.py`)
 
 **Question:** *Can you tell forget-text activations apart from retain-text activations? Does the intervention change this?*
 
@@ -236,7 +236,7 @@ At each layer, extracts the centroid of forget-text activations and retain-text 
 
 ---
 
-##### Step 9: Activation Covariance Analysis (`experiment/activation_covariance_analysis.py`)
+##### Step 8: Activation Covariance Analysis (`experiment/activation_covariance_analysis.py`)
 
 **Question:** *Does the intervention change the shape of the activation distribution?*
 
@@ -254,7 +254,7 @@ A key output is the **selectivity ratio**: (Wasserstein distance on forget text)
 
 ---
 
-##### Step 11: Row Space Projection (`experiment/row_space_projection_analysis.py`)
+##### Step 10: Row Space Projection (`experiment/row_space_projection_analysis.py`)
 
 **Question:** *Do activations from forget-text align more with the directions the intervention modified?*
 
@@ -266,7 +266,7 @@ If forget-text activations have high projection onto ΔW's row space while retai
 
 ---
 
-##### Step 12: Local Lipschitz Analysis (`experiment/local_lipschitzness_analysis.py`)
+##### Step 11: Local Lipschitz Analysis (`experiment/local_lipschitzness_analysis.py`)
 
 **Question:** *Did the intervention make the model's output more or less sensitive to input perturbations?*
 
@@ -282,7 +282,7 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ---
 
-##### Step 13: Linear Probe Analysis (`experiment/linear_probe_analysis.py`)
+##### Step 12: Linear Probe Analysis (`experiment/linear_probe_analysis.py`)
 
 **Question:** *At which layer is the forget-set knowledge  linearly encoded?*
 
@@ -302,7 +302,7 @@ Default probe: `LogisticRegression(C=1.0, max_iter=1000)` — adjustable via `--
 
 ---
 
-##### Step 14: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
+##### Step 13: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
 
 **Question:** *At which layer does the model "know" the answer to WMDP-Bio questions?*
 
@@ -380,7 +380,7 @@ outputs/
 ./unlearn/create_all_unlearning_models.sh
 
 # Analyze the result(s) per the above experiments
-uv run experiment/collect_param_stats.py \
+uv run experiment/param_stats.py \
   --model-a EleutherAI/deep-ignorance-unfiltered \
   --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
   --outdir outputs/ga_analysis/param_stats

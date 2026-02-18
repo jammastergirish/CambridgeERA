@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from utils import resolve_device, resolve_dtype, write_csv, classify_granular, init_wandb, log_csv_as_table, log_plots, finish_wandb
-from collect_param_stats import SmartLoader
+from param_stats import SmartLoader
 
 
 def compute_null_space_projection(dW: torch.Tensor, rank_threshold: float = 0.99) -> dict:

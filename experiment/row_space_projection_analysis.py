@@ -33,7 +33,7 @@ import shutil
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from utils import resolve_device, resolve_dtype, write_csv, extract_layer, init_wandb, log_csv_as_table, log_plots, finish_wandb
-from collect_param_stats import SmartLoader
+from param_stats import SmartLoader
 
 
 class ActivationCapture:

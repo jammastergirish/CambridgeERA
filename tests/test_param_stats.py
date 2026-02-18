@@ -1,4 +1,4 @@
-"""Tests for experiment/collect_param_stats.py — SmartLoader and stats computation."""
+"""Tests for experiment/param_stats.py — SmartLoader and stats computation."""
 
 import os
 import sys
@@ -18,7 +18,7 @@ from utils import stable_rank_and_spectral, extract_layer, classify_granular
 # ---------------------------------------------------------------------------
 class TestSmartLoaderSingleFile:
     def test_loads_all_param_names(self, safetensors_single_model):
-        from collect_param_stats import SmartLoader
+        from param_stats import SmartLoader
 
         dir_a, _ = safetensors_single_model
         loader = SmartLoader(dir_a)
@@ -30,7 +30,7 @@ class TestSmartLoaderSingleFile:
         assert len(names) == 5
 
     def test_get_param_returns_correct_tensor(self, safetensors_single_model, sample_weights):
-        from collect_param_stats import SmartLoader
+        from param_stats import SmartLoader
 
         weight_a, _ = sample_weights
         dir_a, _ = safetensors_single_model
@@ -44,7 +44,7 @@ class TestSmartLoaderSingleFile:
         assert torch.allclose(tensor, weight_a[name], atol=1e-6)
 
     def test_get_param_nonexistent_returns_none(self, safetensors_single_model):
-        from collect_param_stats import SmartLoader
+        from param_stats import SmartLoader
 
         dir_a, _ = safetensors_single_model
         loader = SmartLoader(dir_a)
@@ -53,7 +53,7 @@ class TestSmartLoaderSingleFile:
         assert tensor is None
 
     def test_is_safetensors_flag(self, safetensors_single_model):
-        from collect_param_stats import SmartLoader
+        from param_stats import SmartLoader
 
         dir_a, _ = safetensors_single_model
         loader = SmartLoader(dir_a)
@@ -65,7 +65,7 @@ class TestSmartLoaderSingleFile:
 # ---------------------------------------------------------------------------
 class TestSmartLoaderSharded:
     def test_loads_all_param_names(self, safetensors_sharded_model):
-        from collect_param_stats import SmartLoader
+        from param_stats import SmartLoader
 
         loader = SmartLoader(safetensors_sharded_model)
         names = loader.get_all_param_names()
@@ -75,7 +75,7 @@ class TestSmartLoaderSharded:
         assert "model.layers.1.self_attn.q_proj.weight" in names
 
     def test_loads_params_across_shards(self, safetensors_sharded_model, sample_weights):
-        from collect_param_stats import SmartLoader
+        from param_stats import SmartLoader
 
         weight_a, _ = sample_weights
         loader = SmartLoader(safetensors_sharded_model)
@@ -92,7 +92,7 @@ class TestSmartLoaderSharded:
 # ---------------------------------------------------------------------------
 class TestSmartLoaderErrors:
     def test_nonexistent_path_raises(self, temp_dir):
-        from collect_param_stats import SmartLoader
+        from param_stats import SmartLoader
 
         fake_path = os.path.join(temp_dir, "does_not_exist")
         os.makedirs(fake_path)  # exists but has no weights
@@ -107,7 +107,7 @@ class TestStatsComputation:
     """Verify the core stats computation that happens in the main loop."""
 
     def test_frobenius_norm_of_difference(self, safetensors_single_model, sample_weights):
-        from collect_param_stats import SmartLoader
+        from param_stats import SmartLoader
 
         weight_a, weight_b = sample_weights
         dir_a, dir_b = safetensors_single_model
@@ -130,7 +130,7 @@ class TestStatsComputation:
         assert dW_fro / W_fro < 0.2
 
     def test_stable_rank_of_identity_perturbation(self, safetensors_single_model):
-        from collect_param_stats import SmartLoader
+        from param_stats import SmartLoader
 
         dir_a, dir_b = safetensors_single_model
         loader_a = SmartLoader(dir_a)

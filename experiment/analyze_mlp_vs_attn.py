@@ -22,8 +22,8 @@ from utils import init_wandb, log_csv_as_table, log_plots, finish_wandb
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--per-layer-csv", required=True, help="Path to per_layer.csv from collect_param_stats.py")
-    ap.add_argument("--per-matrix-csv", required=True, help="Path to per_matrix.csv from collect_param_stats.py")
+    ap.add_argument("--per-layer-csv", required=True, help="Path to per_layer.csv from param_stats.py")
+    ap.add_argument("--per-matrix-csv", required=True, help="Path to per_matrix.csv from param_stats.py")
     ap.add_argument("--outdir", default="outputs/mlp_attn_analysis")
     ap.add_argument("--title", default=None, help="Title for plots")
     args = ap.parse_args()

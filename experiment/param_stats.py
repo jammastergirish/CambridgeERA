@@ -9,6 +9,7 @@
 #   "huggingface_hub",
 #   "wandb",
 #   "pandas",
+#   "matplotlib",
 # ]
 # ///
 
@@ -38,6 +39,7 @@ from utils import (
     write_csv,
     init_wandb,
     log_csv_as_table,
+    log_plots,
     finish_wandb,
 )
 
@@ -163,7 +165,102 @@ class SmartLoader:
         return tensor
 
 
+# ---------------------------------------------------------------------------
+# Plotting — generates per-group charts from the per_layer CSV
+# ---------------------------------------------------------------------------
 
+def plot_param_stats(per_layer_csv: str, outdir: str, title: str = None):
+    """Generate param stats plots from a per-layer CSV file."""
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    os.makedirs(outdir, exist_ok=True)
+
+    dataframe = pd.read_csv(per_layer_csv)
+    print(f"[param_stats] Generating plots from {per_layer_csv} ({len(dataframe)} rows)")
+
+    for group in ["attn", "mlp"]:
+        sub = dataframe[dataframe["group"] == group].sort_values("layer")
+        if sub.empty:
+            continue
+
+        # ---- Plot A: Relative Frobenius norm (layer locality) ----
+        plt.figure(figsize=(8, 5))
+        col = "dW_fro_layer_rel" if "dW_fro_layer_rel" in sub.columns else "dW_fro_layer"
+        plt.plot(sub["layer"], sub[col], marker="o")
+        plt.xlabel("Layer")
+        ylabel = rf"$\|\Delta W\|_F / \|W\|_F$ ({group.upper()})" if col.endswith("_rel") else rf"$\|\Delta W\|_F$ per layer ({group.upper()})"
+        plt.ylabel(ylabel)
+        plt.title(title or f"Layer locality ({group})")
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, f"layer_locality_{group}.png"))
+        plt.close()
+
+        # ---- Plot B: Stable rank ----
+        plt.figure(figsize=(8, 5))
+        plt.plot(sub["layer"], sub["mean_dW_stable_rank"], marker="o")
+        plt.xlabel("Layer")
+        plt.ylabel(rf"Mean stable rank of $\Delta W$ ({group.upper()})")
+        plt.title(title or f"Edit dimensionality - Stable Rank ({group})")
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, f"stable_rank_{group}.png"))
+        plt.close()
+
+        # ---- Plot C: Empirical rank ----
+        if "mean_dW_empirical_rank" in sub.columns:
+            plt.figure(figsize=(8, 5))
+            plt.plot(sub["layer"], sub["mean_dW_empirical_rank"], marker="o", color="darkorange")
+            plt.xlabel("Layer")
+            plt.ylabel(rf"Mean empirical rank of $\Delta W$ ({group.upper()})")
+            plt.title(title or f"Edit dimensionality - Empirical Rank ({group})")
+            plt.grid(alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(outdir, f"empirical_rank_{group}.png"))
+            plt.close()
+
+            # ---- Plot D: Comparison of both ranks ----
+            fig, ax1 = plt.subplots(figsize=(10, 6))
+
+            color = 'tab:blue'
+            ax1.set_xlabel('Layer')
+            ax1.set_ylabel(rf'Mean stable rank of $\Delta W$', color=color)
+            ax1.plot(sub["layer"], sub["mean_dW_stable_rank"], marker="o", color=color, label="Stable Rank")
+            ax1.tick_params(axis='y', labelcolor=color)
+            ax1.grid(alpha=0.3)
+
+            ax2 = ax1.twinx()
+            color = 'tab:orange'
+            ax2.set_ylabel(rf'Mean empirical rank of $\Delta W$', color=color)
+            ax2.plot(sub["layer"], sub["mean_dW_empirical_rank"], marker="s", color=color, label="Empirical Rank")
+            ax2.tick_params(axis='y', labelcolor=color)
+
+            plt.title(title or f"Edit dimensionality comparison ({group.upper()})")
+
+            # Add legends from both axes
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+            plt.tight_layout()
+            plt.savefig(os.path.join(outdir, f"rank_comparison_{group}.png"))
+            plt.close()
+
+        # ---- Plot E: Spectral norm (worst-case amplification) ----
+        spec_col = "max_dW_spectral_rel" if "max_dW_spectral_rel" in sub.columns else None
+        if spec_col:
+            plt.figure(figsize=(8, 5))
+            plt.plot(sub["layer"], sub[spec_col], marker="o", color="tab:red")
+            plt.xlabel("Layer")
+            plt.ylabel(rf"$\sigma_1(\Delta W) / \sigma_1(W)$ ({group.upper()})")
+            plt.title(title or f"Spectral norm — worst-case amplification ({group})")
+            plt.grid(alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(outdir, f"spectral_norm_{group}.png"))
+            plt.close()
+
+    print(f"[param_stats] ✓ All plots written to {outdir}")
 
 
 def main():
@@ -178,9 +275,13 @@ def main():
     parser.add_argument("--empirical-threshold", type=float, default=0.99,
                          help="Threshold for empirical rank (fraction of variance to capture, default: 0.99)")
     parser.add_argument("--outdir", default="outputs/param_stats")
+    parser.add_argument("--plot-outdir", default=None,
+                         help="If set, generate plots and save to this directory")
+    parser.add_argument("--title", default=None,
+                         help="Title for generated plots (used with --plot-outdir)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
     args = parser.parse_args()
-    init_wandb("collect_param_stats", args)
+    init_wandb("param_stats", args)
 
     # Set seed for reproducibility (vital for Power Iteration stability)
     torch.manual_seed(args.seed)
@@ -191,7 +292,7 @@ def main():
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
 
-    print(f"[collect_param_stats] Initializing SmartLoaders (streaming mode)")
+    print(f"[param_stats] Initializing SmartLoaders (streaming mode)")
     print(f"  Model A (baseline) : {args.model_a}")
     print(f"  Model B (target)   : {args.model_b}")
     print(f"  Device: {device}  |  Dtype: {dtype}")
@@ -220,7 +321,7 @@ def main():
     rows = []
     per_layer = {}
 
-    print(f"[collect_param_stats] Scanning {len(linear_names)} weight matrices for Frobenius norm, stable rank & empirical rank...")
+    print(f"[param_stats] Scanning {len(linear_names)} weight matrices for Frobenius norm, stable rank & empirical rank...")
     
     for name in tqdm(linear_names, desc="Comparing weight matrices", unit="matrix"):
         # Load A
@@ -311,6 +412,8 @@ def main():
         per_matrix_fields,
     )
 
+    per_layer_csv = os.path.join(args.outdir, "per_layer.csv")
+
     layer_rows = []
     for (layer, group), stats in sorted(per_layer.items(), key=lambda x: (x[0][0], x[0][1])):
         dW_fro_layer = float(np.sqrt(stats["sum_dW_fro_sq"]))
@@ -339,15 +442,17 @@ def main():
                         "mean_dW_stable_rank", "count_mats"]
     if args.empirical_rank:
         per_layer_fields.insert(-1, "mean_dW_empirical_rank")
-    write_csv(
-        os.path.join(args.outdir, "per_layer.csv"),
-        layer_rows,
-        per_layer_fields,
-    )
+    write_csv(per_layer_csv, layer_rows, per_layer_fields)
 
-    print(f"[collect_param_stats] ✓ Wrote {len(rows)} per-matrix rows and {len(layer_rows)} per-layer rows to {args.outdir}")
+    print(f"[param_stats] ✓ Wrote {len(rows)} per-matrix rows and {len(layer_rows)} per-layer rows to {args.outdir}")
     log_csv_as_table(os.path.join(args.outdir, "per_matrix.csv"), "per_matrix")
-    log_csv_as_table(os.path.join(args.outdir, "per_layer.csv"), "per_layer")
+    log_csv_as_table(per_layer_csv, "per_layer")
+
+    # Generate plots if requested
+    if args.plot_outdir:
+        plot_param_stats(per_layer_csv, args.plot_outdir, args.title)
+        log_plots(args.plot_outdir, "param_plots")
+
     finish_wandb()
 
 if __name__ == "__main__":

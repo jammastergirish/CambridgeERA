@@ -121,7 +121,7 @@ fi
 # STEP 1: Parameter Statistics
 # ============================================
 echo "=========================================="
-echo "STEP 1: Collecting Parameter Statistics"
+echo "STEP 1: Parameter Statistics (Collect + Plot)"
 echo "=========================================="
 
 echo ""
@@ -130,12 +130,14 @@ echo "----------------------------------------"
 if step_complete "${OUTROOT}/${COMP1}/param_stats" "per_layer.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/collect_param_stats.py \
+  uv run experiment/param_stats.py \
     --model-a "$BASE" \
     --model-b "$FILTERED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/param_stats"
+    --outdir "${OUTROOT}/${COMP1}/param_stats" \
+    --plot-outdir "${OUTROOT}/${COMP1}/param_plots" \
+    --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-e2e-strong-filter"
 fi
 
 echo ""
@@ -144,50 +146,22 @@ echo "----------------------------------------"
 if step_complete "${OUTROOT}/${COMP2}/param_stats" "per_layer.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/collect_param_stats.py \
+  uv run experiment/param_stats.py \
     --model-a "$BASE" \
     --model-b "$UNLEARNED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/param_stats"
-fi
-
-# ============================================
-# STEP 2: Plot Parameter Statistics
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 2: Plotting Parameter Statistics"
-echo "=========================================="
-
-echo ""
-echo "Plotting Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/param_plots" "layer_locality_mlp.png"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/plot_param_stats.py \
-    --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_layer.csv" \
-    --outdir "${OUTROOT}/${COMP1}/param_plots" \
-    --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-e2e-strong-filter"
-fi
-
-echo ""
-echo "Plotting Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/param_plots" "layer_locality_mlp.png"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/plot_param_stats.py \
-    --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
-    --outdir "${OUTROOT}/${COMP2}/param_plots" \
+    --outdir "${OUTROOT}/${COMP2}/param_stats" \
+    --plot-outdir "${OUTROOT}/${COMP2}/param_plots" \
     --title "$BASE → $UNLEARNED"
 fi
 
 # ============================================
-# STEP 3: Generate Test Datasets
+# STEP 2: Generate Test Datasets
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 3: Generating Test Datasets"
+echo "STEP 2: Generating Test Datasets"
 echo "=========================================="
 if [[ -f "$FORGET" && -f "$RETAIN" && "$FORCE" != "1" ]]; then
   echo "  ✓ Datasets already exist — skipping"
@@ -196,11 +170,11 @@ else
 fi
 
 # ============================================
-# STEP 4: Activation Analysis
+# STEP 3: Activation Analysis
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 4: Collecting Activation Norms"
+echo "STEP 3: Collecting Activation Norms"
 echo "=========================================="
 
 if [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
@@ -240,11 +214,11 @@ else
 fi
 
 # ============================================
-# STEP 5: Plot Activation Norms
+# STEP 4: Plot Activation Norms
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 5: Plotting Activation Norms"
+echo "STEP 4: Plotting Activation Norms"
 echo "=========================================="
 if step_complete "${OUTROOT}/${COMP1}/activation_plots" "activation_norms_forget.png"; then
   echo "  ✓ Already complete — skipping"
@@ -255,11 +229,11 @@ else
 fi
 
 # ============================================
-# STEP 6: MLP vs Attention Analysis
+# STEP 5: MLP vs Attention Analysis
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 6: MLP vs Attention Analysis"
+echo "STEP 5: MLP vs Attention Analysis"
 echo "=========================================="
 
 echo ""
@@ -287,11 +261,11 @@ else
 fi
 
 # ============================================
-# STEP 7: Null Space & Subspace Analysis
+# STEP 6: Null Space & Subspace Analysis
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 7: Null Space & Subspace Analysis"
+echo "STEP 6: Null Space & Subspace Analysis"
 echo "=========================================="
 echo "Note: This is computationally intensive (SVD on 50 weight matrices)"
 
@@ -320,11 +294,11 @@ else
 fi
 
 # ============================================
-# STEP 8: Activation Separation Analysis
+# STEP 7: Activation Separation Analysis
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 8: Activation Separation Analysis"
+echo "STEP 7: Activation Separation Analysis"
 echo "=========================================="
 echo "Analyzing how well forget/retain activations are separated..."
 
@@ -359,11 +333,11 @@ else
 fi
 
 # ============================================
-# STEP 9: Activation Covariance Analysis
+# STEP 8: Activation Covariance Analysis
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 9: Activation Covariance Analysis"
+echo "STEP 8: Activation Covariance Analysis"
 echo "=========================================="
 echo "Analyzing covariance spectrum changes..."
 
@@ -398,11 +372,11 @@ else
 fi
 
 # ============================================
-# STEP 10: MLP Nullspace Alignment
+# STEP 9: MLP Nullspace Alignment
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 10: MLP Nullspace Alignment Analysis"
+echo "STEP 9: MLP Nullspace Alignment Analysis"
 echo "=========================================="
 echo "Analyzing if MLP updates align with nullspace..."
 
@@ -433,11 +407,11 @@ else
 fi
 
 # ============================================
-# STEP 11: Row Space Projection Analysis
+# STEP 10: Row Space Projection Analysis
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 11: Row Space Projection Analysis"
+echo "STEP 10: Row Space Projection Analysis"
 echo "=========================================="
 echo "Analyzing how activations project onto update directions..."
 
@@ -472,11 +446,11 @@ else
 fi
 
 # ============================================
-# STEP 12: Local Lipschitzness Analysis
+# STEP 11: Local Lipschitzness Analysis
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 12: Local Lipschitzness Analysis"
+echo "STEP 11: Local Lipschitzness Analysis"
 echo "=========================================="
 echo "Analyzing local smoothness changes..."
 
@@ -511,11 +485,11 @@ else
 fi
 
 # ============================================
-# STEP 13: Linear Probe Analysis (per-model)
+# STEP 12: Linear Probe Analysis (per-model)
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 13: Linear Probe Analysis"
+echo "STEP 12: Linear Probe Analysis"
 echo "=========================================="
 echo "Training per-layer linear probes to locate forget-set knowledge..."
 echo "(Results stored per-model, not per-comparison)"
@@ -566,11 +540,11 @@ else
 fi
 
 # ============================================
-# STEP 14: Layer-wise WMDP Accuracy (per-model)
+# STEP 13: Layer-wise WMDP Accuracy (per-model)
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 14: Layer-wise WMDP Accuracy (Logit + Tuned Lens)"
+echo "STEP 13: Layer-wise WMDP Accuracy (Logit + Tuned Lens)"
 echo "=========================================="
 echo "Measuring WMDP-Bio MCQ accuracy at every transformer layer..."
 echo "(Results stored per-model, not per-comparison)"
