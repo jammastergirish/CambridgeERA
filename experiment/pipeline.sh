@@ -170,11 +170,11 @@ else
 fi
 
 # ============================================
-# STEP 3: Activation Norms (Collect + Plot)
+# STEP 3: Activation Norms
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 3: Activation Norms (Collect + Plot)"
+echo "STEP 3: Activation Norms"
 echo "=========================================="
 
 if [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
