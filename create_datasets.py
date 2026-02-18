@@ -8,45 +8,63 @@
 from datasets import load_dataset
 import os
 
+
 NUM_SAMPLES = 10000
 
-print("[create_datasets] Downloading WMDP-Bio dataset for forget set...")
-ds = load_dataset("cais/wmdp", "wmdp-bio", split="test")
 
-# Just take the questions/prompts
-texts = []
-for ex in ds:
-    # Depending on version, key may be "question" or "prompt"
-    if "question" in ex:
-        texts.append(ex["question"])
-    elif "prompt" in ex:
-        texts.append(ex["prompt"])
+def create_forget_set(outpath: str, num_samples: int = NUM_SAMPLES) -> int:
+    """Download WMDP-Bio and write forget-set text file.
 
-texts = texts[:NUM_SAMPLES]
+    Returns the number of samples written.
+    """
+    print("[create_datasets] Downloading WMDP-Bio dataset for forget set...")
+    ds = load_dataset("cais/wmdp", "wmdp-bio", split="test")
 
-os.makedirs("data", exist_ok=True)
+    texts = []
+    for ex in ds:
+        if "question" in ex:
+            texts.append(ex["question"])
+        elif "prompt" in ex:
+            texts.append(ex["prompt"])
 
-with open("data/forget.txt", "w") as f:
-    for t in texts:
-        f.write(t.replace("\n", " ").strip() + "\n")
+    texts = texts[:num_samples]
 
-print(f"[create_datasets] ✓ Wrote {len(texts)} forget samples to data/forget.txt")
+    os.makedirs(os.path.dirname(outpath) or ".", exist_ok=True)
+    with open(outpath, "w") as f:
+        for t in texts:
+            f.write(t.replace("\n", " ").strip() + "\n")
+
+    print(f"[create_datasets] ✓ Wrote {len(texts)} forget samples to {outpath}")
+    return len(texts)
 
 
-print("[create_datasets] Downloading WikiText-2 dataset for retain set...")
-ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
+def create_retain_set(outpath: str, num_samples: int = NUM_SAMPLES, min_length: int = 50) -> int:
+    """Download WikiText-2 and write retain-set text file.
 
-texts = []
-for ex in ds:
-    t = ex["text"].strip()
-    if len(t) > 50:
-        texts.append(t)
+    Returns the number of samples written.
+    """
+    print("[create_datasets] Downloading WikiText-2 dataset for retain set...")
+    ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
 
-texts = texts[:NUM_SAMPLES]
+    texts = []
+    for ex in ds:
+        t = ex["text"].strip()
+        if len(t) > min_length:
+            texts.append(t)
 
-with open("data/retain.txt", "w") as f:
-    for t in texts:
-        f.write(t.replace("\n", " ").strip() + "\n")
+    texts = texts[:num_samples]
 
-print(f"[create_datasets] ✓ Wrote {len(texts)} retain samples to data/retain.txt")
-print("[create_datasets] Done — datasets ready in data/")
+    os.makedirs(os.path.dirname(outpath) or ".", exist_ok=True)
+    with open(outpath, "w") as f:
+        for t in texts:
+            f.write(t.replace("\n", " ").strip() + "\n")
+
+    print(f"[create_datasets] ✓ Wrote {len(texts)} retain samples to {outpath}")
+    return len(texts)
+
+
+if __name__ == "__main__":
+    os.makedirs("data", exist_ok=True)
+    create_forget_set("data/forget.txt")
+    create_retain_set("data/retain.txt")
+    print("[create_datasets] Done — datasets ready in data/")
