@@ -1288,7 +1288,25 @@ def main():
 
     model.save_pretrained(args.outdir)
     tokenizer.save_pretrained(args.outdir)
-    print("[unlearn] Done ✓")
+    print("[unlearn] Model saved ✓")
+
+    # ---- Upload to HuggingFace (if HF_TOKEN is set) ----
+    hf_token = os.environ.get("HF_TOKEN")
+    if hf_token:
+        try:
+            from huggingface_hub import HfApi
+            api = HfApi(token=hf_token)
+            username = api.whoami()["name"]
+            repo_id = f"{username}/{os.path.basename(args.outdir)}"
+            print(f"[unlearn] Uploading to HuggingFace: {repo_id}")
+            api.create_repo(repo_id, exist_ok=True)
+            api.upload_folder(folder_path=args.outdir, repo_id=repo_id)
+            print(f"[unlearn] Upload complete ✓  https://huggingface.co/{repo_id}")
+        except Exception as e:
+            print(f"[unlearn] WARNING: HF upload failed: {e}")
+    else:
+        print("[unlearn] Skipping HF upload (no HF_TOKEN set)")
+
     print("===================================================================")
     print("===================================================================")
     finish_wandb()
