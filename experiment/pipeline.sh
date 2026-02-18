@@ -239,223 +239,11 @@ else
 fi
 
 # ============================================
-# STEP 5: Null Space & Subspace Analysis
+# STEP 5: Linear Probe Analysis (per-model)
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 5: Null Space & Subspace Analysis"
-echo "=========================================="
-echo "Note: This is computationally intensive (SVD on 50 weight matrices)"
-
-echo ""
-echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/null_space_analysis" "null_space_visualization.png"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/null_space_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --num-samples 50
-fi
-
-echo ""
-echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/null_space_analysis" "null_space_visualization.png"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/null_space_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --num-samples 50
-fi
-
-# ============================================
-# STEP 6: Activation Separation Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 6: Activation Separation Analysis"
-echo "=========================================="
-echo "Analyzing how well forget/retain activations are separated..."
-
-echo ""
-echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/activation_separation" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/activation_separation_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
-
-echo ""
-echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/activation_separation" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/activation_separation_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
-
-# ============================================
-# STEP 7: Activation Covariance Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 7: Activation Covariance Analysis"
-echo "=========================================="
-echo "Analyzing covariance spectrum changes..."
-
-echo ""
-echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/activation_covariance" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/activation_covariance_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
-
-echo ""
-echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/activation_covariance" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/activation_covariance_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
-
-# ============================================
-# STEP 8: MLP Nullspace Alignment
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 8: MLP Nullspace Alignment Analysis"
-echo "=========================================="
-echo "Analyzing if MLP updates align with nullspace..."
-
-echo ""
-echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/mlp_nullspace_alignment" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/mlp_nullspace_alignment.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE"
-fi
-
-echo ""
-echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/mlp_nullspace_alignment" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/mlp_nullspace_alignment.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE"
-fi
-
-# ============================================
-# STEP 9: Row Space Projection Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 9: Row Space Projection Analysis"
-echo "=========================================="
-echo "Analyzing how activations project onto update directions..."
-
-echo ""
-echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/row_space_projection" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/row_space_projection_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
-
-echo ""
-echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/row_space_projection" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/row_space_projection_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
-
-# ============================================
-# STEP 10: Local Lipschitzness Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 10: Local Lipschitzness Analysis"
-echo "=========================================="
-echo "Analyzing local smoothness changes..."
-
-echo ""
-echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/lipschitzness_analysis" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/local_lipschitzness_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
-
-echo ""
-echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/lipschitzness_analysis" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/local_lipschitzness_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
-
-# ============================================
-# STEP 11: Linear Probe Analysis (per-model)
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 11: Linear Probe Analysis"
+echo "STEP 5: Linear Probe Analysis"
 echo "=========================================="
 echo "Training per-layer linear probes to locate forget-set knowledge..."
 echo "(Results stored per-model, not per-comparison)"
@@ -503,11 +291,11 @@ else
 fi
 
 # ============================================
-# STEP 12: Layer-wise WMDP Accuracy (per-model)
+# STEP 6: Layer-wise WMDP Accuracy (per-model)
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 12: Layer-wise WMDP Accuracy (Logit + Tuned Lens)"
+echo "STEP 6: Layer-wise WMDP Accuracy (Logit + Tuned Lens)"
 echo "=========================================="
 echo "Measuring WMDP-Bio MCQ accuracy at every transformer layer..."
 echo "(Results stored per-model, not per-comparison)"
@@ -555,6 +343,218 @@ for LENS in logit tuned; do
       --dtype "$ACTIVATION_DTYPE"
   fi
 done
+
+# ============================================
+# STEP 7: Null Space & Subspace Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 7: Null Space & Subspace Analysis"
+echo "=========================================="
+echo "Note: This is computationally intensive (SVD on 50 weight matrices)"
+
+echo ""
+echo "Analyzing Comparison 1..."
+if step_complete "${OUTROOT}/${COMP1}/null_space_analysis" "null_space_visualization.png"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/null_space_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$FILTERED" \
+    --num-samples 50
+fi
+
+echo ""
+echo "Analyzing Comparison 2..."
+if step_complete "${OUTROOT}/${COMP2}/null_space_analysis" "null_space_visualization.png"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/null_space_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$UNLEARNED" \
+    --num-samples 50
+fi
+
+# ============================================
+# STEP 8: Activation Separation Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 8: Activation Separation Analysis"
+echo "=========================================="
+echo "Analyzing how well forget/retain activations are separated..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+if step_complete "${OUTROOT}/${COMP1}/activation_separation" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/activation_separation_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$FILTERED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+echo ""
+echo "Analyzing Comparison 2..."
+if step_complete "${OUTROOT}/${COMP2}/activation_separation" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/activation_separation_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$UNLEARNED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+# ============================================
+# STEP 9: Activation Covariance Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 9: Activation Covariance Analysis"
+echo "=========================================="
+echo "Analyzing covariance spectrum changes..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+if step_complete "${OUTROOT}/${COMP1}/activation_covariance" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/activation_covariance_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$FILTERED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+echo ""
+echo "Analyzing Comparison 2..."
+if step_complete "${OUTROOT}/${COMP2}/activation_covariance" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/activation_covariance_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$UNLEARNED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+# ============================================
+# STEP 10: MLP Nullspace Alignment
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 10: MLP Nullspace Alignment Analysis"
+echo "=========================================="
+echo "Analyzing if MLP updates align with nullspace..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+if step_complete "${OUTROOT}/${COMP1}/mlp_nullspace_alignment" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/mlp_nullspace_alignment.py \
+    --model-a "$BASE" \
+    --model-b "$FILTERED" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE"
+fi
+
+echo ""
+echo "Analyzing Comparison 2..."
+if step_complete "${OUTROOT}/${COMP2}/mlp_nullspace_alignment" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/mlp_nullspace_alignment.py \
+    --model-a "$BASE" \
+    --model-b "$UNLEARNED" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE"
+fi
+
+# ============================================
+# STEP 11: Row Space Projection Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 11: Row Space Projection Analysis"
+echo "=========================================="
+echo "Analyzing how activations project onto update directions..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+if step_complete "${OUTROOT}/${COMP1}/row_space_projection" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/row_space_projection_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$FILTERED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+echo ""
+echo "Analyzing Comparison 2..."
+if step_complete "${OUTROOT}/${COMP2}/row_space_projection" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/row_space_projection_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$UNLEARNED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+# ============================================
+# STEP 12: Local Lipschitzness Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 12: Local Lipschitzness Analysis"
+echo "=========================================="
+echo "Analyzing local smoothness changes..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+if step_complete "${OUTROOT}/${COMP1}/lipschitzness_analysis" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/local_lipschitzness_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$FILTERED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+echo ""
+echo "Analyzing Comparison 2..."
+if step_complete "${OUTROOT}/${COMP2}/lipschitzness_analysis" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/local_lipschitzness_analysis.py \
+    --model-a "$BASE" \
+    --model-b "$UNLEARNED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
 
 # ============================================
 # COMPLETION
