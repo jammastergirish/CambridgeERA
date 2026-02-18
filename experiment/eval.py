@@ -4,264 +4,137 @@
 # dependencies = [
 #   "torch",
 #   "transformers",
-#   "numpy",
-#   "matplotlib",
-#   "datasets",
-#   "tqdm",
-#   "wandb",
-#   "pandas",
+#   "lm-eval",
 # ]
 # ///
 
 """
-MMLU evaluation — general-capabilities benchmark.
+Benchmark evaluation using EleutherAI's lm-evaluation-harness.
 
-Evaluates a model's multiple-choice accuracy on MMLU subjects.
-Used as Step 0 in the pipeline to quickly identify models that have
-catastrophically collapsed during unlearning.
+Runs multiple benchmarks in a single pass (shared model load):
+  - MMLU          general knowledge / capabilities
+  - WMDP          hazardous-knowledge proxy (bio, cyber, chem)
+  - HellaSwag     commonsense reasoning
+  - TruthfulQA    truthfulness (mc2)
+
+Output structure (e.g. --outdir outputs/model_name/evals):
+  outputs/model_name/evals/
+    summary.json          combined results for all tasks
+    mmlu.json             per-task result files
+    wmdp.json
+    hellaswag.json
+    truthfulqa_mc2.json
 
 Usage:
-  uv run experiment/eval_mmlu.py \
-    --model EleutherAI/deep-ignorance-unfiltered \
-    --outdir outputs/EleutherAI_deep-ignorance-unfiltered/mmlu
+  uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered \
+      --outdir outputs/base/evals
 
-  # Quick sanity check (20 questions)
-  uv run experiment/eval_mmlu.py \
-    --model EleutherAI/deep-ignorance-unfiltered \
-    --max-samples 20 --outdir /tmp/mmlu_test
+  # Subset of tasks
+  uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered \
+      --outdir /tmp/test --tasks mmlu wmdp
+
+  # Limit samples for a quick sanity check
+  uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered \
+      --outdir /tmp/test --limit 20
 """
 
 import argparse
 import json
 import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
-import torch.nn.functional as F
-from datasets import load_dataset
-from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-from utils import resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
+import lm_eval
 
 
-# ---- data -------------------------------------------------------------------
+DEFAULT_TASKS = ["mmlu", "wmdp", "hellaswag", "truthfulqa_mc2"]
 
-def load_mmlu(max_samples=None, seed=42):
-    """Load MMLU multiple-choice dataset from HuggingFace.
-
-    Returns list of dicts with keys: question, choices, answer (int index), subject.
-    Samples uniformly across all subjects.
-    """
-    dataset = load_dataset("cais/mmlu", "all", split="test")
-    items = []
-    for example in dataset:
-        question = example.get("question", "")
-        choices = example.get("choices", [])
-        answer = example.get("answer", 0)
-        subject = example.get("subject", "unknown")
-        if question and choices:
-            items.append({
-                "question": question,
-                "choices": choices,
-                "answer": int(answer),
-                "subject": subject,
-            })
-
-    # Shuffle and subsample
-    rng = np.random.RandomState(seed)
-    rng.shuffle(items)
-    if max_samples and max_samples < len(items):
-        items = items[:max_samples]
-    return items
-
-
-# ---- scoring ----------------------------------------------------------------
-
-@torch.no_grad()
-def score_multiple_choice(model, tokenizer, items, device, max_length=512):
-    """Evaluate multiple-choice accuracy at the final layer.
-
-    For each question, formats as 'Question: ... Answer: <choice>' for each
-    choice, computes average per-token log-prob of the choice continuation,
-    and picks the highest.
-
-    Returns:
-        list of per-item dicts with keys: subject, correct (bool), predicted, answer
-    """
-    results = []
-
-    for item in tqdm(items, desc="Scoring MMLU", unit="question"):
-        question = item["question"]
-        choices = item["choices"]
-        answer_idx = item["answer"]
-        subject = item["subject"]
-
-        choice_scores = []
-        for choice in choices:
-            text = f"{question} {choice}"
-            encoding = tokenizer(text, return_tensors="pt", max_length=max_length,
-                                 truncation=True).to(device)
-            input_ids = encoding["input_ids"]
-
-            outputs = model(input_ids=input_ids)
-            logits = outputs.logits
-
-            # Tokenize just the choice to find how many tokens it adds
-            choice_encoding = tokenizer(f" {choice}", add_special_tokens=False)
-            choice_len = len(choice_encoding["input_ids"])
-            if choice_len == 0:
-                choice_scores.append(float("-inf"))
-                continue
-
-            # Average log-prob over the choice tokens
-            seq_len = input_ids.size(1)
-            start = max(seq_len - choice_len - 1, 0)
-            end = seq_len - 1  # logits shifted by 1
-
-            log_probs = F.log_softmax(logits[0, start:end, :], dim=-1)
-            target_ids = input_ids[0, start + 1:end + 1]
-            token_log_probs = log_probs[torch.arange(log_probs.size(0)), target_ids]
-            avg_log_prob = token_log_probs.mean().item()
-            choice_scores.append(avg_log_prob)
-
-        if choice_scores:
-            predicted = int(np.argmax(choice_scores))
-            results.append({
-                "subject": subject,
-                "correct": predicted == answer_idx,
-                "predicted": predicted,
-                "answer": answer_idx,
-            })
-
-    return results
-
-
-# ---- main -------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="MMLU evaluation for general capabilities.")
-    parser.add_argument("--model", required=True, help="HuggingFace model ID")
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--dtype", default="auto")
-    parser.add_argument("--max-length", type=int, default=512)
-    parser.add_argument("--max-samples", type=int, default=1000,
-                        help="Max questions to evaluate (default: 1000, sampled across subjects)")
-    parser.add_argument("--outdir", required=True)
+    parser = argparse.ArgumentParser(description="Run lm-evaluation-harness benchmarks.")
+    parser.add_argument("--model", required=True, help="HuggingFace model ID or local path")
+    parser.add_argument("--device", default="auto", help="Device (auto/cuda/mps/cpu)")
+    parser.add_argument("--dtype", default="auto", help="Dtype (auto/float16/bfloat16/float32)")
+    parser.add_argument("--outdir", required=True, help="Directory to save results")
+    parser.add_argument("--tasks", nargs="+", default=DEFAULT_TASKS,
+                        help=f"Benchmarks to run (default: {' '.join(DEFAULT_TASKS)})")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Max samples per task (default: full benchmark)")
+    parser.add_argument("--batch-size", default="auto", help="Batch size (default: auto)")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
-    init_wandb("mmlu", args)
 
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    # Build model_args string for lm-eval
+    model_args = f"pretrained={args.model}"
+    if args.dtype != "auto":
+        model_args += f",dtype={args.dtype}"
 
-    device = resolve_device(args.device)
-    dtype = resolve_dtype(args.dtype, device)
+    # Resolve device
+    device = args.device
+    if device == "auto":
+        import torch
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
 
-    # ---- load data ----------------------------------------------------------
-    print(f"[mmlu] Loading MMLU dataset...")
-    items = load_mmlu(max_samples=args.max_samples, seed=args.seed)
-    subjects = sorted(set(item["subject"] for item in items))
-    print(f"[mmlu] {len(items)} questions across {len(subjects)} subjects")
+    print(f"[eval] Model:   {args.model}")
+    print(f"[eval] Device:  {device}")
+    print(f"[eval] Tasks:   {', '.join(args.tasks)}")
+    if args.limit:
+        print(f"[eval] Limit:   {args.limit} samples per task")
+    print()
 
-    # ---- load model ---------------------------------------------------------
-    print(f"[mmlu] Loading model: {args.model}")
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype).to(device)
-    model.eval()
-
-    # ---- score --------------------------------------------------------------
-    item_results = score_multiple_choice(model, tokenizer, items, device, args.max_length)
-
-    # ---- aggregate per subject ----------------------------------------------
-    subject_stats = {}
-    for result in item_results:
-        subject = result["subject"]
-        if subject not in subject_stats:
-            subject_stats[subject] = {"correct": 0, "total": 0}
-        subject_stats[subject]["total"] += 1
-        if result["correct"]:
-            subject_stats[subject]["correct"] += 1
-
-    overall_correct = sum(stats["correct"] for stats in subject_stats.values())
-    overall_total = sum(stats["total"] for stats in subject_stats.values())
-    overall_accuracy = overall_correct / overall_total if overall_total > 0 else 0.0
-
-    print(f"\n[mmlu] Overall accuracy: {overall_accuracy:.4f} ({overall_correct}/{overall_total})")
-
-    # ---- save CSV -----------------------------------------------------------
-    os.makedirs(args.outdir, exist_ok=True)
-
-    csv_rows = []
-    for subject_name in sorted(subject_stats.keys()):
-        stats = subject_stats[subject_name]
-        accuracy = stats["correct"] / stats["total"] if stats["total"] > 0 else 0.0
-        csv_rows.append({
-            "subject": subject_name,
-            "accuracy": round(accuracy, 4),
-            "correct": stats["correct"],
-            "total": stats["total"],
-        })
-
-    write_csv(
-        os.path.join(args.outdir, "mmlu_results.csv"),
-        csv_rows,
-        ["subject", "accuracy", "correct", "total"],
+    # Run all tasks in one call (model loaded once, tasks evaluated sequentially)
+    results = lm_eval.simple_evaluate(
+        model="hf",
+        model_args=model_args,
+        tasks=args.tasks,
+        batch_size=args.batch_size,
+        device=device,
+        limit=args.limit,
+        random_seed=args.seed,
+        numpy_random_seed=args.seed,
+        torch_random_seed=args.seed,
     )
 
-    # ---- summary JSON -------------------------------------------------------
-    summary = {
+    # Print summary table
+    print("\n" + "=" * 60)
+    print(f"{'Task':<30} {'Metric':<20} {'Value':>8}")
+    print("=" * 60)
+    for task_name, task_results in sorted(results["results"].items()):
+        for metric, value in sorted(task_results.items()):
+            if metric.endswith(",none") and not metric.startswith("alias"):
+                clean_metric = metric.replace(",none", "")
+                if isinstance(value, float):
+                    print(f"{task_name:<30} {clean_metric:<20} {value:>8.4f}")
+    print("=" * 60)
+
+    # Save results
+    os.makedirs(args.outdir, exist_ok=True)
+
+    # Per-task JSON files  (e.g. mmlu.json, wmdp.json)
+    for task_name, task_results in results["results"].items():
+        task_path = os.path.join(args.outdir, f"{task_name}.json")
+        with open(task_path, "w") as f:
+            json.dump({"model": args.model, "task": task_name, **task_results},
+                      f, indent=2, default=str)
+
+    # Combined summary
+    save_data = {
         "model": args.model,
-        "max_samples": args.max_samples,
-        "num_subjects": len(subject_stats),
-        "overall_accuracy": round(overall_accuracy, 4),
-        "overall_correct": overall_correct,
-        "overall_total": overall_total,
-        "per_subject": {
-            subject_name: round(stats["correct"] / stats["total"], 4) if stats["total"] > 0 else 0.0
-            for subject_name, stats in sorted(subject_stats.items())
-        },
+        "tasks": args.tasks,
+        "results": results["results"],
+        "configs": {k: str(v) for k, v in results.get("configs", {}).items()},
     }
-    with open(os.path.join(args.outdir, "summary.json"), "w") as f:
-        json.dump(summary, f, indent=2)
+    summary_path = os.path.join(args.outdir, "summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(save_data, f, indent=2, default=str)
 
-    # ---- plot ---------------------------------------------------------------
-    subject_names = [row["subject"] for row in csv_rows]
-    subject_accuracies = [row["accuracy"] for row in csv_rows]
-
-    fig, ax = plt.subplots(figsize=(max(10, len(subject_names) * 0.35), 6))
-
-    colors = ["#2ecc71" if acc >= 0.5 else "#e74c3c" if acc < 0.30 else "#f39c12"
-              for acc in subject_accuracies]
-    bars = ax.barh(range(len(subject_names)), subject_accuracies, color=colors, alpha=0.8)
-    ax.set_yticks(range(len(subject_names)))
-    ax.set_yticklabels(subject_names, fontsize=7)
-    ax.set_xlabel("Accuracy")
-    ax.set_xlim(0, 1.0)
-    ax.axvline(0.25, color="gray", ls=":", alpha=0.5, label="Random chance (0.25)")
-    ax.axvline(overall_accuracy, color="tab:blue", ls="--", alpha=0.7,
-               label=f"Overall ({overall_accuracy:.3f})")
-    ax.legend(fontsize=8, loc="lower right")
-    ax.set_title(f"MMLU Accuracy — {args.model}\n(n={overall_total})")
-    ax.grid(axis="x", alpha=0.3)
-    ax.invert_yaxis()
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(args.outdir, "mmlu_accuracy.png"), dpi=150)
-    plt.close()
-
-    print(f"\n[mmlu] ✓ Results saved to {args.outdir}")
-    log_csv_as_table(os.path.join(args.outdir, "mmlu_results.csv"), "mmlu_results")
-    log_plots(args.outdir, "mmlu")
-    finish_wandb()
+    print(f"\n[eval] ✓ Results saved to {args.outdir}/")
+    for task_name in sorted(results["results"]):
+        print(f"         {task_name}.json")
+    print(f"         summary.json")
 
 
 if __name__ == "__main__":

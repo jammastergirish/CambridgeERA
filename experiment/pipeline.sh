@@ -70,10 +70,10 @@ echo "Output root: $OUTROOT"
 echo ""
 
 # ============================================
-# STEP 0: MMLU Evaluation (per-model)
+# STEP 0: Benchmark Evaluation (per-model)
 # ============================================
 echo "=========================================="
-echo "STEP 0: MMLU Evaluation (General Capabilities)"
+echo "STEP 0: Benchmark Evaluation (MMLU, WMDP, HellaSwag, TruthfulQA)"
 echo "=========================================="
 echo "Quick sanity check — identifies collapsed models before expensive diagnostics."
 echo "(Results stored per-model, not per-comparison)"
@@ -81,40 +81,40 @@ echo "(Results stored per-model, not per-comparison)"
 echo ""
 echo "Model: $BASE"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_BASE}/mmlu" "summary.json"; then
+if step_complete "${OUTROOT}/${MODEL_BASE}/evals" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/eval_mmlu.py \
+  uv run experiment/eval.py \
     --model "$BASE" \
     --device "$ACTIVATION_DEVICE" \
     --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_BASE}/mmlu"
+    --outdir "${OUTROOT}/${MODEL_BASE}/evals"
 fi
 
 echo ""
 echo "Model: $FILTERED"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_FILTERED}/mmlu" "summary.json"; then
+if step_complete "${OUTROOT}/${MODEL_FILTERED}/evals" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/eval_mmlu.py \
+  uv run experiment/eval.py \
     --model "$FILTERED" \
     --device "$ACTIVATION_DEVICE" \
     --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_FILTERED}/mmlu"
+    --outdir "${OUTROOT}/${MODEL_FILTERED}/evals"
 fi
 
 echo ""
 echo "Model: $UNLEARNED"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/mmlu" "summary.json"; then
+if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/evals" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/eval_mmlu.py \
+  uv run experiment/eval.py \
     --model "$UNLEARNED" \
     --device "$ACTIVATION_DEVICE" \
     --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/mmlu"
+    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/evals"
 fi
 
 # ============================================
@@ -609,6 +609,7 @@ echo "    row_space_projection/  projection metrics + plots"
 echo "    lipschitzness/         Lipschitz estimates + plots"
 echo ""
 echo "  <model>/"
+echo "    evals/                 summary.json (MMLU, WMDP, HellaSwag, TruthfulQA)"
 echo "    linear_probes/         probe_results.csv, summary.json + plot"
 echo "    wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot"
 echo "    wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot"
