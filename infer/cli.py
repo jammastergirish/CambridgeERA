@@ -10,8 +10,7 @@
 Quick inference on any HuggingFace model.
 
 Usage:
-  uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is the capital of France?"
-  uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --interactive
+  uv run infer/cli.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is the capital of France?"
 """
 
 import argparse
@@ -63,35 +62,14 @@ def generate(model, tokenizer, prompt: str, device: str, max_tokens: int = 200) 
 def main():
     parser = argparse.ArgumentParser(description="Run inference on a HuggingFace model")
     parser.add_argument("--model", required=True, help="HuggingFace model ID")
-    parser.add_argument("--prompt", default=None, help="Prompt to run")
-    parser.add_argument("--interactive", action="store_true", help="Interactive mode")
+    parser.add_argument("--prompt", required=True, help="Prompt to run")
     parser.add_argument("--max-tokens", type=int, default=200)
     args = parser.parse_args()
 
-    if not args.prompt and not args.interactive:
-        print("Error: provide --prompt or --interactive", file=sys.stderr)
-        sys.exit(1)
-
     model, tokenizer, device = load_model(args.model)
 
-    if args.prompt:
-        print(f"\n> {args.prompt}\n")
-        print(generate(model, tokenizer, args.prompt, device, args.max_tokens))
-        return
-
-    # Interactive mode
-    print("\nInteractive mode — type 'quit' to exit\n")
-    while True:
-        try:
-            prompt = input(">>> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nBye!")
-            break
-        if not prompt or prompt.lower() in ("quit", "exit", "q"):
-            break
-        print()
-        print(generate(model, tokenizer, prompt, device, args.max_tokens))
-        print()
+    print(f"\n> {args.prompt}\n")
+    print(generate(model, tokenizer, args.prompt, device, args.max_tokens))
 
 
 if __name__ == "__main__":

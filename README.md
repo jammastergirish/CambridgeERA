@@ -32,7 +32,7 @@ See [Unlearning](#unlearning) for available methods and tuning guidance.
 
 ### Inference
 
-This is fairly simple and is handled in `infer.py`. See [Inference](#inference) for usage examples.
+This is handled in the `infer/` folder with both command-line and web UI options. See [Inference](#inference) for usage examples.
 
 ## Style
 
@@ -549,17 +549,23 @@ All methods use **full-parameter training** with AdamW + cosine annealing. Share
 
 ## Inference
 
-Run prompts against any HuggingFace model:
+Two inference options are available:
+
+### Command Line Interface
 
 ```bash
-# Single prompt
-uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is biotin?"
-
-# Interactive mode (keep prompting)
-uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --interactive
+# Single prompt inference
+uv run infer/cli.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is biotin?"
 ```
 
-Use `--max-tokens` to control output length (default 200). Device and dtype are auto-detected.
+Add `--max-tokens` to control output length (default 200).
+
+### Streamlit Web UI
+
+```bash
+# Launch interactive web interface
+uv run infer/run.py
+```
 
 ---
 
