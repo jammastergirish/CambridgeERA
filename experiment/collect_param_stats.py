@@ -81,27 +81,27 @@ class SmartLoader:
 
     def _scan_structure(self):
         # 1. Check for safetensors index
-        sf_index = os.path.join(self.model_path, "model.safetensors.index.json")
-        sf_single = os.path.join(self.model_path, "model.safetensors")
-        pt_index = os.path.join(self.model_path, "pytorch_model.bin.index.json")
-        pt_single = os.path.join(self.model_path, "pytorch_model.bin")
+        safetensors_index = os.path.join(self.model_path, "model.safetensors.index.json")
+        safetensors_file = os.path.join(self.model_path, "model.safetensors")
+        pytorch_index = os.path.join(self.model_path, "pytorch_model.bin.index.json")
+        pytorch_file = os.path.join(self.model_path, "pytorch_model.bin")
 
-        if os.path.exists(sf_index):
+        if os.path.exists(safetensors_index):
             self.is_safetensors = True
-            with open(sf_index, "r") as f:
+            with open(safetensors_index, "r") as f:
                 data = json.load(f)
             self.index = data["weight_map"]
-        elif os.path.exists(sf_single):
+        elif os.path.exists(safetensors_file):
             self.is_safetensors = True
-            self.single_file = sf_single
-        elif os.path.exists(pt_index):
+            self.single_file = safetensors_file
+        elif os.path.exists(pytorch_index):
             self.is_safetensors = False
-            with open(pt_index, "r") as f:
+            with open(pytorch_index, "r") as f:
                 data = json.load(f)
             self.index = data["weight_map"]
-        elif os.path.exists(pt_single):
+        elif os.path.exists(pytorch_file):
             self.is_safetensors = False
-            self.single_file = pt_single
+            self.single_file = pytorch_file
         else:
             # Fallback: check if user passed a direct file path instead of dir
             if os.path.isfile(self.model_path):
@@ -123,12 +123,6 @@ class SmartLoader:
             with safe_open(self.single_file, framework="pt", device="cpu") as f:
                 return set(f.keys())
         else:
-            # Torch bin: heavy, but we have to load to list keys if we essentially want to know them
-            # Optimization: Just load 'map_location="meta"'? No, torch.load doesn't support that well for full files.
-            # We'll just load it once to get keys and cache it if it fits, or trust usage.
-            # BUT for high-mem safety, let's just claim strictly needed params.
-            # Actually, `torch.load` of a 10GB file might kill us merely to list keys.
-            # Let's hope single-file models aren't huge (usually <10GB).
             print(f"Warning: Loading full checkpoint {self.single_file} to list keys (Legacy PT format).")
             self.current_shard_data = torch.load(self.single_file, map_location="cpu", weights_only=True)
             self.current_shard_path = self.single_file
@@ -173,19 +167,19 @@ class SmartLoader:
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model-a", required=True, help="Baseline / before model path")
-    ap.add_argument("--model-b", required=True, help="After model path")
-    ap.add_argument("--device", default="auto")
-    ap.add_argument("--dtype", default="auto")
-    ap.add_argument("--sr-iters", type=int, default=5)
-    ap.add_argument("--empirical-rank", action="store_true", default=False,
-                     help="Compute empirical rank via full SVD (slow, off by default)")
-    ap.add_argument("--empirical-threshold", type=float, default=0.99,
-                     help="Threshold for empirical rank (fraction of variance to capture, default: 0.99)")
-    ap.add_argument("--outdir", default="outputs/param_stats")
-    ap.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-a", required=True, help="Baseline / before model path")
+    parser.add_argument("--model-b", required=True, help="After model path")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--dtype", default="auto")
+    parser.add_argument("--sr-iters", type=int, default=5)
+    parser.add_argument("--empirical-rank", action="store_true", default=False,
+                         help="Compute empirical rank via full SVD (slow, off by default)")
+    parser.add_argument("--empirical-threshold", type=float, default=0.99,
+                         help="Threshold for empirical rank (fraction of variance to capture, default: 0.99)")
+    parser.add_argument("--outdir", default="outputs/param_stats")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
+    args = parser.parse_args()
     init_wandb("collect_param_stats", args)
 
     # Set seed for reproducibility (vital for Power Iteration stability)
@@ -219,9 +213,9 @@ def main():
     
     linear_names = []
     # Pre-scan to filter potential linear names
-    for n in all_names:
-        if n.endswith(".weight"):
-            linear_names.append(n)
+    for name in all_names:
+        if name.endswith(".weight"):
+            linear_names.append(name)
 
     rows = []
     per_layer = {}
@@ -249,6 +243,7 @@ def main():
         layer = extract_layer(name)
         group = classify_granular(name)
 
+        # Here's the key part of this file!
         dW_fro = float(dW.float().norm().item())
         W_fro = float(Wa.float().norm().item())
         dW_fro_rel = dW_fro / W_fro if W_fro > 0 else 0.0
@@ -286,15 +281,15 @@ def main():
                          "max_dW_spec": 0.0, "max_W_spec": 0.0, "count": 0}
             if args.empirical_rank:
                 defaults["sum_dW_er"] = 0.0
-            st = per_layer.setdefault(key, defaults)
-            st["sum_dW_fro_sq"] += dW_fro * dW_fro
-            st["sum_W_fro_sq"] += W_fro * W_fro
-            st["sum_dW_sr"] += dW_sr
-            st["max_dW_spec"] = max(st["max_dW_spec"], dW_spec)
-            st["max_W_spec"] = max(st["max_W_spec"], W_spec)
+            stats = per_layer.setdefault(key, defaults)
+            stats["sum_dW_fro_sq"] += dW_fro * dW_fro
+            stats["sum_W_fro_sq"] += W_fro * W_fro
+            stats["sum_dW_sr"] += dW_sr
+            stats["max_dW_spec"] = max(stats["max_dW_spec"], dW_spec)
+            stats["max_W_spec"] = max(stats["max_W_spec"], W_spec)
             if args.empirical_rank:
-                st["sum_dW_er"] += dW_er
-            st["count"] += 1
+                stats["sum_dW_er"] += dW_er
+            stats["count"] += 1
             
         # Explicit delete to aid GC in loop
         del Wa
@@ -317,11 +312,11 @@ def main():
     )
 
     layer_rows = []
-    for (layer, group), st in sorted(per_layer.items(), key=lambda x: (x[0][0], x[0][1])):
-        dW_fro_layer = float(np.sqrt(st["sum_dW_fro_sq"]))
-        W_fro_layer = float(np.sqrt(st["sum_W_fro_sq"]))
-        max_dW_spec = st["max_dW_spec"]
-        max_W_spec = st["max_W_spec"]
+    for (layer, group), stats in sorted(per_layer.items(), key=lambda x: (x[0][0], x[0][1])):
+        dW_fro_layer = float(np.sqrt(stats["sum_dW_fro_sq"]))
+        W_fro_layer = float(np.sqrt(stats["sum_W_fro_sq"]))
+        max_dW_spec = stats["max_dW_spec"]
+        max_W_spec = stats["max_W_spec"]
         row = {
             "layer": layer,
             "group": group,
@@ -331,11 +326,11 @@ def main():
             "max_dW_spectral": max_dW_spec,
             "max_W_spectral": max_W_spec,
             "max_dW_spectral_rel": max_dW_spec / max_W_spec if max_W_spec > 0 else 0.0,
-            "mean_dW_stable_rank": st["sum_dW_sr"] / max(st["count"], 1),
-            "count_mats": st["count"],
+            "mean_dW_stable_rank": stats["sum_dW_sr"] / max(stats["count"], 1),
+            "count_mats": stats["count"],
         }
         if args.empirical_rank:
-            row["mean_dW_empirical_rank"] = st["sum_dW_er"] / max(st["count"], 1)
+            row["mean_dW_empirical_rank"] = stats["sum_dW_er"] / max(stats["count"], 1)
         layer_rows.append(row)
 
     per_layer_fields = ["layer", "group",
