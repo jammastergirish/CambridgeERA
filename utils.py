@@ -2,9 +2,11 @@
 Shared utilities for model_diffs analysis scripts.
 """
 import csv
+import gc
+import json
 import os
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import torch
 
@@ -369,3 +371,116 @@ def finish_wandb():
             wandb.finish()
     except Exception:
         pass
+
+
+# --- Model weight streaming ---
+class SmartLoader:
+    """Stream model weights one shard at a time from safetensors/bin files.
+
+    We deliberately avoid AutoModelForCausalLM here because this script
+    compares TWO models weight-by-weight.  Loading both full models would
+    require ~2× model size in memory.  SmartLoader instead loads one shard
+    file at a time, extracts individual weight tensors, computes stats, and
+    frees them — so peak memory is roughly 2× one shard rather than 2× one
+    full model.
+    """
+
+    def __init__(self, model_path: str):
+        # Handle HF Hub IDs: If path doesn't exist locally, try downloading
+        if not os.path.exists(model_path):
+            print(f"'{model_path}' not found locally. Attempting HF Hub download...")
+            try:
+                from huggingface_hub import snapshot_download
+                model_path = snapshot_download(
+                    repo_id=model_path,
+                    allow_patterns=["*.safetensors", "*.bin", "*.json"],
+                    ignore_patterns=["*.msgpack", "*.h5"]
+                )
+                print(f"Downloaded/Found at: {model_path}")
+            except Exception:
+                pass
+
+        self.model_path = model_path
+        self.index = {}
+        self.is_safetensors = False
+        self.single_file = None
+        self._scan_structure()
+
+        # Cache one shard at a time
+        self.current_shard_path = None
+        self.current_shard_data = {}
+
+    def _scan_structure(self):
+        safetensors_index = os.path.join(self.model_path, "model.safetensors.index.json")
+        safetensors_file = os.path.join(self.model_path, "model.safetensors")
+        pytorch_index = os.path.join(self.model_path, "pytorch_model.bin.index.json")
+        pytorch_file = os.path.join(self.model_path, "pytorch_model.bin")
+
+        if os.path.exists(safetensors_index):
+            self.is_safetensors = True
+            with open(safetensors_index, "r") as f:
+                data = json.load(f)
+            self.index = data["weight_map"]
+        elif os.path.exists(safetensors_file):
+            self.is_safetensors = True
+            self.single_file = safetensors_file
+        elif os.path.exists(pytorch_index):
+            self.is_safetensors = False
+            with open(pytorch_index, "r") as f:
+                data = json.load(f)
+            self.index = data["weight_map"]
+        elif os.path.exists(pytorch_file):
+            self.is_safetensors = False
+            self.single_file = pytorch_file
+        else:
+            if os.path.isfile(self.model_path):
+                if self.model_path.endswith(".safetensors"):
+                    self.is_safetensors = True
+                    self.single_file = self.model_path
+                else:
+                    self.is_safetensors = False
+                    self.single_file = self.model_path
+            else:
+                raise FileNotFoundError(f"Could not find model weights in {self.model_path}")
+
+    def get_all_param_names(self) -> Set[str]:
+        if self.index:
+            return set(self.index.keys())
+
+        # Single file case: we must peek
+        if self.is_safetensors:
+            from safetensors import safe_open
+            with safe_open(self.single_file, framework="pt", device="cpu") as f:
+                return set(f.keys())
+        else:
+            print(f"Warning: Loading full checkpoint {self.single_file} to list keys (Legacy PT format).")
+            self.current_shard_data = torch.load(self.single_file, map_location="cpu", weights_only=True)
+            self.current_shard_path = self.single_file
+            return set(self.current_shard_data.keys())
+
+    def get_param(self, name: str, device: str, dtype: torch.dtype) -> Optional[torch.Tensor]:
+        if self.single_file:
+            path = self.single_file
+        else:
+            if name not in self.index:
+                return None
+            filename = self.index[name]
+            path = os.path.join(self.model_path, filename)
+
+        if self.current_shard_path != path:
+            del self.current_shard_data
+            gc.collect()
+
+            self.current_shard_path = path
+            if self.is_safetensors:
+                from safetensors.torch import load_file as load_safetensors_file
+                self.current_shard_data = load_safetensors_file(path, device="cpu")
+            else:
+                self.current_shard_data = torch.load(path, map_location="cpu", weights_only=True)
+
+        if name not in self.current_shard_data:
+            return None
+
+        tensor = self.current_shard_data[name]
+        tensor = tensor.to(dtype=dtype, device=device)
+        return tensor

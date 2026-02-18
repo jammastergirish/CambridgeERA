@@ -28,8 +28,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import json
 
-from utils import resolve_device, resolve_dtype, write_csv, extract_layer, classify_granular, init_wandb, log_csv_as_table, log_plots, finish_wandb
-from param_stats import SmartLoader
+from utils import resolve_device, resolve_dtype, write_csv, extract_layer, classify_granular, init_wandb, log_csv_as_table, log_plots, finish_wandb, SmartLoader
 
 
 def compute_nullspace_alignment(W_orig, dW, rank_threshold=0.99):
