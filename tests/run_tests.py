@@ -13,6 +13,7 @@
 #   "huggingface_hub",
 #   "wandb",
 #   "pandas",
+#   "scikit-learn",
 # ]
 # ///
 

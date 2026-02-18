@@ -20,6 +20,8 @@ We essentially have three workflows in this repository:
 
 This is governed by `experiment/pipeline.sh`, which runs experiments on one or more models. We should ensure all experiments run via this file, with the general parameters already in place, following its outputs, etc.
 
+We have steps, each of which corresponds to a file in the `experiment` folder.
+
 See [Experimental Pipeline](#experimental-pipeline) for details.
 
 ### Unlearning
