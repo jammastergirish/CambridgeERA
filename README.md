@@ -12,6 +12,32 @@ The project will expand across a broader set of unlearning algorithms (e.g., RMU
 
 ---
 
+## Quick Overview
+
+We essentially have three workflows in this repository:
+
+### Experiment
+
+This is governed by `experiment/pipeline.sh`, which runs experiments on one or more models. We should ensure all experiments run via this file, with the general parameters already in place, following its outputs, etc.
+
+See [Experimental Pipeline](#experimental-pipeline) for details.
+
+### Unlearning
+
+This is governed by `unlearn/run_unlearn.sh`, which creates a new unlearned model from scratch. We should similarly ensure all unlearning runs use this workflow. 
+
+See [Unlearning](#unlearning) for available methods and tuning guidance.
+
+### Inference
+
+This is fairly simple and is handled in `infer.py`. See [Inference](#inference) for usage examples.
+
+## Style
+
+Let's keep code clean, DRY, not littered with acronyms, clearly commented, etc. This is a learning resource for us as much as an experimental workflow. Prefer descriptive variable and function names (`dataset`, `example`, `question`) over abbreviations (`ds`, `ex`, `q`), for example.
+
+---
+
 ## Datasets
 
 `uv run create_datasets.py` creates two text datasets that serve in training for unlearning, and as *probes* for activation-level analyses:

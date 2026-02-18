@@ -58,16 +58,16 @@ def load_mmlu(max_samples=None, seed=42):
     Returns list of dicts with keys: question, choices, answer (int index), subject.
     Samples uniformly across all subjects.
     """
-    ds = load_dataset("cais/mmlu", "all", split="test")
+    dataset = load_dataset("cais/mmlu", "all", split="test")
     items = []
-    for ex in ds:
-        q = ex.get("question", "")
-        choices = ex.get("choices", [])
-        answer = ex.get("answer", 0)
-        subject = ex.get("subject", "unknown")
-        if q and choices:
+    for example in dataset:
+        question = example.get("question", "")
+        choices = example.get("choices", [])
+        answer = example.get("answer", 0)
+        subject = example.get("subject", "unknown")
+        if question and choices:
             items.append({
-                "question": q,
+                "question": question,
                 "choices": choices,
                 "answer": int(answer),
                 "subject": subject,
@@ -84,8 +84,8 @@ def load_mmlu(max_samples=None, seed=42):
 # ---- scoring ----------------------------------------------------------------
 
 @torch.no_grad()
-def score_mcq(model, tokenizer, items, device, max_length=512):
-    """Evaluate MCQ accuracy at the final layer.
+def score_multiple_choice(model, tokenizer, items, device, max_length=512):
+    """Evaluate multiple-choice accuracy at the final layer.
 
     For each question, formats as 'Question: ... Answer: <choice>' for each
     choice, computes average per-token log-prob of the choice continuation,
@@ -96,25 +96,25 @@ def score_mcq(model, tokenizer, items, device, max_length=512):
     """
     results = []
 
-    for item in tqdm(items, desc="Scoring MMLU", unit="q"):
-        q = item["question"]
+    for item in tqdm(items, desc="Scoring MMLU", unit="question"):
+        question = item["question"]
         choices = item["choices"]
         answer_idx = item["answer"]
         subject = item["subject"]
 
         choice_scores = []
         for choice in choices:
-            text = f"{q} {choice}"
-            enc = tokenizer(text, return_tensors="pt", max_length=max_length,
-                            truncation=True).to(device)
-            input_ids = enc["input_ids"]
+            text = f"{question} {choice}"
+            encoding = tokenizer(text, return_tensors="pt", max_length=max_length,
+                                 truncation=True).to(device)
+            input_ids = encoding["input_ids"]
 
             outputs = model(input_ids=input_ids)
             logits = outputs.logits
 
             # Tokenize just the choice to find how many tokens it adds
-            choice_enc = tokenizer(f" {choice}", add_special_tokens=False)
-            choice_len = len(choice_enc["input_ids"])
+            choice_encoding = tokenizer(f" {choice}", add_special_tokens=False)
+            choice_len = len(choice_encoding["input_ids"])
             if choice_len == 0:
                 choice_scores.append(float("-inf"))
                 continue
@@ -126,9 +126,9 @@ def score_mcq(model, tokenizer, items, device, max_length=512):
 
             log_probs = F.log_softmax(logits[0, start:end, :], dim=-1)
             target_ids = input_ids[0, start + 1:end + 1]
-            token_lps = log_probs[torch.arange(log_probs.size(0)), target_ids]
-            avg_lp = token_lps.mean().item()
-            choice_scores.append(avg_lp)
+            token_log_probs = log_probs[torch.arange(log_probs.size(0)), target_ids]
+            avg_log_prob = token_log_probs.mean().item()
+            choice_scores.append(avg_log_prob)
 
         if choice_scores:
             predicted = int(np.argmax(choice_scores))
@@ -145,16 +145,16 @@ def score_mcq(model, tokenizer, items, device, max_length=512):
 # ---- main -------------------------------------------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(description="MMLU evaluation for general capabilities.")
-    ap.add_argument("--model", required=True, help="HuggingFace model ID")
-    ap.add_argument("--device", default="auto")
-    ap.add_argument("--dtype", default="auto")
-    ap.add_argument("--max-length", type=int, default=512)
-    ap.add_argument("--max-samples", type=int, default=1000,
-                    help="Max questions to evaluate (default: 1000, sampled across subjects)")
-    ap.add_argument("--outdir", required=True)
-    ap.add_argument("--seed", type=int, default=42)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="MMLU evaluation for general capabilities.")
+    parser.add_argument("--model", required=True, help="HuggingFace model ID")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--dtype", default="auto")
+    parser.add_argument("--max-length", type=int, default=512)
+    parser.add_argument("--max-samples", type=int, default=1000,
+                        help="Max questions to evaluate (default: 1000, sampled across subjects)")
+    parser.add_argument("--outdir", required=True)
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
     init_wandb("mmlu", args)
 
     np.random.seed(args.seed)
@@ -166,7 +166,7 @@ def main():
     # ---- load data ----------------------------------------------------------
     print(f"[mmlu] Loading MMLU dataset...")
     items = load_mmlu(max_samples=args.max_samples, seed=args.seed)
-    subjects = sorted(set(it["subject"] for it in items))
+    subjects = sorted(set(item["subject"] for item in items))
     print(f"[mmlu] {len(items)} questions across {len(subjects)} subjects")
 
     # ---- load model ---------------------------------------------------------
@@ -179,20 +179,20 @@ def main():
     model.eval()
 
     # ---- score --------------------------------------------------------------
-    item_results = score_mcq(model, tokenizer, items, device, args.max_length)
+    item_results = score_multiple_choice(model, tokenizer, items, device, args.max_length)
 
     # ---- aggregate per subject ----------------------------------------------
     subject_stats = {}
-    for r in item_results:
-        s = r["subject"]
-        if s not in subject_stats:
-            subject_stats[s] = {"correct": 0, "total": 0}
-        subject_stats[s]["total"] += 1
-        if r["correct"]:
-            subject_stats[s]["correct"] += 1
+    for result in item_results:
+        subject = result["subject"]
+        if subject not in subject_stats:
+            subject_stats[subject] = {"correct": 0, "total": 0}
+        subject_stats[subject]["total"] += 1
+        if result["correct"]:
+            subject_stats[subject]["correct"] += 1
 
-    overall_correct = sum(s["correct"] for s in subject_stats.values())
-    overall_total = sum(s["total"] for s in subject_stats.values())
+    overall_correct = sum(stats["correct"] for stats in subject_stats.values())
+    overall_total = sum(stats["total"] for stats in subject_stats.values())
     overall_accuracy = overall_correct / overall_total if overall_total > 0 else 0.0
 
     print(f"\n[mmlu] Overall accuracy: {overall_accuracy:.4f} ({overall_correct}/{overall_total})")
@@ -201,14 +201,14 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     csv_rows = []
-    for subj in sorted(subject_stats.keys()):
-        st = subject_stats[subj]
-        acc = st["correct"] / st["total"] if st["total"] > 0 else 0.0
+    for subject_name in sorted(subject_stats.keys()):
+        stats = subject_stats[subject_name]
+        accuracy = stats["correct"] / stats["total"] if stats["total"] > 0 else 0.0
         csv_rows.append({
-            "subject": subj,
-            "accuracy": round(acc, 4),
-            "correct": st["correct"],
-            "total": st["total"],
+            "subject": subject_name,
+            "accuracy": round(accuracy, 4),
+            "correct": stats["correct"],
+            "total": stats["total"],
         })
 
     write_csv(
@@ -226,24 +226,24 @@ def main():
         "overall_correct": overall_correct,
         "overall_total": overall_total,
         "per_subject": {
-            subj: round(st["correct"] / st["total"], 4, ) if st["total"] > 0 else 0.0
-            for subj, st in sorted(subject_stats.items())
+            subject_name: round(stats["correct"] / stats["total"], 4) if stats["total"] > 0 else 0.0
+            for subject_name, stats in sorted(subject_stats.items())
         },
     }
     with open(os.path.join(args.outdir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
 
     # ---- plot ---------------------------------------------------------------
-    subj_names = [r["subject"] for r in csv_rows]
-    subj_accs = [r["accuracy"] for r in csv_rows]
+    subject_names = [row["subject"] for row in csv_rows]
+    subject_accuracies = [row["accuracy"] for row in csv_rows]
 
-    fig, ax = plt.subplots(figsize=(max(10, len(subj_names) * 0.35), 6))
+    fig, ax = plt.subplots(figsize=(max(10, len(subject_names) * 0.35), 6))
 
-    colors = ["#2ecc71" if a >= 0.5 else "#e74c3c" if a < 0.30 else "#f39c12"
-              for a in subj_accs]
-    bars = ax.barh(range(len(subj_names)), subj_accs, color=colors, alpha=0.8)
-    ax.set_yticks(range(len(subj_names)))
-    ax.set_yticklabels(subj_names, fontsize=7)
+    colors = ["#2ecc71" if acc >= 0.5 else "#e74c3c" if acc < 0.30 else "#f39c12"
+              for acc in subject_accuracies]
+    bars = ax.barh(range(len(subject_names)), subject_accuracies, color=colors, alpha=0.8)
+    ax.set_yticks(range(len(subject_names)))
+    ax.set_yticklabels(subject_names, fontsize=7)
     ax.set_xlabel("Accuracy")
     ax.set_xlim(0, 1.0)
     ax.axvline(0.25, color="gray", ls=":", alpha=0.5, label="Random chance (0.25)")
