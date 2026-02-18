@@ -27,6 +27,7 @@ import torch
 from tqdm import tqdm
 
 from utils import (
+    comparison_outdir,
     SmartLoader,
     resolve_device,
     resolve_dtype,
@@ -150,13 +151,20 @@ def main():
                          help="Compute empirical rank via full SVD (slow, off by default)")
     parser.add_argument("--empirical-threshold", type=float, default=0.99,
                          help="Threshold for empirical rank (fraction of variance to capture, default: 0.99)")
-    parser.add_argument("--outdir", default="outputs/param_stats")
+    parser.add_argument("--outdir", default=None,
+                         help="Output dir (default: auto-derived from model names)")
     parser.add_argument("--plot-outdir", default=None,
-                         help="If set, generate plots and save to this directory")
+                         help="Plot dir (default: auto-derived from model names)")
     parser.add_argument("--title", default=None,
-                         help="Title for generated plots (used with --plot-outdir)")
+                         help="Title for generated plots")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
     args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="param_stats")
+    if args.plot_outdir is None:
+        args.plot_outdir = comparison_outdir(args.model_a, args.model_b, suffix="param_plots")
+
     init_wandb("param_stats", args)
 
     # Set seed for reproducibility (vital for Power Iteration stability)

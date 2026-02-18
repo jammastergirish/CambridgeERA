@@ -38,6 +38,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from utils import (
+    comparison_outdir,
     resolve_device,
     resolve_dtype,
     write_csv,
@@ -300,10 +301,15 @@ def main():
                         help="Max texts per split to process (default: 200)")
     parser.add_argument("--layers-to-analyze", type=str, default=None,
                         help="Comma-separated layer indices (default: every 4th layer)")
-    parser.add_argument("--outdir", default="outputs/row_space_projection")
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: auto-derived from model names)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="row_space_projection")
+
     init_wandb("row_space_projection", args)
 
     torch.manual_seed(args.seed)

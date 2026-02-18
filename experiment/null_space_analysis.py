@@ -39,6 +39,7 @@ import torch
 from tqdm import tqdm
 
 from utils import (
+    comparison_outdir,
     resolve_device,
     resolve_dtype,
     write_csv,
@@ -277,11 +278,16 @@ def main():
     parser.add_argument("--model-b", required=True, help="Fine-tuned model path")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="auto")
-    parser.add_argument("--outdir", default="outputs/null_space_analysis")
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: auto-derived from model names)")
     parser.add_argument("--num-samples", type=int, default=50, help="Number of weight matrices to sample")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="null_space_analysis")
+
     init_wandb("null_space_analysis", args)
 
     torch.manual_seed(args.seed)

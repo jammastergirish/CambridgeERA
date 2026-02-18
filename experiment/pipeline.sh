@@ -87,8 +87,7 @@ else
   uv run experiment/eval.py \
     --model "$BASE" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_BASE}/evals"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -100,8 +99,7 @@ else
   uv run experiment/eval.py \
     --model "$FILTERED" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_FILTERED}/evals"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -113,8 +111,7 @@ else
   uv run experiment/eval.py \
     --model "$UNLEARNED" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/evals"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
@@ -135,8 +132,6 @@ else
     --model-b "$FILTERED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/param_stats" \
-    --plot-outdir "${OUTROOT}/${COMP1}/param_plots" \
     --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-e2e-strong-filter"
 fi
 
@@ -151,8 +146,6 @@ else
     --model-b "$UNLEARNED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/param_stats" \
-    --plot-outdir "${OUTROOT}/${COMP2}/param_plots" \
     --title "$BASE → $UNLEARNED"
 fi
 
@@ -193,8 +186,6 @@ else
       --retain-text "$RETAIN" \
       --device "$ACTIVATION_DEVICE" \
       --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${COMP1}/activation_stats" \
-      --plot-outdir "${OUTROOT}/${COMP1}/activation_plots" \
       --title "E2E Strong Filter: Activation Norms"
   fi
 
@@ -211,8 +202,6 @@ else
       --retain-text "$RETAIN" \
       --device "$ACTIVATION_DEVICE" \
       --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${COMP2}/activation_stats" \
-      --plot-outdir "${OUTROOT}/${COMP2}/activation_plots" \
       --title "${UNLEARNED##*/}: Activation Norms"
   fi
 fi
@@ -266,7 +255,6 @@ else
   uv run experiment/null_space_analysis.py \
     --model-a "$BASE" \
     --model-b "$FILTERED" \
-    --outdir "${OUTROOT}/${COMP1}/null_space_analysis" \
     --num-samples 50
 fi
 
@@ -278,7 +266,6 @@ else
   uv run experiment/null_space_analysis.py \
     --model-a "$BASE" \
     --model-b "$UNLEARNED" \
-    --outdir "${OUTROOT}/${COMP2}/null_space_analysis" \
     --num-samples 50
 fi
 
@@ -302,8 +289,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/activation_separation"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -317,8 +303,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/activation_separation"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
@@ -341,8 +326,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/activation_covariance"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -356,8 +340,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/activation_covariance"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
@@ -371,28 +354,26 @@ echo "Analyzing if MLP updates align with nullspace..."
 
 echo ""
 echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/mlp_nullspace" "summary.json"; then
+if step_complete "${OUTROOT}/${COMP1}/mlp_nullspace_alignment" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/mlp_nullspace_alignment.py \
     --model-a "$BASE" \
     --model-b "$FILTERED" \
     --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/mlp_nullspace"
+    --dtype "$PARAM_DTYPE"
 fi
 
 echo ""
 echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/mlp_nullspace" "summary.json"; then
+if step_complete "${OUTROOT}/${COMP2}/mlp_nullspace_alignment" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/mlp_nullspace_alignment.py \
     --model-a "$BASE" \
     --model-b "$UNLEARNED" \
     --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/mlp_nullspace"
+    --dtype "$PARAM_DTYPE"
 fi
 
 # ============================================
@@ -415,8 +396,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/row_space_projection"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -430,8 +410,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/row_space_projection"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
@@ -445,7 +424,7 @@ echo "Analyzing local smoothness changes..."
 
 echo ""
 echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/lipschitzness" "summary.json"; then
+if step_complete "${OUTROOT}/${COMP1}/lipschitzness_analysis" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/local_lipschitzness_analysis.py \
@@ -454,13 +433,12 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/lipschitzness"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
 echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/lipschitzness" "summary.json"; then
+if step_complete "${OUTROOT}/${COMP2}/lipschitzness_analysis" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/local_lipschitzness_analysis.py \
@@ -469,8 +447,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/lipschitzness"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
@@ -494,8 +471,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_BASE}/linear_probes"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -509,8 +485,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_FILTERED}/linear_probes"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -524,8 +499,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/linear_probes"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
@@ -552,8 +526,7 @@ for LENS in logit tuned; do
       --model "$BASE" \
       --lens "$LENS" \
       --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens"
+      --dtype "$ACTIVATION_DTYPE"
   fi
 
   echo ""
@@ -566,8 +539,7 @@ for LENS in logit tuned; do
       --model "$FILTERED" \
       --lens "$LENS" \
       --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens"
+      --dtype "$ACTIVATION_DTYPE"
   fi
 
   echo ""
@@ -580,8 +552,7 @@ for LENS in logit tuned; do
       --model "$UNLEARNED" \
       --lens "$LENS" \
       --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens"
+      --dtype "$ACTIVATION_DTYPE"
   fi
 done
 
@@ -604,9 +575,9 @@ echo "    mlp_attn_analysis/     summary CSV + plots"
 echo "    null_space_analysis/   null_space_results.csv + plots"
 echo "    activation_separation/ separation metrics + plots"
 echo "    activation_covariance/ covariance spectra + plots"
-echo "    mlp_nullspace/         alignment metrics + plots"
+echo "    mlp_nullspace_alignment/ alignment metrics + plots"
 echo "    row_space_projection/  projection metrics + plots"
-echo "    lipschitzness/         Lipschitz estimates + plots"
+echo "    lipschitzness_analysis/  Lipschitz estimates + plots"
 echo ""
 echo "  <model>/"
 echo "    evals/                 summary.json (MMLU, WMDP, HellaSwag, TruthfulQA)"

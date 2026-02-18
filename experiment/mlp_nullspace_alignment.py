@@ -36,6 +36,7 @@ from tqdm import tqdm
 from typing import Dict, List, Optional
 
 from utils import (
+    comparison_outdir,
     resolve_device,
     resolve_dtype,
     write_csv,
@@ -252,10 +253,15 @@ def main():
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="auto")
     parser.add_argument("--rank-threshold", type=float, default=0.99)
-    parser.add_argument("--outdir", default="outputs/mlp_nullspace_alignment")
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: auto-derived from model names)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="mlp_nullspace_alignment")
+
     init_wandb("mlp_nullspace_alignment", args)
 
     torch.manual_seed(args.seed)

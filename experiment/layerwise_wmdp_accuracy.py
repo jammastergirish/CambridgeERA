@@ -46,6 +46,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from utils import (
+    model_outdir,
     resolve_device,
     resolve_dtype,
     write_csv,
@@ -338,7 +339,8 @@ def main():
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--max-samples", type=int, default=500,
                         help="Max WMDP questions to evaluate (default: 500)")
-    parser.add_argument("--outdir", required=True)
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: outputs/<model>/wmdp_<lens>_lens)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--tuned-lr", type=float, default=1e-3,
                         help="Learning rate for tuned lens probes")
@@ -348,6 +350,10 @@ def main():
                         help="Fraction of WMDP data used to train tuned lens (rest for eval)")
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = model_outdir(args.model, suffix=f"wmdp_{args.lens}_lens")
+
     init_wandb("wmdp_lens", args)
 
     np.random.seed(args.seed)

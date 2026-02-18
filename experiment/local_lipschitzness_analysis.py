@@ -41,6 +41,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from utils import (
+    comparison_outdir,
     resolve_device,
     resolve_dtype,
     write_csv,
@@ -392,10 +393,15 @@ def main():
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--max-samples", type=int, default=500,
                         help="Max texts per split to process (default: 500)")
-    parser.add_argument("--outdir", default="outputs/lipschitzness_analysis")
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: auto-derived from model names)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="lipschitzness_analysis")
+
     init_wandb("local_lipschitzness", args)
 
     torch.manual_seed(args.seed)

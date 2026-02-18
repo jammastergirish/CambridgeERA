@@ -10,6 +10,8 @@ import torch
 import pytest
 
 from utils import (
+    model_outdir,
+    comparison_outdir,
     extract_layer,
     classify_coarse,
     classify_granular,
@@ -25,6 +27,48 @@ from utils import (
     resolve_dtype,
     write_csv,
 )
+
+
+# ---------------------------------------------------------------------------
+# model_outdir
+# ---------------------------------------------------------------------------
+class TestModelOutdir:
+    def test_basic(self):
+        assert model_outdir("org/model") == os.path.join("outputs", "org_model")
+
+    def test_with_suffix(self):
+        assert model_outdir("org/model", suffix="evals") == os.path.join("outputs", "org_model", "evals")
+
+    def test_custom_root(self):
+        assert model_outdir("org/model", root="unlearned_models", suffix="cb") == os.path.join("unlearned_models", "org_model", "cb")
+
+    def test_no_slash(self):
+        assert model_outdir("local-model") == os.path.join("outputs", "local-model")
+
+    def test_no_suffix(self):
+        result = model_outdir("org/model", suffix="")
+        assert result == os.path.join("outputs", "org_model")
+
+
+# ---------------------------------------------------------------------------
+# comparison_outdir
+# ---------------------------------------------------------------------------
+class TestComparisonOutdir:
+    def test_basic(self):
+        result = comparison_outdir("org/base", "org/filtered", suffix="param_stats")
+        assert result == os.path.join("outputs", "org_base__to__org_filtered", "param_stats")
+
+    def test_no_suffix(self):
+        result = comparison_outdir("org/base", "org/filtered")
+        assert result == os.path.join("outputs", "org_base__to__org_filtered")
+
+    def test_custom_root(self):
+        result = comparison_outdir("a/b", "c/d", root="results", suffix="x")
+        assert result == os.path.join("results", "a_b__to__c_d", "x")
+
+    def test_no_slashes(self):
+        result = comparison_outdir("local-a", "local-b", suffix="s")
+        assert result == os.path.join("outputs", "local-a__to__local-b", "s")
 
 
 # ---------------------------------------------------------------------------

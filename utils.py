@@ -11,6 +11,34 @@ from typing import Dict, List, Optional, Set
 import torch
 
 
+# --- Path utilities ---
+def model_outdir(model: str, root: str = "outputs", suffix: str = "") -> str:
+    """Derive output directory from a HuggingFace model ID.
+
+    E.g. 'EleutherAI/deep-ignorance-unfiltered' → 'outputs/EleutherAI_deep-ignorance-unfiltered'
+         with suffix='evals' → 'outputs/EleutherAI_deep-ignorance-unfiltered/evals'
+    """
+    sanitized = model.replace("/", "_")
+    parts = [root, sanitized]
+    if suffix:
+        parts.append(suffix)
+    return os.path.join(*parts)
+
+
+def comparison_outdir(model_a: str, model_b: str, root: str = "outputs", suffix: str = "") -> str:
+    """Derive output directory for a two-model comparison.
+
+    E.g. comparison_outdir('org/base', 'org/filtered', suffix='param_stats')
+         → 'outputs/org_base__to__org_filtered/param_stats'
+    """
+    san_a = model_a.replace("/", "_")
+    san_b = model_b.replace("/", "_")
+    parts = [root, f"{san_a}__to__{san_b}"]
+    if suffix:
+        parts.append(suffix)
+    return os.path.join(*parts)
+
+
 def load_dotenv(path: str = None):
     """Load .env file into environment. No external dependencies needed."""
     if path is None:

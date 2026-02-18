@@ -37,7 +37,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils import resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
+from utils import comparison_outdir, resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
 
 
 def read_lines(path: str, max_samples: int) -> List[str]:
@@ -331,9 +331,10 @@ def main():
     parser.add_argument("--max-samples", type=int, default=128)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=2)
-    parser.add_argument("--outdir", default="outputs/activation_stats")
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: auto-derived from model names)")
     parser.add_argument("--plot-outdir", default=None,
-                        help="Directory for plots (if omitted, plotting is skipped)")
+                        help="Plot dir (default: auto-derived from model names)")
     parser.add_argument("--title", default=None, help="Title for generated plots")
     parser.add_argument(
         "--cache-fp16",
@@ -341,6 +342,12 @@ def main():
         help="Use half-precision caching to reduce disk usage (default: full precision)",
     )
     args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_stats")
+    if args.plot_outdir is None:
+        args.plot_outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_plots")
+
     init_wandb("activation_norms", args)
 
     if not args.forget_text or not os.path.exists(args.forget_text):

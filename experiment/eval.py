@@ -4,6 +4,7 @@
 # dependencies = [
 #   "torch",
 #   "transformers",
+#   "accelerate",
 #   "lm-eval",
 # ]
 # ///
@@ -12,18 +13,21 @@
 Benchmark evaluation using EleutherAI's lm-evaluation-harness.
 
 Runs multiple benchmarks in a single pass (shared model load):
-  - MMLU          general knowledge / capabilities
-  - WMDP          hazardous-knowledge proxy (bio, cyber, chem)
-  - HellaSwag     commonsense reasoning
-  - TruthfulQA    truthfulness (mc2)
+  Standard (built-in to lm-eval):
+    - MMLU          general knowledge / capabilities
+
+  Custom (vendored from EleutherAI/deep-ignorance):
+    - wmdp_bio_robust_rewritten   robust MCQA with rewritten questions
+    - wmdp_bio_cloze_verified     perplexity-based (no other choices visible)
+    - wmdp_bio_categorized_mcqa   MCQA broken down by threat category
 
 Output structure (e.g. --outdir outputs/model_name/evals):
   outputs/model_name/evals/
-    summary.json          combined results for all tasks
-    mmlu.json             per-task result files
-    wmdp.json
-    hellaswag.json
-    truthfulqa_mc2.json
+    summary.json                    combined results for all tasks
+    mmlu.json                       per-task result files
+    wmdp_bio_robust_rewritten.json
+    wmdp_bio_cloze_verified.json
+    ...
 
 Usage:
   uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered \
@@ -31,7 +35,7 @@ Usage:
 
   # Subset of tasks
   uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered \
-      --outdir /tmp/test --tasks mmlu wmdp
+      --outdir /tmp/test --tasks mmlu wmdp_bio_cloze_verified
 
   # Limit samples for a quick sanity check
   uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered \
@@ -41,11 +45,28 @@ Usage:
 import argparse
 import json
 import os
+import sys
 
 import lm_eval
+from lm_eval.tasks import TaskManager
+
+# Add project root to path so we can import utils
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
+sys.path.insert(0, _PROJECT_ROOT)
+from utils import model_outdir
 
 
-DEFAULT_TASKS = ["mmlu", "wmdp", "hellaswag", "truthfulqa_mc2"]
+DEFAULT_TASKS = [
+    "mmlu",                          # general capabilities (built-in)
+    "wikitext",                      # perplexity (built-in)
+    "wmdp_bio_robust_rewritten",     # robust MCQA (custom)
+    "wmdp_bio_cloze_verified",       # cloze / perplexity-based (custom)
+    "wmdp_bio_categorized_mcqa",     # MCQA by threat category (custom)
+]
+
+# Resolve path to vendored custom task YAMLs (lm_eval_tasks/ in project root)
+_CUSTOM_TASKS_DIR = os.path.join(_PROJECT_ROOT, "lm_eval_tasks")
 
 
 def main():
@@ -53,14 +74,21 @@ def main():
     parser.add_argument("--model", required=True, help="HuggingFace model ID or local path")
     parser.add_argument("--device", default="auto", help="Device (auto/cuda/mps/cpu)")
     parser.add_argument("--dtype", default="auto", help="Dtype (auto/float16/bfloat16/float32)")
-    parser.add_argument("--outdir", required=True, help="Directory to save results")
+    parser.add_argument("--outdir", default=None,
+                        help="Directory to save results (default: outputs/<model>/evals)")
     parser.add_argument("--tasks", nargs="+", default=DEFAULT_TASKS,
                         help=f"Benchmarks to run (default: {' '.join(DEFAULT_TASKS)})")
+    parser.add_argument("--include-path", default=_CUSTOM_TASKS_DIR,
+                        help="Path to custom lm-eval task YAMLs (default: lm_eval_tasks/)")
     parser.add_argument("--limit", type=int, default=None,
                         help="Max samples per task (default: full benchmark)")
     parser.add_argument("--batch-size", default="auto", help="Batch size (default: auto)")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
+
+    # Auto-derive outdir from model name if not specified
+    if args.outdir is None:
+        args.outdir = model_outdir(args.model, suffix="evals")
 
     # Build model_args string for lm-eval
     model_args = f"pretrained={args.model}"
@@ -78,9 +106,13 @@ def main():
         else:
             device = "cpu"
 
+    # Build task manager with custom task path so vendored YAMLs are discovered
+    task_manager = TaskManager(include_path=args.include_path)
+
     print(f"[eval] Model:   {args.model}")
     print(f"[eval] Device:  {device}")
     print(f"[eval] Tasks:   {', '.join(args.tasks)}")
+    print(f"[eval] Custom:  {args.include_path}")
     if args.limit:
         print(f"[eval] Limit:   {args.limit} samples per task")
     print()
@@ -96,6 +128,7 @@ def main():
         random_seed=args.seed,
         numpy_random_seed=args.seed,
         torch_random_seed=args.seed,
+        task_manager=task_manager,
     )
 
     # Print summary table
@@ -113,7 +146,7 @@ def main():
     # Save results
     os.makedirs(args.outdir, exist_ok=True)
 
-    # Per-task JSON files  (e.g. mmlu.json, wmdp.json)
+    # Per-task JSON files
     for task_name, task_results in results["results"].items():
         task_path = os.path.join(args.outdir, f"{task_name}.json")
         with open(task_path, "w") as f:

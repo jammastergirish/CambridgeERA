@@ -45,7 +45,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Reuse device / dtype helpers from utils.py if available, else inline
 # ---------------------------------------------------------------------------
 try:
-    from utils import resolve_device, resolve_dtype
+    from utils import resolve_device, resolve_dtype, model_outdir
 except ImportError:
 
     def resolve_device(device: str) -> str:
@@ -72,6 +72,13 @@ except ImportError:
         if dtype not in mapping:
             raise ValueError(f"Unknown dtype '{dtype}'. Use auto|fp32|fp16|bf16")
         return mapping[dtype]
+
+    def model_outdir(model: str, root: str = "outputs", suffix: str = "") -> str:
+        sanitized = model.replace("/", "_")
+        parts = [root, sanitized]
+        if suffix:
+            parts.append(suffix)
+        return os.path.join(*parts)
 
 
 # ===================================================================
@@ -902,7 +909,6 @@ PARAM_ABBREV: dict[str, str] = {
 
 def build_outdir(args) -> str:
     """Build the output directory path from the method and its relevant parameters."""
-    safe_model = args.model.replace("/", "_")
     method = args.method
 
     # Build parameter suffix from all relevant params for this method
@@ -916,7 +922,7 @@ def build_outdir(args) -> str:
         parts.append(f"{abbrev}{value}")
 
     suffix = "_".join(parts)
-    return os.path.join("unlearned_models", f"{safe_model}__{method}__{suffix}")
+    return model_outdir(args.model, root="unlearned_models", suffix=f"{method}__{suffix}")
 
 
 # ===================================================================

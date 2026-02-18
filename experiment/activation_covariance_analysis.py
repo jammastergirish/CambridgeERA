@@ -42,6 +42,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from utils import (
+    comparison_outdir,
     resolve_device,
     resolve_dtype,
     write_csv,
@@ -307,10 +308,15 @@ def main():
                         help="Max texts per split to process (default: 500)")
     parser.add_argument("--layers-to-analyze", type=str, default=None,
                         help="Comma-separated layer indices to analyze (default: every 4th)")
-    parser.add_argument("--outdir", default="outputs/activation_covariance")
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: auto-derived from model names)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_covariance")
+
     init_wandb("activation_covariance", args)
 
     np.random.seed(args.seed)

@@ -42,7 +42,7 @@ class TestBuildOutdir:
 
     def test_includes_method_in_path(self):
         result = build_outdir(self._make_args("cb_lat"))
-        assert "__cb_lat__" in result
+        assert "/cb_lat__" in result
 
     def test_starts_with_unlearned_models(self):
         result = build_outdir(self._make_args("ga_simple"))
@@ -52,9 +52,10 @@ class TestBuildOutdir:
         result = build_outdir(self._make_args("ga_simple"))
         # The model name should have / replaced with _
         assert "EleutherAI_deep-ignorance-unfiltered" in result
-        # No bare slashes in the model part (only the path separator)
-        model_part = result.split("__")[0].replace("unlearned_models/", "")
-        assert "/" not in model_part
+        # Model part (between root and method) should have no bare slashes
+        model_part = result.split("/")[1]  # unlearned_models/<model_part>/method...
+        assert "EleutherAI" in model_part
+        assert model_part == "EleutherAI_deep-ignorance-unfiltered"
 
     def test_ga_simple_has_minimal_params(self):
         result = build_outdir(self._make_args("ga_simple"))

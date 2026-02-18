@@ -39,6 +39,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from utils import (
+    model_outdir,
     resolve_device,
     resolve_dtype,
     write_csv,
@@ -254,7 +255,8 @@ def main():
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--max-samples", type=int, default=500,
                         help="Max texts per split (default: 500)")
-    parser.add_argument("--outdir", required=True)
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: outputs/<model>/linear_probes)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--C", type=float, default=1.0,
                         help="Logistic-regression inverse regularisation strength")
@@ -262,6 +264,10 @@ def main():
                         help="Solver max iterations for logistic regression")
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = model_outdir(args.model, suffix="linear_probes")
+
     init_wandb("linear_probe", args)
 
     np.random.seed(args.seed)
