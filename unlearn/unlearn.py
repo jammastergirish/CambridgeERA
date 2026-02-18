@@ -1296,6 +1296,24 @@ def main():
     tokenizer.save_pretrained(args.outdir)
     print("[unlearn] Model saved ✓")
 
+    # ---- Run benchmarks on unlearned model ----
+    import subprocess
+    eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "..", "experiment", "eval.py")
+    eval_cmd = [
+        "uv", "run", eval_script,
+        "--model", args.outdir,
+        "--outdir", os.path.join(args.outdir, "evals"),
+        "--device", args.device,
+        "--dtype", args.dtype,
+    ]
+    print(f"[unlearn] Running eval: {' '.join(eval_cmd)}")
+    eval_result = subprocess.run(eval_cmd, cwd=os.path.dirname(os.path.abspath(__file__)) + "/..")
+    if eval_result.returncode == 0:
+        print("[unlearn] Eval complete ✓")
+    else:
+        print(f"[unlearn] WARNING: eval.py exited with code {eval_result.returncode}")
+
     # ---- Upload to HuggingFace (if HF_TOKEN is set) ----
     hf_token = os.environ.get("HF_TOKEN")
     if hf_token:
@@ -1308,8 +1326,15 @@ def main():
             api.create_repo(repo_id, exist_ok=True)
             api.upload_folder(folder_path=args.outdir, repo_id=repo_id)
             print(f"[unlearn] Upload complete ✓  https://huggingface.co/{repo_id}")
+
+            # Delete local model after successful upload
+            import shutil
+            print(f"[unlearn] Cleaning up local model: {args.outdir}")
+            shutil.rmtree(args.outdir)
+            print("[unlearn] Local model deleted ✓")
         except Exception as e:
             print(f"[unlearn] WARNING: HF upload failed: {e}")
+            print("[unlearn] Keeping local model (upload was not successful)")
     else:
         print("[unlearn] Skipping HF upload (no HF_TOKEN set)")
 
