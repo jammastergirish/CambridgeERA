@@ -14,6 +14,7 @@
 #   "wandb",
 #   "pandas",
 #   "scikit-learn",
+#   "scipy",
 # ]
 # ///
 
