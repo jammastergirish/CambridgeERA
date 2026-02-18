@@ -985,6 +985,8 @@ def main():
                         help="Gradient accumulation steps for effective larger batch size")
     parser.add_argument("--eval-interval", type=int, default=0,
                         help="Evaluate every N steps during training (0 to disable)")
+    parser.add_argument("--push-to-hub", action="store_true",
+                        help="Upload finished model to HuggingFace (requires HF_TOKEN env var)")
     args = parser.parse_args()
 
     # Auto-generate output directory from method + all relevant params
@@ -1308,22 +1310,65 @@ def main():
     tokenizer.save_pretrained(args.outdir)
     print("[unlearn] Model saved ✓")
 
-    # ---- Upload to HuggingFace (if HF_TOKEN is set) ----
-    hf_token = os.environ.get("HF_TOKEN")
-    if hf_token:
-        try:
-            from huggingface_hub import HfApi
-            api = HfApi(token=hf_token)
-            username = api.whoami()["name"]
-            repo_id = f"{username}/{os.path.basename(args.outdir)}"
-            print(f"[unlearn] Uploading to HuggingFace: {repo_id}")
-            api.create_repo(repo_id, exist_ok=True)
-            api.upload_folder(folder_path=args.outdir, repo_id=repo_id)
-            print(f"[unlearn] Upload complete ✓  https://huggingface.co/{repo_id}")
-        except Exception as e:
-            print(f"[unlearn] WARNING: HF upload failed: {e}")
-    else:
-        print("[unlearn] Skipping HF upload (no HF_TOKEN set)")
+    # ---- Auto-evaluate the unlearned model ----
+    print("[unlearn] Running eval benchmarks ...")
+    eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiment", "eval.py")
+    eval_cmd = [
+        sys.executable, eval_script,
+        "--model", args.outdir,
+        "--device", args.device,
+        "--dtype", args.dtype,
+    ]
+    try:
+        import subprocess
+        result = subprocess.run(eval_cmd, capture_output=False, text=True)
+        if result.returncode == 0:
+            print("[unlearn] Eval complete ✓")
+            # Log eval metrics to W&B
+            eval_summary_path = os.path.join(
+                model_outdir(args.outdir, suffix="evals"), "summary.json"
+            )
+            if os.path.exists(eval_summary_path):
+                import json
+                with open(eval_summary_path) as f:
+                    eval_data = json.load(f)
+                try:
+                    import wandb
+                    if wandb.run is not None:
+                        eval_results = eval_data.get("results", {})
+                        flat = {}
+                        for task, metrics in eval_results.items():
+                            for metric_key, value in metrics.items():
+                                if metric_key.endswith(",none") and not metric_key.startswith("alias"):
+                                    clean = metric_key.replace(",none", "")
+                                    flat[f"eval_bench/{task}/{clean}"] = value
+                        wandb.log(flat)
+                        wandb.summary.update(flat)
+                        print(f"[unlearn] Eval metrics logged to W&B ✓ ({len(flat)} metrics)")
+                except ImportError:
+                    pass
+        else:
+            print(f"[unlearn] WARNING: eval returned exit code {result.returncode}")
+    except Exception as e:
+        print(f"[unlearn] WARNING: eval failed: {e}")
+
+    # ---- Upload to HuggingFace (only if --push-to-hub) ----
+    if args.push_to_hub:
+        hf_token = os.environ.get("HF_TOKEN")
+        if hf_token:
+            try:
+                from huggingface_hub import HfApi
+                api = HfApi(token=hf_token)
+                username = api.whoami()["name"]
+                repo_id = f"{username}/{os.path.basename(args.outdir)}"
+                print(f"[unlearn] Uploading to HuggingFace: {repo_id}")
+                api.create_repo(repo_id, exist_ok=True)
+                api.upload_folder(folder_path=args.outdir, repo_id=repo_id)
+                print(f"[unlearn] Upload complete ✓  https://huggingface.co/{repo_id}")
+            except Exception as e:
+                print(f"[unlearn] WARNING: HF upload failed: {e}")
+        else:
+            print("[unlearn] WARNING: --push-to-hub specified but HF_TOKEN not set")
 
     print("===================================================================")
     print("===================================================================")

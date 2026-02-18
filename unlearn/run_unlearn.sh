@@ -48,4 +48,5 @@ uv run --script unlearn/unlearn.py \
   ${WT_NOISE_STD:+--wt-noise-std "$WT_NOISE_STD"} \
   ${WT_REG_LAMBDA:+--wt-reg-lambda "$WT_REG_LAMBDA"} \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
+  ${PUSH_TO_HUB:+--push-to-hub} \
   --seed 42
