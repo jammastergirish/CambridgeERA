@@ -36,6 +36,12 @@ This is fairly simple and is handled in `infer.py`. See [Inference](#inference) 
 
 Let's keep code clean, DRY, not littered with acronyms, clearly commented, etc. This is a learning resource for us as much as an experimental workflow. Prefer descriptive variable and function names (`dataset`, `example`, `question`) over abbreviations (`ds`, `ex`, `q`), for example.
 
+## Testing
+
+Please add tests for any new functionality. You can run all tests using:
+
+`uv run tests/run_tests.py`
+
 ---
 
 ## Datasets
