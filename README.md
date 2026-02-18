@@ -556,34 +556,11 @@ Run prompts against any HuggingFace model:
 # Single prompt
 uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is biotin?"
 
-# Side-by-side comparison
-uv run infer.py \
-  --model EleutherAI/deep-ignorance-unfiltered \
-  --model-b EleutherAI/deep-ignorance-unfiltered-cb-lat \
-  --prompt "What is biotin?"
-
-# Interactive mode
+# Interactive mode (keep prompting)
 uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --interactive
 ```
 
-### Sweep Mode
-
-Run the same prompt through multiple HuggingFace models and save a comparison CSV:
-
-```bash
-# Specify models to sweep
-uv run infer.py --sweep --models user/model-a --models user/model-b --prompt "What is biotin?"
-
-# Include the 3 base HF models (unfiltered, filtered, cb-lat)
-uv run infer.py --sweep --include-base --prompt "What is biotin?"
-
-# Combine both
-uv run infer.py --sweep --include-base --models user/my-unlearned --prompt "What is biotin?"
-```
-
-Output is saved to `outputs/inference/<sha256_hash>.csv` with columns: `prompt`, `model`, `model_path`, `output`. The same prompt always maps to the same filename.
-
-Options: `--max-new-tokens`, `--temperature`, `--top-p`, `--greedy`, `--outdir`. See `uv run infer.py --help`.
+Use `--max-tokens` to control output length (default 200). Device and dtype are auto-detected.
 
 ---
 
