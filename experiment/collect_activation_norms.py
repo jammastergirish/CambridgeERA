@@ -10,8 +10,17 @@
 # ]
 # ///
 
+"""
+Collect per-layer activation norms for two models and compute their differences.
+
+For each text split (forget / retain), this script:
+  1. Runs model A, caches hidden states to disk, and records mean per-token norms.
+  2. Runs model B on the same texts, loads cached model A hidden states, and
+     records both model B norms and the element-wise difference norms.
+  3. Writes a CSV with per-layer norm statistics.
+"""
+
 import argparse
-import csv
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,13 +34,46 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils import resolve_device, resolve_dtype, init_wandb, log_csv_as_table, finish_wandb
+from utils import resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, finish_wandb
 
 
 def read_lines(path: str, max_samples: int) -> List[str]:
+    """Read non-empty lines from a text file, up to max_samples."""
     with open(path, "r") as f:
-        lines = [ln.strip() for ln in f if ln.strip()]
+        lines = [line.strip() for line in f if line.strip()]
     return lines[:max_samples]
+
+
+def _load_model(model_id: str, dtype: torch.dtype, device: str):
+    """Load a causal language model and its tokenizer.
+
+    Handles the dtype kwarg difference across transformers versions
+    (some use ``dtype``, others require ``torch_dtype``).
+    """
+    tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, dtype=dtype, low_cpu_mem_usage=True
+        )
+    except TypeError:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, torch_dtype=dtype, low_cpu_mem_usage=True
+        )
+
+    model.eval()
+    model.to(device)
+    return model, tokenizer
+
+
+def _tokenize_batch(tokenizer, texts: List[str], device: str, max_length: int) -> dict:
+    """Tokenize a batch of texts and move tensors to the target device."""
+    encoding = tokenizer(
+        texts, return_tensors="pt", padding=True, truncation=True, max_length=max_length
+    )
+    return {key: value.to(device) for key, value in encoding.items()}
 
 
 @torch.inference_mode()
@@ -43,78 +85,79 @@ def cache_hidden_states(
     dtype: torch.dtype,
     max_length: int,
     batch_size: int,
-    use_fp16_cache: bool = False,
-) -> Dict[str, List[float]]:
+    use_half_precision_cache: bool = False,
+) -> Dict[str, object]:
     """
-    Run model on texts, cache hidden states to disk, and return absolute norms.
-    Returns dict with "mean_norm_L1" and "mean_norm_L2" per layer.
+    Run a model on texts, cache hidden states to disk, and return mean per-token norms.
+
+    Returns a dict with keys:
+        - ``mean_l1_norm``: list of mean L1 norms per layer
+        - ``mean_l2_norm``: list of mean L2 norms per layer
+        - ``num_layers``: number of layers (including embedding layer)
     """
-    tok = AutoTokenizer.from_pretrained(model_id, use_fast=True)
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
+    model, tokenizer = _load_model(model_id, dtype, device)
 
-    try:
-        model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype, low_cpu_mem_usage=True)
-    except TypeError:
-        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype, low_cpu_mem_usage=True)
-
-    model.eval()
-    model.to(device)
-
-    # Accumulators for absolute norms
-    sum_L1 = None
-    sum_L2 = None
+    # Accumulators for per-layer mean norms (one entry per layer)
+    sum_l1_norms = None
+    sum_l2_norms = None
     total_tokens = 0.0
 
-    for batch_idx, i in enumerate(tqdm(range(0, len(texts), batch_size), desc=f"Caching hidden states ({model_id.split('/')[-1]})", unit="batch")):
-        batch = texts[i : i + batch_size]
-        inp = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=max_length)
-        inp = {k: v.to(device) for k, v in inp.items()}
-        out = model(**inp, output_hidden_states=True, use_cache=False)
-        hs = out.hidden_states
+    short_name = model_id.split("/")[-1]
+    num_batches = (len(texts) + batch_size - 1) // batch_size
 
-        if hs is None:
-            raise RuntimeError("No hidden_states returned; cannot compute activation norms.")
+    for batch_idx, start in enumerate(tqdm(
+        range(0, len(texts), batch_size),
+        desc=f"Caching hidden states ({short_name})",
+        unit="batch",
+    )):
+        batch_texts = texts[start : start + batch_size]
+        inputs = _tokenize_batch(tokenizer, batch_texts, device, max_length)
+        outputs = model(**inputs, output_hidden_states=True, use_cache=False)
+        hidden_states = outputs.hidden_states
 
-        if sum_L1 is None:
-            sum_L1 = [0.0] * len(hs)
-            sum_L2 = [0.0] * len(hs)
+        if hidden_states is None:
+            raise RuntimeError(
+                "Model returned no hidden_states; check that output_hidden_states=True is supported."
+            )
 
-        mask = inp["attention_mask"].float()
-        token_count = float(mask.sum().item())
+        if sum_l1_norms is None:
+            sum_l1_norms = [0.0] * len(hidden_states)
+            sum_l2_norms = [0.0] * len(hidden_states)
+
+        attention_mask = inputs["attention_mask"].float()
+        token_count = float(attention_mask.sum().item())
         total_tokens += token_count
 
-        # Compute absolute norms
-        for layer_idx, h in enumerate(hs):
-            hf = h.float()
-            L1_norms = hf.abs().sum(dim=-1)  # [B, T]
-            L2_norms = torch.linalg.vector_norm(hf, ord=2, dim=-1)  # [B, T]
-            sum_L1[layer_idx] += float((L1_norms * mask).sum().item())
-            sum_L2[layer_idx] += float((L2_norms * mask).sum().item())
+        # Compute per-token norms at each layer, masked to real (non-padding) tokens
+        for layer_idx, layer_hidden in enumerate(hidden_states):
+            layer_float = layer_hidden.float()
+            l1_per_token = layer_float.abs().sum(dim=-1)                        # [batch, seq_len]
+            l2_per_token = torch.linalg.vector_norm(layer_float, ord=2, dim=-1)  # [batch, seq_len]
+            sum_l1_norms[layer_idx] += float((l1_per_token * attention_mask).sum().item())
+            sum_l2_norms[layer_idx] += float((l2_per_token * attention_mask).sum().item())
 
-        # Save hidden states and mask for this batch (for diff computation later)
-        if use_fp16_cache:
-            # Use half precision to save disk space and I/O time
+        # Save hidden states and mask for later diff computation against model B
+        if use_half_precision_cache:
             batch_data = {
-                "hidden_states": [h.cpu().half() for h in hs],  # Convert to fp16 for storage
-                "attention_mask": inp["attention_mask"].cpu(),
+                "hidden_states": [h.cpu().half() for h in hidden_states],
+                "attention_mask": inputs["attention_mask"].cpu(),
             }
         else:
-            # Keep full precision
             batch_data = {
-                "hidden_states": [h.cpu() for h in hs],
-                "attention_mask": inp["attention_mask"].cpu(),
+                "hidden_states": [h.cpu() for h in hidden_states],
+                "attention_mask": inputs["attention_mask"].cpu(),
             }
         torch.save(batch_data, os.path.join(cache_dir, f"batch_{batch_idx}.pt"))
 
-    # Cleanup model from memory
+    # Free GPU memory
     del model
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return {
-        "mean_norm_L1": [s / total_tokens if total_tokens else 0.0 for s in sum_L1],
-        "mean_norm_L2": [s / total_tokens if total_tokens else 0.0 for s in sum_L2],
-        "num_layers": len(sum_L2),
+        "mean_l1_norm": [s / total_tokens if total_tokens else 0.0 for s in sum_l1_norms],
+        "mean_l2_norm": [s / total_tokens if total_tokens else 0.0 for s in sum_l2_norms],
+        "num_layers": len(sum_l2_norms),
     }
 
 
@@ -130,105 +173,101 @@ def compute_activation_diffs(
     num_layers: int,
 ) -> Dict[str, List[float]]:
     """
-    Run model_b on texts, load cached hidden states from model_a, compute diffs.
-    Returns absolute norms for model_b AND diff norms.
+    Run model B on texts, load cached model A hidden states, and compute diffs.
+
+    Returns a dict with keys:
+        - ``mean_l1_norm``: mean L1 norms for model B
+        - ``mean_l2_norm``: mean L2 norms for model B
+        - ``mean_diff_l1``: mean L1 norms of (model_B - model_A) hidden states
+        - ``mean_diff_l2``: mean L2 norms of (model_B - model_A) hidden states
     """
-    tok = AutoTokenizer.from_pretrained(model_id, use_fast=True)
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
-
-    try:
-        model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype, low_cpu_mem_usage=True)
-    except TypeError:
-        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype, low_cpu_mem_usage=True)
-
-    model.eval()
-    model.to(device)
+    model, tokenizer = _load_model(model_id, dtype, device)
 
     # Accumulators
-    sum_abs_L1 = [0.0] * num_layers  # Absolute L1 norms for model_b
-    sum_abs_L2 = [0.0] * num_layers  # Absolute L2 norms for model_b
-    sum_diff_L1 = [0.0] * num_layers  # Diff L1 norms
-    sum_diff_L2 = [0.0] * num_layers  # Diff L2 norms
+    sum_absolute_l1 = [0.0] * num_layers
+    sum_absolute_l2 = [0.0] * num_layers
+    sum_diff_l1 = [0.0] * num_layers
+    sum_diff_l2 = [0.0] * num_layers
     total_tokens = 0.0
 
-    for batch_idx, i in enumerate(tqdm(range(0, len(texts), batch_size), desc=f"Computing activation diffs ({model_id.split('/')[-1]})", unit="batch")):
-        batch = texts[i : i + batch_size]
-        inp = tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=max_length)
-        inp = {k: v.to(device) for k, v in inp.items()}
-        out = model(**inp, output_hidden_states=True, use_cache=False)
-        hs_b = out.hidden_states
+    short_name = model_id.split("/")[-1]
+    for batch_idx, start in enumerate(tqdm(
+        range(0, len(texts), batch_size),
+        desc=f"Computing activation diffs ({short_name})",
+        unit="batch",
+    )):
+        batch_texts = texts[start : start + batch_size]
+        inputs = _tokenize_batch(tokenizer, batch_texts, device, max_length)
+        outputs = model(**inputs, output_hidden_states=True, use_cache=False)
+        hidden_states_b = outputs.hidden_states
 
-        # Load cached hidden states from model_a
-        cached = torch.load(os.path.join(cache_dir, f"batch_{batch_idx}.pt"), weights_only=True)
-        hs_a = cached["hidden_states"]
-        mask_a = cached["attention_mask"].float()
+        # Load cached hidden states from model A
+        cached = torch.load(
+            os.path.join(cache_dir, f"batch_{batch_idx}.pt"), weights_only=True
+        )
+        hidden_states_a = cached["hidden_states"]
+        cached_mask = cached["attention_mask"].float()
 
-        mask = mask_a.to(device)
-        token_count = float(mask.sum().item())
+        attention_mask = cached_mask.to(device)
+        token_count = float(attention_mask.sum().item())
         total_tokens += token_count
 
         for layer_idx in range(num_layers):
-            h_a = hs_a[layer_idx].to(device=device, dtype=torch.float32)
-            h_b = hs_b[layer_idx].float()
+            layer_a = hidden_states_a[layer_idx].to(device=device, dtype=torch.float32)
+            layer_b = hidden_states_b[layer_idx].float()
 
-            # Handle potential shape mismatch
-            min_len = min(h_a.shape[1], h_b.shape[1])
-            h_a = h_a[:, :min_len, :]
-            h_b = h_b[:, :min_len, :]
-            layer_mask = mask[:, :min_len]
+            # Handle potential sequence-length mismatch between cached and live run
+            min_seq_len = min(layer_a.shape[1], layer_b.shape[1])
+            layer_a = layer_a[:, :min_seq_len, :]
+            layer_b = layer_b[:, :min_seq_len, :]
+            layer_mask = attention_mask[:, :min_seq_len]
 
-            # Absolute norms for model_b
-            abs_L1 = h_b.abs().sum(dim=-1)
-            abs_L2 = torch.linalg.vector_norm(h_b, ord=2, dim=-1)
-            sum_abs_L1[layer_idx] += float((abs_L1 * layer_mask).sum().item())
-            sum_abs_L2[layer_idx] += float((abs_L2 * layer_mask).sum().item())
+            # Absolute norms for model B
+            l1_absolute = layer_b.abs().sum(dim=-1)
+            l2_absolute = torch.linalg.vector_norm(layer_b, ord=2, dim=-1)
+            sum_absolute_l1[layer_idx] += float((l1_absolute * layer_mask).sum().item())
+            sum_absolute_l2[layer_idx] += float((l2_absolute * layer_mask).sum().item())
 
-            # Diff norms
-            dh = h_b - h_a
-            L1_norms = dh.abs().sum(dim=-1)
-            L2_norms = torch.linalg.vector_norm(dh, ord=2, dim=-1)
+            # Difference norms: how much did activations change?
+            diff = layer_b - layer_a
+            diff_l1 = diff.abs().sum(dim=-1)
+            diff_l2 = torch.linalg.vector_norm(diff, ord=2, dim=-1)
+            sum_diff_l1[layer_idx] += float((diff_l1 * layer_mask).sum().item())
+            sum_diff_l2[layer_idx] += float((diff_l2 * layer_mask).sum().item())
 
-            sum_diff_L1[layer_idx] += float((L1_norms * layer_mask).sum().item())
-            sum_diff_L2[layer_idx] += float((L2_norms * layer_mask).sum().item())
-
-    # Cleanup
+    # Free GPU memory
     del model
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return {
-        "mean_norm_L1": [s / total_tokens if total_tokens else 0.0 for s in sum_abs_L1],
-        "mean_norm_L2": [s / total_tokens if total_tokens else 0.0 for s in sum_abs_L2],
-        "mean_dh_L1": [s / total_tokens if total_tokens else 0.0 for s in sum_diff_L1],
-        "mean_dh_L2": [s / total_tokens if total_tokens else 0.0 for s in sum_diff_L2],
+        "mean_l1_norm": [s / total_tokens if total_tokens else 0.0 for s in sum_absolute_l1],
+        "mean_l2_norm": [s / total_tokens if total_tokens else 0.0 for s in sum_absolute_l2],
+        "mean_diff_l1": [s / total_tokens if total_tokens else 0.0 for s in sum_diff_l1],
+        "mean_diff_l2": [s / total_tokens if total_tokens else 0.0 for s in sum_diff_l2],
     }
 
 
-def write_csv(path: str, rows: List[Dict], fieldnames: List[str]) -> None:
-    dirname = os.path.dirname(path)
-    if dirname:  # Only create directory if path has a directory component
-        os.makedirs(dirname, exist_ok=True)
-    with open(path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        w.writerows(rows)
-
-
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model-a", required=True, help="Baseline model (before)")
-    ap.add_argument("--model-b", required=True, help="Target model (after)")
-    ap.add_argument("--forget-text", help="Path to forget prompts")
-    ap.add_argument("--retain-text", help="Path to retain prompts")
-    ap.add_argument("--device", default="auto")
-    ap.add_argument("--dtype", default="auto")
-    ap.add_argument("--max-samples", type=int, default=128)
-    ap.add_argument("--max-length", type=int, default=512)
-    ap.add_argument("--batch-size", type=int, default=2)
-    ap.add_argument("--outdir", default="outputs/activation_stats")
-    ap.add_argument("--cache-fp16", action="store_true",
-                    help="Use half-precision caching to reduce disk I/O (default: False)")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(
+        description="Collect per-layer activation norms for two models and compute their differences."
+    )
+    parser.add_argument("--model-a", required=True, help="Baseline model (before)")
+    parser.add_argument("--model-b", required=True, help="Target model (after)")
+    parser.add_argument("--forget-text", help="Path to forget-set prompts (one per line)")
+    parser.add_argument("--retain-text", help="Path to retain-set prompts (one per line)")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--dtype", default="auto")
+    parser.add_argument("--max-samples", type=int, default=128)
+    parser.add_argument("--max-length", type=int, default=512)
+    parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--outdir", default="outputs/activation_stats")
+    parser.add_argument(
+        "--cache-fp16",
+        action="store_true",
+        help="Use half-precision caching to reduce disk usage (default: full precision)",
+    )
+    args = parser.parse_args()
     init_wandb("collect_activation_norms", args)
 
     if not args.forget_text or not os.path.exists(args.forget_text):
@@ -241,60 +280,61 @@ def main():
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
 
-    forget = read_lines(args.forget_text, args.max_samples)
-    retain = read_lines(args.retain_text, args.max_samples)
+    forget_texts = read_lines(args.forget_text, args.max_samples)
+    retain_texts = read_lines(args.retain_text, args.max_samples)
 
     rows = []
 
-    # Warn about caching mode for reproducibility
     print(f"[collect_activation_norms] Model A: {args.model_a}")
     print(f"[collect_activation_norms] Model B: {args.model_b}")
-    print(f"[collect_activation_norms] Forget samples: {len(forget)}  |  Retain samples: {len(retain)}")
+    print(f"[collect_activation_norms] Forget samples: {len(forget_texts)}  |  Retain samples: {len(retain_texts)}")
     if args.cache_fp16:
         print("[collect_activation_norms] ⚠ Using FP16 caching — reduced precision for faster I/O")
     else:
         print("[collect_activation_norms] Using full-precision caching")
 
-    for split_name, texts in [("forget", forget), ("retain", retain)]:
+    for split_name, texts in [("forget", forget_texts), ("retain", retain_texts)]:
         cache_dir = tempfile.mkdtemp(prefix="activation_cache_")
 
         try:
             print(f"\n[collect_activation_norms] ── {split_name.upper()} split ──")
 
-            # Step 1: Cache model_a hidden states + get absolute norms
+            # Step 1: Cache model A hidden states and get its absolute norms
             result_a = cache_hidden_states(
-                args.model_a, texts, cache_dir, device, dtype, args.max_length, args.batch_size, args.cache_fp16
+                args.model_a, texts, cache_dir, device, dtype,
+                args.max_length, args.batch_size, args.cache_fp16,
             )
             num_layers = result_a["num_layers"]
 
-            # Step 2: Run model_b, compute absolute norms + diffs
+            # Step 2: Run model B, compute absolute norms + diffs against model A
             result_b = compute_activation_diffs(
-                args.model_b, texts, cache_dir, device, dtype, args.max_length, args.batch_size, num_layers
+                args.model_b, texts, cache_dir, device, dtype,
+                args.max_length, args.batch_size, num_layers,
             )
 
-            # Collect results
+            # Collect per-layer results
             for layer_idx in range(num_layers):
                 rows.append({
                     "layer": layer_idx,
                     "split": split_name,
-                    "model_a_norm_L1": result_a["mean_norm_L1"][layer_idx],
-                    "model_a_norm_L2": result_a["mean_norm_L2"][layer_idx],
-                    "model_b_norm_L1": result_b["mean_norm_L1"][layer_idx],
-                    "model_b_norm_L2": result_b["mean_norm_L2"][layer_idx],
-                    "mean_dh_L1": result_b["mean_dh_L1"][layer_idx],
-                    "mean_dh_L2": result_b["mean_dh_L2"][layer_idx],
+                    "model_a_l1_norm": result_a["mean_l1_norm"][layer_idx],
+                    "model_a_l2_norm": result_a["mean_l2_norm"][layer_idx],
+                    "model_b_l1_norm": result_b["mean_l1_norm"][layer_idx],
+                    "model_b_l2_norm": result_b["mean_l2_norm"][layer_idx],
+                    "mean_diff_l1": result_b["mean_diff_l1"][layer_idx],
+                    "mean_diff_l2": result_b["mean_diff_l2"][layer_idx],
                 })
 
-            # Summary row
+            # Summary row: average across all layers
             rows.append({
                 "layer": "ALL_MEAN",
                 "split": split_name,
-                "model_a_norm_L1": float(np.mean(result_a["mean_norm_L1"])),
-                "model_a_norm_L2": float(np.mean(result_a["mean_norm_L2"])),
-                "model_b_norm_L1": float(np.mean(result_b["mean_norm_L1"])),
-                "model_b_norm_L2": float(np.mean(result_b["mean_norm_L2"])),
-                "mean_dh_L1": float(np.mean(result_b["mean_dh_L1"])),
-                "mean_dh_L2": float(np.mean(result_b["mean_dh_L2"])),
+                "model_a_l1_norm": float(np.mean(result_a["mean_l1_norm"])),
+                "model_a_l2_norm": float(np.mean(result_a["mean_l2_norm"])),
+                "model_b_l1_norm": float(np.mean(result_b["mean_l1_norm"])),
+                "model_b_l2_norm": float(np.mean(result_b["mean_l2_norm"])),
+                "mean_diff_l1": float(np.mean(result_b["mean_diff_l1"])),
+                "mean_diff_l2": float(np.mean(result_b["mean_diff_l2"])),
             })
 
         finally:
@@ -303,11 +343,16 @@ def main():
     # Write output
     os.makedirs(args.outdir, exist_ok=True)
 
-    outpath = os.path.join(args.outdir, "activation_stats.csv")
-    fieldnames = ["layer", "split", "model_a_norm_L1", "model_a_norm_L2", "model_b_norm_L1", "model_b_norm_L2", "mean_dh_L1", "mean_dh_L2"]
-    write_csv(outpath, rows, fieldnames)
-    print(f"\n[collect_activation_norms] ✓ Wrote activation stats to {outpath}")
-    log_csv_as_table(outpath, "activation_stats")
+    output_path = os.path.join(args.outdir, "activation_stats.csv")
+    fieldnames = [
+        "layer", "split",
+        "model_a_l1_norm", "model_a_l2_norm",
+        "model_b_l1_norm", "model_b_l2_norm",
+        "mean_diff_l1", "mean_diff_l2",
+    ]
+    write_csv(output_path, rows, fieldnames)
+    print(f"\n[collect_activation_norms] ✓ Wrote activation stats to {output_path}")
+    log_csv_as_table(output_path, "activation_stats")
     finish_wandb()
 
 

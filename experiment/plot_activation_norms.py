@@ -59,16 +59,16 @@ def main():
             # Plot 1: Absolute norms — L1 and L2 side-by-side, model A vs model B
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-            ax1.plot(sub["layer"], sub["model_a_norm_L1"], marker="o", linewidth=1.5, label="Model A (before)", color="tab:blue")
-            ax1.plot(sub["layer"], sub["model_b_norm_L1"], marker="s", linewidth=1.5, label="Model B (after)", color="tab:orange")
+            ax1.plot(sub["layer"], sub["model_a_l1_norm"], marker="o", linewidth=1.5, label="Model A (before)", color="tab:blue")
+            ax1.plot(sub["layer"], sub["model_b_l1_norm"], marker="s", linewidth=1.5, label="Model B (after)", color="tab:orange")
             ax1.set_xlabel("Layer")
             ax1.set_ylabel(r"Mean $\|h\|_1$ per token")
             ax1.set_title(f"$L_1$ Activation Magnitude ({split})")
             ax1.legend()
             ax1.grid(alpha=0.3)
 
-            ax2.plot(sub["layer"], sub["model_a_norm_L2"], marker="o", linewidth=1.5, label="Model A (before)", color="tab:blue")
-            ax2.plot(sub["layer"], sub["model_b_norm_L2"], marker="s", linewidth=1.5, label="Model B (after)", color="tab:orange")
+            ax2.plot(sub["layer"], sub["model_a_l2_norm"], marker="o", linewidth=1.5, label="Model A (before)", color="tab:blue")
+            ax2.plot(sub["layer"], sub["model_b_l2_norm"], marker="s", linewidth=1.5, label="Model B (after)", color="tab:orange")
             ax2.set_xlabel("Layer")
             ax2.set_ylabel(r"Mean $\|h\|_2$ per token")
             ax2.set_title(f"$L_2$ Activation Magnitude ({split})")
@@ -83,13 +83,13 @@ def main():
             # Plot 2: Activation diffs — L1 and L2 side-by-side
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-            ax1.plot(sub["layer"], sub["mean_dh_L1"], marker="o", linewidth=1.5, color="tab:green")
+            ax1.plot(sub["layer"], sub["mean_diff_l1"], marker="o", linewidth=1.5, color="tab:green")
             ax1.set_xlabel("Layer")
             ax1.set_ylabel(r"Mean $\|\Delta h\|_1$ per token")
             ax1.set_title(f"Activation Diff $L_1$ Norm ({split})")
             ax1.grid(alpha=0.3)
 
-            ax2.plot(sub["layer"], sub["mean_dh_L2"], marker="o", linewidth=1.5, color="tab:red")
+            ax2.plot(sub["layer"], sub["mean_diff_l2"], marker="o", linewidth=1.5, color="tab:red")
             ax2.set_xlabel("Layer")
             ax2.set_ylabel(r"Mean $\|\Delta h\|_2$ per token")
             ax2.set_title(f"Activation Diff $L_2$ Norm ({split})")
