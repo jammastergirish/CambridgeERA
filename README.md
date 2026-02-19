@@ -12,6 +12,40 @@ The project will expand across a broader set of unlearning algorithms (e.g., RMU
 
 ---
 
+## Quick Overview
+
+We essentially have three workflows in this repository:
+
+### Experiment
+
+This is governed by `experiment/pipeline.sh`, which runs experiments on one or more models. We should ensure all experiments run via this file, with the general parameters already in place, following its outputs, etc.
+
+We have steps, each of which corresponds to a file in the `experiment` folder.
+
+See [Experimental Pipeline](#experimental-pipeline) for details.
+
+### Unlearning
+
+This is governed by `unlearn/run_unlearn.sh`, which creates a new unlearned model from scratch. We should similarly ensure all unlearning runs use this workflow. 
+
+See [Unlearning](#unlearning) for available methods and tuning guidance.
+
+### Inference
+
+This is handled in the `infer/` folder with both command-line and web UI options. See [Inference](#inference) for usage examples.
+
+## Style
+
+Let's keep code clean, DRY, not littered with acronyms, clearly commented, etc. This is a learning resource for us as much as an experimental workflow. Prefer descriptive variable and function names (`dataset`, `example`, `question`) over abbreviations (`ds`, `ex`, `q`), for example.
+
+## Testing
+
+Please add tests for any new functionality. You can run all tests using:
+
+`uv run tests/run_tests.py`
+
+---
+
 ## Datasets
 
 `uv run create_datasets.py` creates two text datasets that serve in training for unlearning, and as *probes* for activation-level analyses:
@@ -21,7 +55,7 @@ The project will expand across a broader set of unlearning algorithms (e.g., RMU
 | `forget.txt` | WMDP-Bio questions | Text the model *should* have forgotten — the "target" of unlearning |
 | `retain.txt` | WikiText-2 | Benign text the model *should* still handle well — the "control" |
 
-These are analogous to stimulus and control conditions in an experiment. Every activation-level diagnostic (Steps 8–12) runs on *both* datasets, measuring whether interventions selectively affect forget-domain processing while preserving retain-domain processing.
+These are analogous to stimulus and control conditions in an experiment. Every activation-level diagnostic (Steps 3, 5–6, 8–9, 11–12) runs on *both* datasets, measuring whether interventions selectively affect forget-domain processing while preserving retain-domain processing.
 
 ---
 
@@ -41,15 +75,9 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 
 # Run pipeline for a specific unlearned model
 UNLEARNED=girishgupta/EleutherAI_deep-ignorance-unfiltered__ga ./experiment/pipeline.sh
-
-# Sweep all 12 unlearned models from HuggingFace
-./experiment/sweep_all_models.sh
-
-# Sweep only specific models from Girish's HuggingFace models
-./experiment/sweep_all_models.sh ga dpo rmu
 ```
 
-The Base→Filtered comparison runs once and is shared across all sweeps. Already-completed steps are automatically skipped (pass `--force` to rerun).
+The Base→Filtered comparison runs once and is shared across runs. Already-completed steps are automatically skipped (pass `--force` to rerun).
 
 ---
 
@@ -107,7 +135,7 @@ Runs MMLU (Massive Multitask Language Understanding) on each model before the ex
 
 These examine `W_modified`, `W_base`, and `ΔW = W_modified − W_base` directly—treating the intervention as a matrix perturbation.
 
-#### Steps 1–2: Parameter Statistics (`experiment/collect_param_stats.py` + `experiment/plot_param_stats.py`)
+#### Step 1: Parameter Statistics (`experiment/param_stats.py`)
 
 **Question:** *How large is the intervention, and where is it concentrated?*
 
@@ -128,7 +156,7 @@ These are aggregated per layer and split into **MLP vs Attention** groups, then 
 
 ---
 
-##### Step 6: MLP vs Attention Breakdown (`experiment/analyze_mlp_vs_attn.py`)
+#### Step 4: MLP vs Attention Breakdown (`experiment/analyze_mlp_vs_attn.py`)
 
 **Question:** *Are the changes concentrated in MLP (knowledge storage) or Attention (routing/composition)?*
 
@@ -171,7 +199,7 @@ Decomposes each MLP update ΔW into components that lie in the **column space** 
 
 These run the model on actual text and measure *what it computes*, not just what its parameters look like. All activation scripts cap input at `--max-samples 500` texts per split by default to keep runtimes manageable (override with e.g. `--max-samples 1000` for more statistical power).
 
-#### Steps 4–5: Activation Norms (`experiment/collect_activation_norms.py` + `experiment/plot_activation_norms.py`)
+##### Step 3: Activation Norms (`experiment/activation_norms.py`)
 
 **Question:** *Does the intervention globally suppress or amplify activations?*
 
@@ -250,7 +278,7 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ---
 
-##### Step 13: Linear Probe Analysis (`experiment/linear_probe_analysis.py`)
+##### Step 5: Linear Probe Analysis (`experiment/linear_probe_analysis.py`)
 
 **Question:** *At which layer is the forget-set knowledge  linearly encoded?*
 
@@ -270,7 +298,7 @@ Default probe: `LogisticRegression(C=1.0, max_iter=1000)` — adjustable via `--
 
 ---
 
-##### Step 14: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
+##### Step 6: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
 
 **Question:** *At which layer does the model "know" the answer to WMDP-Bio questions?*
 
@@ -288,7 +316,7 @@ For each question, the lens computes log-probabilities of each answer choice at 
 
 **Why this matters:** A base model will show WMDP accuracy ramping up through mid-to-late layers — knowledge "crystallizes" as representations flow through the network. In a well-unlearned model, you'd expect accuracy to stay near chance (0.25 for 4-way MCQ) at *every* layer, not just the final one. If accuracy is high at intermediate layers but drops at the output, the knowledge is merely hidden, not erased — and a simple probe or fine-tuning attack could recover it.
 
-> **Note:** Like Step 13, results are stored **per-model**.
+> **Note:** Like Step 5, results are stored **per-model**.
 
 ---
 
@@ -300,13 +328,13 @@ The diagnostics answer an escalating series of questions:
 |---|---|---|
 | **Capabilities** | Does the model still work at all? | 0 |
 | **Magnitude** | How much changed? | 1–2 |
-| **Location** | Where — MLP or Attention? Which layers? | 6 |
+| **Location** | Where — MLP or Attention? Which layers? | 4 |
+| **Knowledge Localization** | Where is forget-set knowledge encoded? | 5 |
+| **Knowledge Depth** | At which layer does the model know WMDP answers? | 6 |
 | **Geometry** | What shape is ΔW? Low-rank? Nullspace-aligned? | 7, 10 |
-| **Function** | Do activations actually change on target text? | 4–5, 8–9 |
+| **Function** | Do activations actually change on target text? | 3, 8–9 |
 | **Precision** | Is the change *targeted* at forget-domain inputs? | 11 |
 | **Stability** | Is the new behavior robust or fragile? | 12 |
-| **Knowledge Localization** | Where is forget-set knowledge encoded? | 13 |
-| **Knowledge Depth** | At which layer does the model know WMDP answers? | 14 |
 
 The thesis prediction is that unlearning methods (CB-LAT) will show: small magnitude, attention-localized, low-rank, nullspace-aligned, minimal activation change, low selectivity, and increased roughness — the full mechanistic signature of a brittle intervention. While filtering will show the opposite across every dimension.
 
@@ -318,7 +346,7 @@ All results are saved under a single root (default `outputs/`):
 
 ```
 outputs/
-  <comparison>/                        # Steps 1–12: per model-pair
+  <comparison>/                        # Steps 1–4, 7–12: per model-pair
     param_stats/           per_matrix.csv, per_layer.csv
     param_plots/           Layer locality, stable rank, rank comparison PNGs
     activation_stats/      activation_stats.csv
@@ -331,8 +359,8 @@ outputs/
     row_space_projection/  projection metrics + plots
     lipschitzness/         Lipschitz estimates + plots
 
-  <model>/                             # Steps 0, 13–14: per individual model
-    mmlu/                  mmlu_results.csv, summary.json + plot
+  <model>/                             # Steps 0, 5–6: per individual model
+    evals/                 summary.json, high_level_summary.md
     linear_probes/         probe_results.csv, summary.json + plot
     wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot
     wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot
@@ -345,31 +373,36 @@ outputs/
 ## Unlearning
 
 ```bash
+# Create all 12 unlearned models with default hyperparameters
 ./unlearn/create_all_unlearning_models.sh
 
-# Analyze the result(s) per the above experiments
-uv run experiment/collect_param_stats.py \
-  --model-a EleutherAI/deep-ignorance-unfiltered \
-  --model-b outputs/EleutherAI_deep-ignorance-unfiltered__ga/unlearned_model \
-  --outdir outputs/ga_analysis/param_stats
+# Train a single method with defaults
+./unlearn/run_unlearn.sh cb_lat
+# -> unlearned_models/EleutherAI_deep-ignorance-unfiltered__cb_lat__ep1_lr1e-05_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7/
+
+# Override hyperparameters (automatically encoded into folder name)
+EPOCHS=2 LR=5e-6 ./unlearn/run_unlearn.sh cb_lat
+# -> unlearned_models/EleutherAI_deep-ignorance-unfiltered__cb_lat__ep2_lr5e-06_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7/
 ```
+
+Output directories are auto-generated by `unlearn.py` based on the method and all its relevant hyperparameters, so different runs never overwrite each other. After training, eval benchmarks (MMLU, WikiText, WMDP variants) run automatically and results are logged to W&B. Add `--push-to-hub` (or `PUSH_TO_HUB=1` in the shell) to upload the finished model to HuggingFace.
 
 ### Available Methods
 
-| Method | Type | Key Params | Description |
-|---|---|---|---|
-| `ga_simple` | Loss | — | Gradient ascent on forget set only |
-| `ga` | Loss | — | Gradient ascent on forget + descent on retain |
-| `grad_diff` | Loss | `--forget-weight` | Weighted forget/retain NLL difference |
-| `dpo` | Loss | `--beta` | Direct Preference Optimization (needs ref model) |
-| `npo` | Loss | `--beta` | Negative Preference Optimization (needs ref model) |
-| `simnpo` | Loss | `--beta` | Reference-free NPO variant |
-| `rmu` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Steer hidden states toward random targets (MSE) |
-| `cb` | Representation | `--layer-id`, `--steering-coeff`, `--alpha` | Cosine-similarity circuit rerouting |
-| `lat` | Representation | `--layer-id`, `--lat-eps`, `--lat-steps` | Latent adversarial training |
-| `cb_lat` | Representation | `--layer-id`, `--steering-coeff`, `--alpha`, `--lat-eps`, `--lat-steps` | Circuit Breakers + LAT combined |
-| `wt_dist` | Weight-Space | `--wt-noise-std` | Weight Distortion (Gaussian noise + retain fine-tuning) |
-| `wt_dist_reg` | Weight-Space | `--wt-reg-lambda` | Weight Distance Regularization (maximize L2 from pretrained) |
+| Method | Type | Key Params | Paper | Description |
+|---|---|---|---|---|
+| `ga_simple` | Loss | — | [Jang et al. 2023](https://arxiv.org/abs/2210.01504) | Pure gradient ascent: negates NLL on forget set to make the model *worse* at predicting those tokens. No retain term, so risks catastrophic forgetting of useful capabilities. |
+| `ga` | Loss | `--retain-weight` | [Jang et al. 2023](https://arxiv.org/abs/2210.01504) | Gradient ascent on forget + gradient descent on retain. Simultaneously pushes UP forget-set loss and DOWN retain-set loss, balancing unlearning with capability preservation. |
+| `grad_diff` | Loss | `--forget-weight` | | Like GA but with an explicit weight controlling the forget vs. retain trade-off. Higher `--forget-weight` unlearns more aggressively at the cost of retain quality. |
+| `dpo` | Loss | `--beta` | [Rafailov et al. 2023](https://arxiv.org/abs/2305.18290) | Direct Preference Optimization repurposed for unlearning: treats retain data as "chosen" and forget data as "rejected". Requires a frozen reference model to prevent excessive drift. β controls update aggressiveness. |
+| `npo` | Loss | `--beta`, `--retain-weight` | [Zhang et al. 2024](https://arxiv.org/abs/2404.05868) | Negative Preference Optimization: penalises the policy for assigning higher probability to forget data than the frozen reference model does, plus a retain NLL term. Only needs the forget set in the preference term. |
+| `simnpo` | Loss | `--beta`, `--retain-weight` | [Meng et al. 2024](https://arxiv.org/abs/2405.14734) | Reference-free NPO: directly penalises the model's own log-probability on forget data instead of comparing to a reference. Cheaper (no ref model) but less stable. |
+| `rmu` | Activation-Space | `--layer-id`, `--steering-coeff`, `--alpha` | [Li et al. 2024](https://arxiv.org/abs/2403.03218) | Representation Misdirection: at target layers, pushes forget-set hidden states toward a fixed random direction (MSE) so the model can't extract meaningful information, while anchoring retain-set activations to their original cached values. |
+| `cb` | Activation-Space | `--layer-id`, `--steering-coeff`, `--alpha` | [Zou et al. 2024](https://arxiv.org/abs/2406.04313) | Circuit Breakers: like RMU but uses cosine similarity instead of MSE, making the loss invariant to activation magnitude — only the *direction* of representations matters. More robust to norm-scaling effects. |
+| `lat` | Activation-Space | `--layer-id`, `--lat-eps`, `--lat-steps`, `--retain-weight` | [Casper et al. 2024](https://arxiv.org/abs/2403.05030) | Latent Adversarial Training: inner PGD loop finds a perturbation δ (injected at a hidden layer) that helps the model recall forget data; outer loop trains the model to unlearn even with δ active. Makes unlearning robust to representation-level attacks. |
+| `cb_lat` | Activation-Space | `--layer-id`, `--steering-coeff`, `--alpha`, `--lat-eps`, `--lat-steps` | [Zou, et al. ](https://arxiv.org/abs/2406.04313) + [Casper](https://arxiv.org/abs/2403.05030) | Most robust method: combines CB's representation rerouting with LAT's adversarial robustness. Inner loop finds adversarial δ; outer loop applies Circuit Breaker rerouting with δ injected, forcing the model to reroute even under adversarial pressure. |
+| `wt_dist` | Parameter-Space | `--wt-noise-std` | [Siddiqui et al. 2025](https://arxiv.org/abs/2505.22310) | Weight Distortion: adds Gaussian noise to ALL weights before training, then fine-tunes on retain data only. The noise destroys learned associations; retain fine-tuning recovers useful capabilities while forget knowledge stays degraded. |
+| `wt_dist_reg` | Parameter-Space | `--wt-reg-lambda` | [Siddiqui et al. 2025](https://arxiv.org/abs/2505.22310) | Weight Distance Regularisation: minimises retain NLL while *maximising* L2 distance from pretrained weights. Directly optimises for tamper-resistance — the further weights move, the harder it is to recover the original model via fine-tuning. |
 
 See `uv run unlearn/unlearn.py --help` for full argument reference.
 
@@ -476,56 +509,63 @@ Where $\lambda$ is `--wt-reg-lambda` (default 0.1). The paper shows this produce
 
 ---
 
-#### Training Mode Reference
+#### Hyperparameter Defaults & Tuning Guide
 
-All methods use **full-parameter training** by default. Key shared settings:
+All methods use **full-parameter training** with AdamW + cosine annealing. Shared defaults:
 
 | Setting | Default | Flag |
 |---|---|---|
-| Optimizer | AdamW | — |
-| LR schedule | Cosine annealing | — |
+| Learning rate | 1e-5 | `--lr` |
+| Epochs | 1 | `--epochs` |
+| Batch size | 4 | `--batch-size` |
+| Max sequence length | 512 | `--max-length` |
 | Gradient clipping | 1.0 | `--grad-clip` |
 | Gradient accumulation | 1 | `--grad-accum-steps` |
 | Eval split | 10% | `--eval-split` |
 
----
+##### Per-Method Defaults
+
+| Method | Key Param | Default | What to tune if collapsing | What to tune if not unlearning enough |
+|---|---|---|---|---|
+| `ga` | `--retain-weight` | 1.0 | ↑ to 2–10 | ↓ below 1.0 |
+| `grad_diff` | `--forget-weight` | 1.0 | ↓ to 0.1–0.5 | ↑ to 2–5 |
+| `dpo` | `--beta` | 0.1 | ↓ beta (gentler updates) | ↑ beta (sharper preference) |
+| `npo` | `--beta`, `--retain-weight` | 0.1, 1.0 | ↑ retain-weight or ↓ beta | ↑ beta or ↓ retain-weight |
+| `simnpo` | `--beta`, `--retain-weight` | 0.1, 1.0 | ↑ retain-weight or ↓ beta | ↑ beta or ↓ retain-weight |
+| `rmu` | `--alpha`, `--steering-coeff` | 100.0, 20.0 | ↑ alpha or ↓ steering-coeff | ↓ alpha or ↑ steering-coeff |
+| `cb` | `--alpha`, `--steering-coeff` | 100.0, 20.0 | ↑ alpha or ↓ steering-coeff | ↓ alpha or ↑ steering-coeff |
+| `lat` | `--lat-eps`, `--retain-weight` | 0.1, 1.0 | ↑ retain-weight or ↓ lat-eps | ↑ lat-eps or ↓ retain-weight |
+| `cb_lat` | `--alpha`, `--lat-eps` | 100.0, 0.1 | ↑ alpha or ↓ lat-eps | ↓ alpha or ↑ lat-eps |
+| `wt_dist` | `--wt-noise-std` | 0.02 | ↓ noise (less destruction) | ↑ noise (more disruption) |
+| `wt_dist_reg` | `--wt-reg-lambda` | 0.1 | ↓ lambda (less weight push) | ↑ lambda (more distance) |
+
+> [!TIP]
+> **Preventing catastrophic collapse.** If MMLU drops well below the ~45% baseline, the two most effective levers are:
+> 1. **Increase `--retain-weight`** (for ga/npo/simnpo/lat) or **`--alpha`** (for rmu/cb/cb_lat) — this strengthens the retain-preservation term relative to the forget-ascent term.
+> 2. **Lower the learning rate** (`--lr 5e-6` or `1e-6`) — slower updates give the retain term more weight per step.
+> 3. **More epochs with lower LR** — `EPOCHS=3 LR=5e-6` often works better than 1 epoch at 1e-5.
+>
+> The goal is MMLU within ~3% of the 45% baseline while still showing elevated forget-set NLL.
 
 ## Inference
 
-Run prompts against any HuggingFace model:
+Two inference options are available:
+
+### Command Line Interface
 
 ```bash
-# Single prompt
-uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is biotin?"
-
-# Side-by-side comparison
-uv run infer.py \
-  --model EleutherAI/deep-ignorance-unfiltered \
-  --model-b EleutherAI/deep-ignorance-unfiltered-cb-lat \
-  --prompt "What is biotin?"
-
-# Interactive mode
-uv run infer.py --model EleutherAI/deep-ignorance-unfiltered --interactive
+# Single prompt inference
+uv run infer/cli.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is biotin?"
 ```
 
-### Sweep Mode
+Add `--max-tokens` to control output length (default 200).
 
-Run the same prompt through multiple HuggingFace models and save a comparison CSV:
+### Streamlit Web UI
 
 ```bash
-# Specify models to sweep
-uv run infer.py --sweep --models user/model-a --models user/model-b --prompt "What is biotin?"
-
-# Include the 3 base HF models (unfiltered, filtered, cb-lat)
-uv run infer.py --sweep --include-base --prompt "What is biotin?"
-
-# Combine both
-uv run infer.py --sweep --include-base --models user/my-unlearned --prompt "What is biotin?"
+# Launch interactive web interface
+uv run infer/run.py
 ```
-
-Output is saved to `outputs/inference/<sha256_hash>.csv` with columns: `prompt`, `model`, `model_path`, `output`. The same prompt always maps to the same filename.
-
-Options: `--max-new-tokens`, `--temperature`, `--top-p`, `--greedy`, `--outdir`. See `uv run infer.py --help`.
 
 ---
 

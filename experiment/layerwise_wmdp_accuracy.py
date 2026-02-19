@@ -32,7 +32,10 @@ import argparse
 import json
 import os
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,12 +45,23 @@ from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils import resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
+from utils import (
+    model_outdir,
+    resolve_device,
+    resolve_dtype,
+    write_csv,
+    init_wandb,
+    log_csv_as_table,
+    log_plots,
+    finish_wandb,
+)
 
 
-# ---- helpers ----------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-def get_num_layers(model):
+def get_num_layers(model) -> int:
     """Auto-detect transformer layer count across common architectures."""
     if hasattr(model, "gpt_neox") and hasattr(model.gpt_neox, "layers"):
         return len(model.gpt_neox.layers)
@@ -60,157 +74,193 @@ def get_num_layers(model):
     raise ValueError("Could not determine number of layers for model architecture")
 
 
-def get_final_ln(model):
+def get_final_layer_norm(model):
     """Find the model's final layer norm (applied before lm_head)."""
-    # GPT-NeoX: model.gpt_neox.final_layer_norm
     if hasattr(model, "gpt_neox") and hasattr(model.gpt_neox, "final_layer_norm"):
-        return model.gpt_neox.final_layer_norm
-    # LLaMA / Mistral: model.model.norm
+        return model.gpt_neox.final_layer_norm       # GPT-NeoX
     if hasattr(model, "model") and hasattr(model.model, "norm"):
-        return model.model.norm
-    # GPT-2: model.transformer.ln_f
+        return model.model.norm                       # LLaMA / Mistral
     if hasattr(model, "transformer") and hasattr(model.transformer, "ln_f"):
-        return model.transformer.ln_f
+        return model.transformer.ln_f                 # GPT-2
     return None
 
 
-def logit_lens_project(hidden_states, model):
+def logit_lens_project(hidden_states: torch.Tensor, model) -> torch.Tensor:
     """Project hidden states to vocab logits using the model's own head."""
-    ln = get_final_ln(model)
-    if ln is not None:
-        hidden_states = ln(hidden_states)
+    final_norm = get_final_layer_norm(model)
+    if final_norm is not None:
+        hidden_states = final_norm(hidden_states)
     return model.lm_head(hidden_states)
 
 
-def load_wmdp_bio(max_samples=None):
+def load_wmdp_bio(max_samples: Optional[int] = None) -> List[Dict]:
     """Load WMDP-Bio multiple-choice dataset from HuggingFace.
 
     Returns list of dicts with keys: question, choices, answer (int index).
     """
-    ds = load_dataset("cais/wmdp", "wmdp-bio", split="test")
-    items = []
-    for ex in ds:
-        q = ex.get("question", ex.get("prompt", ""))
-        choices = ex.get("choices", [])
-        answer = ex.get("answer", 0)
-        if q and choices:
-            items.append({"question": q, "choices": choices, "answer": int(answer)})
+    dataset = load_dataset("cais/wmdp", "wmdp-bio", split="test")
+    items: List[Dict] = []
+    for example in dataset:
+        question = example.get("question", example.get("prompt", ""))
+        choices = example.get("choices", [])
+        answer = example.get("answer", 0)
+        if question and choices:
+            items.append({"question": question, "choices": choices, "answer": int(answer)})
     if max_samples:
         items = items[:max_samples]
     return items
 
 
-def score_mcq_at_layer(model, tokenizer, items, layer_idx, device,
-                       max_length=512, project_fn=None):
-    """Evaluate MCQ accuracy at a specific layer.
+# ---------------------------------------------------------------------------
+# MCQ scoring (testable)
+# ---------------------------------------------------------------------------
 
-    For each question, appends each answer choice and computes the average
-    per-token log-prob of the choice continuation.  Picks the highest.
+def score_single_mcq(
+    model,
+    tokenizer,
+    question: str,
+    choices: List[str],
+    layer_index: int,
+    device: str,
+    max_length: int = 512,
+    project_fn=None,
+) -> int:
+    """Return the index of the highest-scoring choice for one MCQ item.
+
+    For each choice, computes the average per-token log-prob of the choice
+    continuation appended to the question.
 
     Args:
-        project_fn: callable(hidden_states) → logits.  If None, uses
-            the model's own output logits (final layer only).
+        project_fn: callable(hidden_states) → logits.  If None, uses the
+            model's native output logits (final layer only).
 
     Returns:
-        accuracy (float), num_correct (int), total (int)
+        predicted choice index (int).
+    """
+    choice_scores: List[float] = []
+    for choice in choices:
+        text = f"{question} {choice}"
+        encoded = tokenizer(
+            text, return_tensors="pt", max_length=max_length, truncation=True,
+        ).to(device)
+        input_ids = encoded["input_ids"]
+
+        with torch.no_grad():
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=encoded["attention_mask"],
+                output_hidden_states=True,
+            )
+            if project_fn is not None:
+                hidden = outputs.hidden_states[layer_index]  # (1, T, D)
+                logits = project_fn(hidden)
+            else:
+                logits = outputs.logits  # final layer
+
+        # Tokenize just the choice to find how many tokens it adds
+        choice_encoded = tokenizer(f" {choice}", add_special_tokens=False)
+        choice_length = len(choice_encoded["input_ids"])
+        if choice_length == 0:
+            choice_scores.append(float("-inf"))
+            continue
+
+        # Score: average log-prob over the last *choice_length* tokens
+        sequence_length = input_ids.size(1)
+        start = max(sequence_length - choice_length - 1, 0)
+        end = sequence_length - 1  # logits are shifted by 1
+
+        log_probs = F.log_softmax(logits[0, start:end, :], dim=-1)
+        target_ids = input_ids[0, start + 1 : end + 1]
+        token_log_probs = log_probs[torch.arange(log_probs.size(0)), target_ids]
+        choice_scores.append(float(token_log_probs.mean().item()))
+
+    return int(np.argmax(choice_scores)) if choice_scores else -1
+
+
+def score_mcq_at_layer(
+    model,
+    tokenizer,
+    items: List[Dict],
+    layer_index: int,
+    device: str,
+    max_length: int = 512,
+    project_fn=None,
+) -> tuple:
+    """Evaluate MCQ accuracy at a specific layer.
+
+    Returns:
+        (accuracy, num_correct, total)
     """
     correct = 0
     total = 0
-
     for item in items:
-        q = item["question"]
-        choices = item["choices"]
-        answer_idx = item["answer"]
-
-        choice_scores = []
-        for choice in choices:
-            # Format: "Question: ... Answer: <choice>"
-            text = f"{q} {choice}"
-            enc = tokenizer(text, return_tensors="pt", max_length=max_length,
-                            truncation=True).to(device)
-            input_ids = enc["input_ids"]
-            attention_mask = enc["attention_mask"]
-
-            with torch.no_grad():
-                outputs = model(input_ids=input_ids,
-                                attention_mask=attention_mask,
-                                output_hidden_states=True)
-
-                if project_fn is not None:
-                    hidden = outputs.hidden_states[layer_idx]  # (1, T, D)
-                    logits = project_fn(hidden)
-                else:
-                    logits = outputs.logits  # final layer
-
-            # Compute log-prob of the choice tokens
-            # Tokenize just the choice to find how many tokens it adds
-            choice_enc = tokenizer(f" {choice}", add_special_tokens=False)
-            choice_len = len(choice_enc["input_ids"])
-            if choice_len == 0:
-                choice_scores.append(float("-inf"))
-                continue
-
-            # Score: average log-prob over the last `choice_len` tokens
-            seq_len = input_ids.size(1)
-            start = max(seq_len - choice_len - 1, 0)
-            end = seq_len - 1  # logits are shifted by 1
-
-            log_probs = F.log_softmax(logits[0, start:end, :], dim=-1)
-            target_ids = input_ids[0, start + 1:end + 1]
-            token_lps = log_probs[torch.arange(log_probs.size(0)), target_ids]
-            avg_lp = token_lps.mean().item()
-            choice_scores.append(avg_lp)
-
-        if choice_scores:
-            predicted = int(np.argmax(choice_scores))
-            if predicted == answer_idx:
-                correct += 1
-            total += 1
+        predicted = score_single_mcq(
+            model, tokenizer, item["question"], item["choices"],
+            layer_index, device, max_length, project_fn,
+        )
+        if predicted == item["answer"]:
+            correct += 1
+        total += 1
 
     accuracy = correct / total if total > 0 else 0.0
     return accuracy, correct, total
 
 
-# ---- tuned lens training ----------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tuned lens
+# ---------------------------------------------------------------------------
 
 class TunedLensProbe(torch.nn.Module):
     """Per-layer affine transform: hidden_dim → vocab_size."""
-    def __init__(self, hidden_dim, vocab_size):
+
+    def __init__(self, hidden_dim: int, vocab_size: int):
         super().__init__()
         self.linear = torch.nn.Linear(hidden_dim, vocab_size)
 
-    def forward(self, hidden_states):
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         return self.linear(hidden_states)
 
 
-def train_tuned_lens(model, tokenizer, train_texts, layer_idx, device,
-                     hidden_dim, vocab_size, max_length=512, batch_size=4,
-                     lr=1e-3, epochs=3):
+def train_tuned_lens(
+    model,
+    tokenizer,
+    train_texts: List[str],
+    layer_index: int,
+    device: str,
+    hidden_dim: int,
+    vocab_size: int,
+    max_length: int = 512,
+    batch_size: int = 4,
+    learning_rate: float = 1e-3,
+    epochs: int = 3,
+) -> TunedLensProbe:
     """Train a tuned lens probe for a single layer.
 
     Uses causal LM loss: the probe must predict the next token from the
     intermediate hidden state at the given layer.
     """
     probe = TunedLensProbe(hidden_dim, vocab_size).to(device)
-    optimizer = torch.optim.Adam(probe.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(probe.parameters(), lr=learning_rate)
 
     probe.train()
     for _epoch in range(epochs):
         np.random.shuffle(train_texts)
-        for i in range(0, len(train_texts), batch_size):
-            batch = train_texts[i:i + batch_size]
-            enc = tokenizer(batch, return_tensors="pt", max_length=max_length,
-                            truncation=True, padding=True).to(device)
+        for batch_start in range(0, len(train_texts), batch_size):
+            batch_texts = train_texts[batch_start : batch_start + batch_size]
+            encoded = tokenizer(
+                batch_texts, return_tensors="pt", max_length=max_length,
+                truncation=True, padding=True,
+            ).to(device)
             with torch.no_grad():
-                out = model(**enc, output_hidden_states=True)
-                hidden = out.hidden_states[layer_idx]  # (B, T, D)
+                outputs = model(**encoded, output_hidden_states=True)
+                hidden = outputs.hidden_states[layer_index]  # (B, T, D)
 
             logits = probe(hidden)[:, :-1, :].contiguous()
-            labels = enc["input_ids"][:, 1:].contiguous()
-            mask = enc["attention_mask"][:, 1:].contiguous().float()
+            target_labels = encoded["input_ids"][:, 1:].contiguous()
+            mask = encoded["attention_mask"][:, 1:].contiguous().float()
 
             loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
+                logits.view(-1, logits.size(-1)), target_labels.view(-1), reduction="none",
             )
             loss = (loss * mask.view(-1)).sum() / mask.sum().clamp(min=1)
 
@@ -222,32 +272,88 @@ def train_tuned_lens(model, tokenizer, train_texts, layer_idx, device,
     return probe
 
 
-# ---- main -------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Plotting helper
+# ---------------------------------------------------------------------------
+
+_LENS_FIELDNAMES = ["layer", "accuracy", "correct", "total"]
+
+
+def plot_wmdp_lens_results(
+    results: List[Dict],
+    final_accuracy: float,
+    lens_type: str,
+    outdir: str,
+    title: Optional[str] = None,
+) -> None:
+    """Create the 1×2 panel of WMDP accuracy and delta plots."""
+    layers = [r["layer"] for r in results]
+    accuracies = [r["accuracy"] for r in results]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # 1. Absolute accuracy by layer
+    axis = axes[0]
+    axis.plot(layers, accuracies, "o-", color="tab:blue", label=f"{lens_type} lens")
+    axis.axhline(final_accuracy, color="tab:orange", ls="--", alpha=0.7,
+                 label=f"Final layer ({final_accuracy:.3f})")
+    axis.axhline(0.25, color="gray", ls=":", alpha=0.5,
+                 label="Random chance (0.25)")
+    axis.set_xlabel("Layer")
+    axis.set_ylabel("WMDP-Bio Accuracy")
+    axis.set_title("WMDP Accuracy by Layer")
+    axis.legend(fontsize=8)
+    axis.grid(alpha=0.3)
+
+    # 2. Delta from final layer
+    axis = axes[1]
+    deltas = [a - final_accuracy for a in accuracies]
+    bar_colors = ["green" if d >= 0 else "red" for d in deltas]
+    axis.bar(layers, deltas, color=bar_colors, alpha=0.6)
+    axis.axhline(0, color="gray", ls="--", alpha=0.5)
+    axis.set_xlabel("Layer")
+    axis.set_ylabel("Δ Accuracy (layer − final)")
+    axis.set_title("Accuracy Delta from Final Layer")
+    axis.grid(alpha=0.3)
+
+    plt.suptitle(title or f"Layer-wise WMDP-Bio Accuracy ({lens_type} lens)", fontsize=12)
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, "wmdp_lens_analysis.png"), dpi=150)
+    plt.close()
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(
-        description="Layer-wise WMDP-Bio accuracy via logit/tuned lens."
+    parser = argparse.ArgumentParser(
+        description="Layer-wise WMDP-Bio accuracy via logit/tuned lens.",
     )
-    ap.add_argument("--model", required=True,
-                    help="Model name or path")
-    ap.add_argument("--lens", choices=["logit", "tuned"], default="logit",
-                    help="Lens type: logit (default) or tuned")
-    ap.add_argument("--device", default="auto")
-    ap.add_argument("--dtype", default="auto")
-    ap.add_argument("--batch-size", type=int, default=8)
-    ap.add_argument("--max-length", type=int, default=512)
-    ap.add_argument("--max-samples", type=int, default=500,
-                    help="Max WMDP questions to evaluate (default: 500)")
-    ap.add_argument("--outdir", required=True)
-    ap.add_argument("--seed", type=int, default=42)
-    # Tuned lens hyperparams
-    ap.add_argument("--tuned-lr", type=float, default=1e-3,
-                    help="Learning rate for tuned lens probes")
-    ap.add_argument("--tuned-epochs", type=int, default=3,
-                    help="Training epochs for tuned lens probes")
-    ap.add_argument("--tuned-train-frac", type=float, default=0.3,
-                    help="Fraction of WMDP data used to train tuned lens (rest for eval)")
-    args = ap.parse_args()
+    parser.add_argument("--model", required=True, help="Model name or path")
+    parser.add_argument("--lens", choices=["logit", "tuned"], default="logit",
+                        help="Lens type: logit (default) or tuned")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--dtype", default="auto")
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--max-length", type=int, default=512)
+    parser.add_argument("--max-samples", type=int, default=500,
+                        help="Max WMDP questions to evaluate (default: 500)")
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: outputs/<model>/wmdp_<lens>_lens)")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--tuned-lr", type=float, default=1e-3,
+                        help="Learning rate for tuned lens probes")
+    parser.add_argument("--tuned-epochs", type=int, default=3,
+                        help="Training epochs for tuned lens probes")
+    parser.add_argument("--tuned-train-frac", type=float, default=0.3,
+                        help="Fraction of WMDP data used to train tuned lens (rest for eval)")
+    parser.add_argument("--title", default=None, help="Title for plots")
+    args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = model_outdir(args.model, suffix=f"wmdp_{args.lens}_lens")
+
     init_wandb("wmdp_lens", args)
 
     np.random.seed(args.seed)
@@ -256,25 +362,26 @@ def main():
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
 
-    # ---- load data ----------------------------------------------------------
-    print(f"[wmdp_lens] Loading WMDP-Bio dataset...")
+    # Load data
+    print("[wmdp_lens] Loading WMDP-Bio dataset...")
     all_items = load_wmdp_bio(max_samples=args.max_samples)
     print(f"[wmdp_lens] {len(all_items)} MCQ items loaded")
 
     # Split for tuned lens training if needed
     if args.lens == "tuned":
         np.random.shuffle(all_items)
-        n_train = int(len(all_items) * args.tuned_train_frac)
-        train_items = all_items[:n_train]
-        eval_items = all_items[n_train:]
-        # Build training texts from train MCQ items (question + correct answer)
-        train_texts = [f"{it['question']} {it['choices'][it['answer']]}"
-                       for it in train_items]
-        print(f"[wmdp_lens] Tuned lens: {n_train} train, {len(eval_items)} eval")
+        num_train = int(len(all_items) * args.tuned_train_frac)
+        train_items = all_items[:num_train]
+        eval_items = all_items[num_train:]
+        train_texts = [
+            f"{item['question']} {item['choices'][item['answer']]}"
+            for item in train_items
+        ]
+        print(f"[wmdp_lens] Tuned lens: {num_train} train, {len(eval_items)} eval")
     else:
         eval_items = all_items
 
-    # ---- load model ---------------------------------------------------------
+    # Load model
     print(f"[wmdp_lens] Loading model: {args.model}")
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
@@ -291,94 +398,60 @@ def main():
 
     os.makedirs(args.outdir, exist_ok=True)
 
-    # ---- evaluate per layer -------------------------------------------------
-    results = []
+    # Evaluate per layer
+    results: List[Dict] = []
     print(f"[wmdp_lens] Evaluating {args.lens} lens across {total_layers} layers...")
 
-    for layer_idx in tqdm(range(total_layers), desc=f"{args.lens} lens", unit="layer"):
+    for layer_index in tqdm(range(total_layers), desc=f"{args.lens} lens", unit="layer"):
         if args.lens == "logit":
-            project_fn = lambda h, m=model: logit_lens_project(h, m)
+            project_fn = lambda hidden, m=model: logit_lens_project(hidden, m)
         else:
-            # Train a tuned lens probe for this layer
-            print(f"\n  Training tuned lens for layer {layer_idx}...")
+            print(f"\n  Training tuned lens for layer {layer_index}...")
             probe = train_tuned_lens(
-                model, tokenizer, train_texts, layer_idx, device,
+                model, tokenizer, train_texts, layer_index, device,
                 hidden_dim, vocab_size, args.max_length, args.batch_size,
                 args.tuned_lr, args.tuned_epochs,
             )
-            project_fn = lambda h, p=probe: p(h)
+            project_fn = lambda hidden, p=probe: p(hidden)
 
-        acc, n_correct, n_total = score_mcq_at_layer(
-            model, tokenizer, eval_items, layer_idx, device,
+        accuracy, num_correct, num_total = score_mcq_at_layer(
+            model, tokenizer, eval_items, layer_index, device,
             args.max_length, project_fn=project_fn,
         )
 
         results.append({
-            "layer": layer_idx,
-            "accuracy": round(float(acc), 4),
-            "correct": n_correct,
-            "total": n_total,
+            "layer": layer_index,
+            "accuracy": round(float(accuracy), 4),
+            "correct": num_correct,
+            "total": num_total,
         })
 
-    # ---- final layer reference (using model's own logits, no lens) ----------
-    final_acc, final_correct, final_total = score_mcq_at_layer(
+    # Final-layer reference (using model's own logits, no lens)
+    final_accuracy, final_correct, final_total = score_mcq_at_layer(
         model, tokenizer, eval_items, -1, device,
         args.max_length, project_fn=None,
     )
-    print(f"\n[wmdp_lens] Final-layer accuracy (native): {final_acc:.4f} ({final_correct}/{final_total})")
+    print(f"\n[wmdp_lens] Final-layer accuracy (native): {final_accuracy:.4f} ({final_correct}/{final_total})")
 
-    # ---- save CSV -----------------------------------------------------------
-    fieldnames = ["layer", "accuracy", "correct", "total"]
-    write_csv(os.path.join(args.outdir, "wmdp_lens_results.csv"), results, fieldnames)
+    # Save CSV
+    write_csv(os.path.join(args.outdir, "wmdp_lens_results.csv"), results, _LENS_FIELDNAMES)
 
-    # ---- summary JSON -------------------------------------------------------
+    # Summary JSON
     best = max(results, key=lambda r: r["accuracy"])
     summary = {
         "model": args.model,
         "lens": args.lens,
         "num_layers": total_layers,
         "max_samples": args.max_samples,
-        "final_layer_accuracy": final_acc,
+        "final_layer_accuracy": final_accuracy,
         "best_layer": best["layer"],
         "best_layer_accuracy": best["accuracy"],
     }
-    with open(os.path.join(args.outdir, "summary.json"), "w") as f:
-        json.dump(summary, f, indent=2)
+    with open(os.path.join(args.outdir, "summary.json"), "w") as fh:
+        json.dump(summary, fh, indent=2)
 
-    # ---- plots --------------------------------------------------------------
-    layers = [r["layer"] for r in results]
-    accs = [r["accuracy"] for r in results]
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-    # 1. Absolute accuracy by layer
-    ax = axes[0]
-    ax.plot(layers, accs, "o-", color="tab:blue", label=f"{args.lens} lens")
-    ax.axhline(final_acc, color="tab:orange", ls="--", alpha=0.7,
-               label=f"Final layer ({final_acc:.3f})")
-    ax.axhline(0.25, color="gray", ls=":", alpha=0.5,
-               label="Random chance (0.25)")
-    ax.set_xlabel("Layer")
-    ax.set_ylabel("WMDP-Bio Accuracy")
-    ax.set_title("WMDP Accuracy by Layer")
-    ax.legend(fontsize=8)
-    ax.grid(alpha=0.3)
-
-    # 2. Delta from final layer
-    ax = axes[1]
-    deltas = [a - final_acc for a in accs]
-    colors = ["green" if d >= 0 else "red" for d in deltas]
-    ax.bar(layers, deltas, color=colors, alpha=0.6)
-    ax.axhline(0, color="gray", ls="--", alpha=0.5)
-    ax.set_xlabel("Layer")
-    ax.set_ylabel("Δ Accuracy (layer − final)")
-    ax.set_title("Accuracy Delta from Final Layer")
-    ax.grid(alpha=0.3)
-
-    plt.suptitle(f"Layer-wise WMDP-Bio Accuracy — {args.model} ({args.lens} lens)", fontsize=12)
-    plt.tight_layout()
-    plt.savefig(os.path.join(args.outdir, "wmdp_lens_analysis.png"), dpi=150)
-    plt.close()
+    # Plots
+    plot_wmdp_lens_results(results, final_accuracy, args.lens, args.outdir, title=args.title)
 
     print(f"\n[wmdp_lens] ✓ Results saved to {args.outdir}")
     print(f"[wmdp_lens] Best layer: {best['layer']} (accuracy={best['accuracy']:.4f})")

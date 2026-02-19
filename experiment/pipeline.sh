@@ -80,10 +80,10 @@ echo "Output root: $OUTROOT"
 echo ""
 
 # ============================================
-# STEP 0: MMLU Evaluation (per-model)
+# STEP 0: Benchmark Evaluation (per-model)
 # ============================================
 echo "=========================================="
-echo "STEP 0: MMLU Evaluation (General Capabilities)"
+echo "STEP 0: Benchmark Evaluation (MMLU, WMDP, HellaSwag, TruthfulQA)"
 echo "=========================================="
 echo "Quick sanity check — identifies collapsed models before expensive diagnostics."
 echo "(Results stored per-model, not per-comparison)"
@@ -91,47 +91,44 @@ echo "(Results stored per-model, not per-comparison)"
 echo ""
 echo "Model: $BASE"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_BASE}/mmlu" "summary.json"; then
+if step_complete "${OUTROOT}/${MODEL_BASE}/evals" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/eval_mmlu.py \
+  uv run experiment/eval.py \
     --model "$BASE" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_BASE}/mmlu"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
 echo "Model: $FILTERED"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_FILTERED}/mmlu" "summary.json"; then
+if step_complete "${OUTROOT}/${MODEL_FILTERED}/evals" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/eval_mmlu.py \
+  uv run experiment/eval.py \
     --model "$FILTERED" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_FILTERED}/mmlu"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
 echo "Model: $UNLEARNED"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/mmlu" "summary.json"; then
+if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/evals" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/eval_mmlu.py \
+  uv run experiment/eval.py \
     --model "$UNLEARNED" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/mmlu"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
 # STEP 1: Parameter Statistics
 # ============================================
 echo "=========================================="
-echo "STEP 1: Collecting Parameter Statistics"
+echo "STEP 1: Parameter Statistics (Collect + Plot)"
 echo "=========================================="
 
 echo ""
@@ -140,12 +137,12 @@ echo "----------------------------------------"
 if step_complete "${OUTROOT}/${COMP1}/param_stats" "per_layer.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/collect_param_stats.py \
+  uv run experiment/param_stats.py \
     --model-a "$BASE" \
     --model-b "$FILTERED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/param_stats"
+    --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-e2e-strong-filter"
 fi
 
 echo ""
@@ -154,12 +151,12 @@ echo "----------------------------------------"
 if step_complete "${OUTROOT}/${COMP2}/param_stats" "per_layer.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/collect_param_stats.py \
+  uv run experiment/param_stats.py \
     --model-a "$BASE" \
     --model-b "$UNLEARNED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/param_stats"
+    --title "$BASE → $UNLEARNED"
 fi
 
 echo ""
@@ -168,50 +165,20 @@ echo "----------------------------------------"
 if step_complete "${OUTROOT}/${COMP3}/param_stats" "per_layer.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/collect_param_stats.py \
+  uv run experiment/param_stats.py \
     --model-a "$BASE" \
     --model-b "$PRETRAIN" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP3}/param_stats"
+    --title "$BASE → $PRETRAIN"
 fi
 
 # ============================================
-# STEP 2: Plot Parameter Statistics
+# STEP 2: Generate Test Datasets
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 2: Plotting Parameter Statistics"
-echo "=========================================="
-
-echo ""
-echo "Plotting Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/param_plots" "layer_locality_mlp.png"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/plot_param_stats.py \
-    --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_layer.csv" \
-    --outdir "${OUTROOT}/${COMP1}/param_plots" \
-    --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-e2e-strong-filter"
-fi
-
-echo ""
-echo "Plotting Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/param_plots" "layer_locality_mlp.png"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/plot_param_stats.py \
-    --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
-    --outdir "${OUTROOT}/${COMP2}/param_plots" \
-    --title "$BASE → $UNLEARNED"
-fi
-
-# ============================================
-# STEP 3: Generate Test Datasets
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 3: Generating Test Datasets"
+echo "STEP 2: Generating Test Datasets"
 echo "=========================================="
 if [[ -f "$FORGET" && -f "$RETAIN" && "$FORCE" != "1" ]]; then
   echo "  ✓ Datasets already exist — skipping"
@@ -220,11 +187,11 @@ else
 fi
 
 # ============================================
-# STEP 4: Activation Analysis
+# STEP 3: Activation Norms
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 4: Collecting Activation Norms"
+echo "STEP 3: Activation Norms"
 echo "=========================================="
 
 if [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
@@ -236,14 +203,14 @@ else
   if step_complete "${OUTROOT}/${COMP1}/activation_stats" "activation_stats.csv"; then
     echo "  ✓ Already complete — skipping"
   else
-    uv run experiment/collect_activation_norms.py \
+    uv run experiment/activation_norms.py \
       --model-a "$BASE" \
       --model-b "$FILTERED" \
       --forget-text "$FORGET" \
       --retain-text "$RETAIN" \
       --device "$ACTIVATION_DEVICE" \
       --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${COMP1}/activation_stats"
+      --title "E2E Strong Filter: Activation Norms"
   fi
 
   echo ""
@@ -252,38 +219,23 @@ else
   if step_complete "${OUTROOT}/${COMP2}/activation_stats" "activation_stats.csv"; then
     echo "  ✓ Already complete — skipping"
   else
-    uv run experiment/collect_activation_norms.py \
+    uv run experiment/activation_norms.py \
       --model-a "$BASE" \
       --model-b "$UNLEARNED" \
       --forget-text "$FORGET" \
       --retain-text "$RETAIN" \
       --device "$ACTIVATION_DEVICE" \
       --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${COMP2}/activation_stats"
+      --title "${UNLEARNED##*/}: Activation Norms"
   fi
 fi
 
 # ============================================
-# STEP 5: Plot Activation Norms
+# STEP 4: MLP vs Attention Analysis
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 5: Plotting Activation Norms"
-echo "=========================================="
-if step_complete "${OUTROOT}/${COMP1}/activation_plots" "activation_norms_forget.png"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/plot_activation_norms.py \
-    --indir "$OUTROOT" \
-    --outdir "$OUTROOT"
-fi
-
-# ============================================
-# STEP 6: MLP vs Attention Analysis
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 6: MLP vs Attention Analysis"
+echo "STEP 4: MLP vs Attention Analysis"
 echo "=========================================="
 
 echo ""
@@ -311,6 +263,112 @@ else
 fi
 
 # ============================================
+# STEP 5: Linear Probe Analysis (per-model)
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 5: Linear Probe Analysis"
+echo "=========================================="
+echo "Training per-layer linear probes to locate forget-set knowledge..."
+echo "(Results stored per-model, not per-comparison)"
+
+echo ""
+echo "Model: $BASE"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${MODEL_BASE}/linear_probes" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/linear_probe_analysis.py \
+    --model "$BASE" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+echo ""
+echo "Model: $FILTERED"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${MODEL_FILTERED}/linear_probes" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/linear_probe_analysis.py \
+    --model "$FILTERED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+echo ""
+echo "Model: $UNLEARNED"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/linear_probes" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/linear_probe_analysis.py \
+    --model "$UNLEARNED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
+fi
+
+# ============================================
+# STEP 6: Layer-wise WMDP Accuracy (per-model)
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 6: Layer-wise WMDP Accuracy (Logit + Tuned Lens)"
+echo "=========================================="
+echo "Measuring WMDP-Bio MCQ accuracy at every transformer layer..."
+echo "(Results stored per-model, not per-comparison)"
+
+for LENS in logit tuned; do
+  echo ""
+  echo "--- Lens: ${LENS} ---"
+
+  echo ""
+  echo "Model: $BASE"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens" "summary.json"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/layerwise_wmdp_accuracy.py \
+      --model "$BASE" \
+      --lens "$LENS" \
+      --device "$ACTIVATION_DEVICE" \
+      --dtype "$ACTIVATION_DTYPE"
+  fi
+
+  echo ""
+  echo "Model: $FILTERED"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens" "summary.json"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/layerwise_wmdp_accuracy.py \
+      --model "$FILTERED" \
+      --lens "$LENS" \
+      --device "$ACTIVATION_DEVICE" \
+      --dtype "$ACTIVATION_DTYPE"
+  fi
+
+  echo ""
+  echo "Model: $UNLEARNED"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens" "summary.json"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/layerwise_wmdp_accuracy.py \
+      --model "$UNLEARNED" \
+      --lens "$LENS" \
+      --device "$ACTIVATION_DEVICE" \
+      --dtype "$ACTIVATION_DTYPE"
+  fi
+done
+
+# ============================================
 # STEP 7: Null Space & Subspace Analysis
 # ============================================
 echo ""
@@ -327,7 +385,6 @@ else
   uv run experiment/null_space_analysis.py \
     --model-a "$BASE" \
     --model-b "$FILTERED" \
-    --outdir "${OUTROOT}/${COMP1}/null_space_analysis" \
     --num-samples 50
 fi
 
@@ -339,7 +396,6 @@ else
   uv run experiment/null_space_analysis.py \
     --model-a "$BASE" \
     --model-b "$UNLEARNED" \
-    --outdir "${OUTROOT}/${COMP2}/null_space_analysis" \
     --num-samples 50
 fi
 
@@ -363,8 +419,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/activation_separation"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -378,8 +433,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/activation_separation"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
@@ -402,8 +456,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/activation_covariance"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -417,8 +470,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/activation_covariance"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
@@ -432,28 +484,26 @@ echo "Analyzing if MLP updates align with nullspace..."
 
 echo ""
 echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/mlp_nullspace" "summary.json"; then
+if step_complete "${OUTROOT}/${COMP1}/mlp_nullspace_alignment" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/mlp_nullspace_alignment.py \
     --model-a "$BASE" \
     --model-b "$FILTERED" \
     --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/mlp_nullspace"
+    --dtype "$PARAM_DTYPE"
 fi
 
 echo ""
 echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/mlp_nullspace" "summary.json"; then
+if step_complete "${OUTROOT}/${COMP2}/mlp_nullspace_alignment" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/mlp_nullspace_alignment.py \
     --model-a "$BASE" \
     --model-b "$UNLEARNED" \
     --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/mlp_nullspace"
+    --dtype "$PARAM_DTYPE"
 fi
 
 # ============================================
@@ -476,8 +526,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/row_space_projection"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
@@ -491,8 +540,7 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/row_space_projection"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
@@ -506,7 +554,7 @@ echo "Analyzing local smoothness changes..."
 
 echo ""
 echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/lipschitzness" "summary.json"; then
+if step_complete "${OUTROOT}/${COMP1}/lipschitzness_analysis" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/local_lipschitzness_analysis.py \
@@ -515,13 +563,12 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/lipschitzness"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 echo ""
 echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/lipschitzness" "summary.json"; then
+if step_complete "${OUTROOT}/${COMP2}/lipschitzness_analysis" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/local_lipschitzness_analysis.py \
@@ -530,128 +577,15 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/lipschitzness"
+    --dtype "$ACTIVATION_DTYPE"
 fi
 
 # ============================================
-# STEP 13: Linear Probe Analysis (per-model)
+# STEP 13: Weight Comparison (per-component cosine sim & Frobenius)
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 13: Linear Probe Analysis"
-echo "=========================================="
-echo "Training per-layer linear probes to locate forget-set knowledge..."
-echo "(Results stored per-model, not per-comparison)"
-
-echo ""
-echo "Model: $BASE"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_BASE}/linear_probes" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/linear_probe_analysis.py \
-    --model "$BASE" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_BASE}/linear_probes"
-fi
-
-echo ""
-echo "Model: $FILTERED"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_FILTERED}/linear_probes" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/linear_probe_analysis.py \
-    --model "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_FILTERED}/linear_probes"
-fi
-
-echo ""
-echo "Model: $UNLEARNED"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/linear_probes" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/linear_probe_analysis.py \
-    --model "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/linear_probes"
-fi
-
-# ============================================
-# STEP 14: Layer-wise WMDP Accuracy (per-model)
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 14: Layer-wise WMDP Accuracy (Logit + Tuned Lens)"
-echo "=========================================="
-echo "Measuring WMDP-Bio MCQ accuracy at every transformer layer..."
-echo "(Results stored per-model, not per-comparison)"
-
-for LENS in logit tuned; do
-  echo ""
-  echo "--- Lens: ${LENS} ---"
-
-  echo ""
-  echo "Model: $BASE"
-  echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens" "summary.json"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/layerwise_wmdp_accuracy.py \
-      --model "$BASE" \
-      --lens "$LENS" \
-      --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens"
-  fi
-
-  echo ""
-  echo "Model: $FILTERED"
-  echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens" "summary.json"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/layerwise_wmdp_accuracy.py \
-      --model "$FILTERED" \
-      --lens "$LENS" \
-      --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens"
-  fi
-
-  echo ""
-  echo "Model: $UNLEARNED"
-  echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens" "summary.json"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/layerwise_wmdp_accuracy.py \
-      --model "$UNLEARNED" \
-      --lens "$LENS" \
-      --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens"
-  fi
-done
-
-# ============================================
-# STEP 15: Weight Comparison (per-component cosine sim & Frobenius)
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 15: Weight Comparison"
+echo "STEP 13: Weight Comparison"
 echo "=========================================="
 echo "Computing per-component cosine similarity & relative Frobenius between checkpoints..."
 
@@ -759,11 +693,12 @@ echo "    mlp_attn_analysis/     summary CSV + plots"
 echo "    null_space_analysis/   null_space_results.csv + plots"
 echo "    activation_separation/ separation metrics + plots"
 echo "    activation_covariance/ covariance spectra + plots"
-echo "    mlp_nullspace/         alignment metrics + plots"
+echo "    mlp_nullspace_alignment/ alignment metrics + plots"
 echo "    row_space_projection/  projection metrics + plots"
-echo "    lipschitzness/         Lipschitz estimates + plots"
+echo "    lipschitzness_analysis/  Lipschitz estimates + plots"
 echo ""
 echo "  <model>/"
+echo "    evals/                 summary.json (MMLU, WMDP, HellaSwag, TruthfulQA)"
 echo "    linear_probes/         probe_results.csv, summary.json + plot"
 echo "    wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot"
 echo "    wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot"

@@ -25,8 +25,10 @@ import argparse
 import json
 import os
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from typing import Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,31 +38,52 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils import resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
+from utils import (
+    model_outdir,
+    resolve_device,
+    resolve_dtype,
+    write_csv,
+    init_wandb,
+    log_csv_as_table,
+    log_plots,
+    finish_wandb,
+)
 
 
-# ---- helpers ----------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-def get_activations(model, tokenizer, texts, layer_idx, device,
-                    max_length=512, batch_size=8):
-    """Last-token hidden states at *layer_idx* for a list of texts."""
-    activations = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i + batch_size]
-        inputs = tokenizer(batch, return_tensors="pt", padding=True,
-                           truncation=True, max_length=max_length).to(device)
+def get_activations(
+    model,
+    tokenizer,
+    texts: List[str],
+    layer_index: int,
+    device: str,
+    max_length: int = 512,
+    batch_size: int = 8,
+) -> np.ndarray:
+    """Last-token hidden states at *layer_index* for a list of texts."""
+    all_activations: List[np.ndarray] = []
+    for batch_start in range(0, len(texts), batch_size):
+        batch_texts = texts[batch_start : batch_start + batch_size]
+        inputs = tokenizer(
+            batch_texts, return_tensors="pt", padding=True,
+            truncation=True, max_length=max_length,
+        ).to(device)
         with torch.no_grad():
-            out = model(**inputs, output_hidden_states=True)
-            hidden = out.hidden_states[layer_idx]       # (B, T, D)
-            # Use last non-padding token (causal LMs accumulate context left-to-right)
-            attn_mask = inputs["attention_mask"]         # (B, T)
-            seq_lens = attn_mask.sum(dim=1) - 1         # index of last real token
-            last_tok = hidden[torch.arange(hidden.size(0), device=device), seq_lens]  # (B, D)
-            activations.append(last_tok.cpu().float().numpy())
-    return np.vstack(activations)
+            outputs = model(**inputs, output_hidden_states=True)
+            hidden = outputs.hidden_states[layer_index]        # (B, T, D)
+            attention_mask = inputs["attention_mask"]           # (B, T)
+            sequence_lengths = attention_mask.sum(dim=1) - 1    # index of last real token
+            last_token = hidden[
+                torch.arange(hidden.size(0), device=device), sequence_lengths
+            ]  # (B, D)
+            all_activations.append(last_token.cpu().float().numpy())
+    return np.vstack(all_activations)
 
 
-def get_num_layers(model):
+def get_num_layers(model) -> int:
     """Auto-detect transformer layer count across common architectures."""
     if hasattr(model, "gpt_neox") and hasattr(model.gpt_neox, "layers"):
         return len(model.gpt_neox.layers)
@@ -73,30 +96,178 @@ def get_num_layers(model):
     raise ValueError("Could not determine number of layers for model architecture")
 
 
-# ---- main -------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Core probe training (testable, no I/O)
+# ---------------------------------------------------------------------------
+
+_PROBE_FIELDNAMES = [
+    "layer",
+    "test_accuracy",
+    "train_accuracy",
+    "selectivity",
+    "auc",
+    "majority_baseline",
+]
+
+
+def train_probe(
+    forget_features: np.ndarray,
+    retain_features: np.ndarray,
+    regularisation_strength: float = 1.0,
+    max_iterations: int = 1000,
+    seed: int = 42,
+    layer_index: int = 0,
+) -> Dict[str, float]:
+    """Train a logistic-regression probe to classify forget vs retain.
+
+    Args:
+        forget_features: (N_forget, D) activation array.
+        retain_features: (N_retain, D) activation array.
+        regularisation_strength: Inverse regularisation (sklearn *C*).
+        max_iterations: Solver iteration limit.
+        seed: Random state for reproducibility.
+        layer_index: Added to the seed for the train/test split.
+
+    Returns a dict with test_accuracy, train_accuracy, selectivity, auc,
+    and majority_baseline.
+    """
+    num_forget = len(forget_features)
+    num_retain = len(retain_features)
+    labels = np.array([0] * num_forget + [1] * num_retain)  # 0=forget, 1=retain
+    majority_baseline = max(num_forget, num_retain) / (num_forget + num_retain)
+
+    combined_features = np.vstack([forget_features, retain_features])
+
+    # Reproducible train/test split (80/20)
+    rng = np.random.RandomState(seed + layer_index)
+    shuffled_indices = rng.permutation(len(combined_features))
+    split_point = int(0.8 * len(combined_features))
+
+    train_features = combined_features[shuffled_indices[:split_point]]
+    test_features = combined_features[shuffled_indices[split_point:]]
+    train_labels = labels[shuffled_indices[:split_point]]
+    test_labels = labels[shuffled_indices[split_point:]]
+
+    # Train probe
+    probe = LogisticRegression(
+        C=regularisation_strength, max_iter=max_iterations,
+        solver="lbfgs", random_state=seed,
+    )
+    probe.fit(train_features, train_labels)
+
+    train_accuracy = float(accuracy_score(train_labels, probe.predict(train_features)))
+    test_accuracy = float(accuracy_score(test_labels, probe.predict(test_features)))
+    selectivity = test_accuracy - majority_baseline
+
+    # AUC (may be undefined if only one class in test split)
+    try:
+        predicted_probabilities = probe.predict_proba(test_features)[:, 1]
+        auc_score = float(roc_auc_score(test_labels, predicted_probabilities))
+    except Exception:
+        auc_score = 0.5
+
+    return {
+        "test_accuracy": round(test_accuracy, 4),
+        "train_accuracy": round(train_accuracy, 4),
+        "selectivity": round(float(selectivity), 4),
+        "auc": round(auc_score, 4),
+        "majority_baseline": round(float(majority_baseline), 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plotting helper
+# ---------------------------------------------------------------------------
+
+def plot_probe_results(
+    results: List[Dict],
+    outdir: str,
+    title: Optional[str] = None,
+) -> None:
+    """Create the 1×2 panel of probe accuracy/selectivity and AUC plots."""
+    layers = [r["layer"] for r in results]
+    majority_baseline = results[0]["majority_baseline"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # 1. Accuracy + Selectivity (twin y-axis)
+    axis = axes[0]
+    axis.plot(
+        layers, [r["test_accuracy"] for r in results], "o-",
+        color="tab:blue", label="Test accuracy",
+    )
+    axis.plot(
+        layers, [r["train_accuracy"] for r in results], "s--",
+        alpha=0.5, color="tab:cyan", label="Train accuracy",
+    )
+    axis.axhline(
+        majority_baseline, color="gray", ls="--", alpha=0.6,
+        label=f"Majority baseline ({majority_baseline:.2f})",
+    )
+    axis.set_xlabel("Layer")
+    axis.set_ylabel("Accuracy")
+    axis.grid(alpha=0.3)
+
+    selectivity_axis = axis.twinx()
+    selectivity_values = [r["selectivity"] for r in results]
+    bar_colors = ["green" if s > 0 else "red" for s in selectivity_values]
+    selectivity_axis.bar(layers, selectivity_values, color=bar_colors, alpha=0.25, label="Selectivity")
+    selectivity_axis.axhline(0, color="gray", ls=":", alpha=0.4)
+    selectivity_axis.set_ylabel("Selectivity (acc − baseline)")
+
+    # Combined legend from both axes
+    handles_main, labels_main = axis.get_legend_handles_labels()
+    handles_sel, labels_sel = selectivity_axis.get_legend_handles_labels()
+    axis.legend(handles_main + handles_sel, labels_main + labels_sel, loc="best", fontsize=8)
+    axis.set_title("Probe Accuracy & Selectivity by Layer")
+
+    # 2. AUC
+    axis = axes[1]
+    axis.plot(layers, [r["auc"] for r in results], "o-", color="purple")
+    axis.axhline(0.5, color="gray", ls="--", alpha=0.5, label="Chance (0.5)")
+    axis.set_xlabel("Layer")
+    axis.set_ylabel("ROC AUC")
+    axis.set_title("Probe AUC by Layer")
+    axis.legend()
+    axis.grid(alpha=0.3)
+
+    plt.suptitle(title or "Linear Probe Analysis", fontsize=13)
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, "linear_probe_analysis.png"), dpi=150)
+    plt.close()
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(
-        description="Per-layer linear-probe analysis for a single model."
+    parser = argparse.ArgumentParser(
+        description="Per-layer linear-probe analysis for a single model.",
     )
-    ap.add_argument("--model", required=True,
-                    help="Model name or path (e.g. EleutherAI/deep-ignorance-unfiltered)")
-    ap.add_argument("--forget-text", default="data/forget.txt")
-    ap.add_argument("--retain-text", default="data/retain.txt")
-    ap.add_argument("--device", default="auto")
-    ap.add_argument("--dtype", default="auto")
-    ap.add_argument("--batch-size", type=int, default=8)
-    ap.add_argument("--max-length", type=int, default=512)
-    ap.add_argument("--max-samples", type=int, default=500,
-                    help="Max texts per split (default: 500)")
-    ap.add_argument("--outdir", required=True)
-    ap.add_argument("--seed", type=int, default=42)
-    # Probe hyperparameters
-    ap.add_argument("--C", type=float, default=1.0,
-                    help="Logistic-regression inverse regularisation strength")
-    ap.add_argument("--max-iter", type=int, default=1000,
-                    help="Solver max iterations for logistic regression")
-    args = ap.parse_args()
+    parser.add_argument("--model", required=True,
+                        help="Model name or path (e.g. EleutherAI/deep-ignorance-unfiltered)")
+    parser.add_argument("--forget-text", default="data/forget.txt")
+    parser.add_argument("--retain-text", default="data/retain.txt")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--dtype", default="auto")
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--max-length", type=int, default=512)
+    parser.add_argument("--max-samples", type=int, default=500,
+                        help="Max texts per split (default: 500)")
+    parser.add_argument("--outdir", default=None,
+                        help="Output dir (default: outputs/<model>/linear_probes)")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--C", type=float, default=1.0,
+                        help="Logistic-regression inverse regularisation strength")
+    parser.add_argument("--max-iter", type=int, default=1000,
+                        help="Solver max iterations for logistic regression")
+    parser.add_argument("--title", default=None, help="Title for plots")
+    args = parser.parse_args()
+
+    if args.outdir is None:
+        args.outdir = model_outdir(args.model, suffix="linear_probes")
+
     init_wandb("linear_probe", args)
 
     np.random.seed(args.seed)
@@ -105,18 +276,15 @@ def main():
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
 
-    # ---- load data ----------------------------------------------------------
-    print(f"[linear_probe] Loading forget/retain texts...")
-    with open(args.forget_text) as f:
-        forget_texts = [l.strip() for l in f if l.strip()]
-    with open(args.retain_text) as f:
-        retain_texts = [l.strip() for l in f if l.strip()]
-
-    forget_texts = forget_texts[:args.max_samples]
-    retain_texts = retain_texts[:args.max_samples]
+    # Load data
+    print("[linear_probe] Loading forget/retain texts...")
+    with open(args.forget_text) as fh:
+        forget_texts = [line.strip() for line in fh if line.strip()][:args.max_samples]
+    with open(args.retain_text) as fh:
+        retain_texts = [line.strip() for line in fh if line.strip()][:args.max_samples]
     print(f"[linear_probe] {len(forget_texts)} forget, {len(retain_texts)} retain samples")
 
-    # ---- load model ---------------------------------------------------------
+    # Load model
     print(f"[linear_probe] Loading model: {args.model}")
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
@@ -131,120 +299,49 @@ def main():
 
     os.makedirs(args.outdir, exist_ok=True)
 
-    # ---- labels & majority baseline -----------------------------------------
-    n_forget = len(forget_texts)
-    n_retain = len(retain_texts)
-    y = np.array([0] * n_forget + [1] * n_retain)   # 0=forget, 1=retain
-    majority_baseline = max(n_forget, n_retain) / (n_forget + n_retain)
-
-    # ---- per-layer probing --------------------------------------------------
-    results = []
+    # Per-layer probing
+    results: List[Dict] = []
     print(f"[linear_probe] Training probes (C={args.C}, max_iter={args.max_iter})...")
 
-    for layer_idx in tqdm(range(total_layers), desc="Probing layers", unit="layer"):
-        # Extract activations
-        forget_acts = get_activations(model, tokenizer, forget_texts,
-                                      layer_idx, device, args.max_length, args.batch_size)
-        retain_acts = get_activations(model, tokenizer, retain_texts,
-                                      layer_idx, device, args.max_length, args.batch_size)
-        X = np.vstack([forget_acts, retain_acts])
+    for layer_index in tqdm(range(total_layers), desc="Probing layers", unit="layer"):
+        forget_activations = get_activations(
+            model, tokenizer, forget_texts, layer_index, device, args.max_length, args.batch_size,
+        )
+        retain_activations = get_activations(
+            model, tokenizer, retain_texts, layer_index, device, args.max_length, args.batch_size,
+        )
 
-        # Reproducible train/test split (80/20)
-        rng = np.random.RandomState(args.seed + layer_idx)
-        idx = rng.permutation(len(X))
-        split = int(0.8 * len(X))
-        X_train, X_test = X[idx[:split]], X[idx[split:]]
-        y_train, y_test = y[idx[:split]], y[idx[split:]]
+        metrics = train_probe(
+            forget_activations, retain_activations,
+            regularisation_strength=args.C,
+            max_iterations=args.max_iter,
+            seed=args.seed,
+            layer_index=layer_index,
+        )
+        metrics["layer"] = layer_index
+        results.append(metrics)
 
-        # Train probe
-        clf = LogisticRegression(C=args.C, max_iter=args.max_iter,
-                                 solver="lbfgs", random_state=args.seed)
-        clf.fit(X_train, y_train)
+    # Save CSV
+    write_csv(os.path.join(args.outdir, "probe_results.csv"), results, _PROBE_FIELDNAMES)
 
-        train_acc = accuracy_score(y_train, clf.predict(X_train))
-        test_acc = accuracy_score(y_test, clf.predict(X_test))
-        selectivity = test_acc - majority_baseline
-
-        # AUC (may be undefined if only one class in test split)
-        try:
-            proba = clf.predict_proba(X_test)[:, 1]
-            auc = roc_auc_score(y_test, proba)
-        except Exception:
-            auc = 0.5
-
-        results.append({
-            "layer": layer_idx,
-            "test_accuracy": round(float(test_acc), 4),
-            "train_accuracy": round(float(train_acc), 4),
-            "selectivity": round(float(selectivity), 4),
-            "auc": round(float(auc), 4),
-            "majority_baseline": round(float(majority_baseline), 4),
-        })
-
-    # ---- save CSV -----------------------------------------------------------
-    fieldnames = ["layer", "test_accuracy", "train_accuracy",
-                  "selectivity", "auc", "majority_baseline"]
-    write_csv(os.path.join(args.outdir, "probe_results.csv"), results, fieldnames)
-
-    # ---- summary JSON -------------------------------------------------------
+    # Summary JSON
     best = max(results, key=lambda r: r["selectivity"])
     summary = {
         "model": args.model,
         "num_layers": total_layers,
         "probe_C": args.C,
         "probe_max_iter": args.max_iter,
-        "majority_baseline": majority_baseline,
+        "majority_baseline": best["majority_baseline"],
         "best_layer": best["layer"],
         "best_selectivity": best["selectivity"],
         "best_accuracy": best["test_accuracy"],
         "best_auc": best["auc"],
     }
-    with open(os.path.join(args.outdir, "summary.json"), "w") as f:
-        json.dump(summary, f, indent=2)
+    with open(os.path.join(args.outdir, "summary.json"), "w") as fh:
+        json.dump(summary, fh, indent=2)
 
-    # ---- plots --------------------------------------------------------------
-    layers = [r["layer"] for r in results]
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-    # 1. Accuracy + Selectivity (twin y-axis)
-    ax = axes[0]
-    ax.plot(layers, [r["test_accuracy"] for r in results], "o-", color="tab:blue",
-            label="Test accuracy")
-    ax.plot(layers, [r["train_accuracy"] for r in results], "s--", alpha=0.5,
-            color="tab:cyan", label="Train accuracy")
-    ax.axhline(majority_baseline, color="gray", ls="--", alpha=0.6,
-               label=f"Majority baseline ({majority_baseline:.2f})")
-    ax.set_xlabel("Layer")
-    ax.set_ylabel("Accuracy")
-    ax.grid(alpha=0.3)
-
-    ax2 = ax.twinx()
-    sel_vals = [r["selectivity"] for r in results]
-    colors = ["green" if s > 0 else "red" for s in sel_vals]
-    ax2.bar(layers, sel_vals, color=colors, alpha=0.25, label="Selectivity")
-    ax2.axhline(0, color="gray", ls=":", alpha=0.4)
-    ax2.set_ylabel("Selectivity (acc − baseline)")
-
-    # Combined legend from both axes
-    lines1, labels1 = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines1 + lines2, labels1 + labels2, loc="best", fontsize=8)
-    ax.set_title("Probe Accuracy & Selectivity by Layer")
-
-    # 2. AUC
-    ax = axes[1]
-    ax.plot(layers, [r["auc"] for r in results], "o-", color="purple")
-    ax.axhline(0.5, color="gray", ls="--", alpha=0.5, label="Chance (0.5)")
-    ax.set_xlabel("Layer")
-    ax.set_ylabel("ROC AUC")
-    ax.set_title("Probe AUC by Layer")
-    ax.legend()
-    ax.grid(alpha=0.3)
-
-    plt.suptitle(f"Linear Probe Analysis — {args.model}", fontsize=13)
-    plt.tight_layout()
-    plt.savefig(os.path.join(args.outdir, "linear_probe_analysis.png"), dpi=150)
-    plt.close()
+    # Plots
+    plot_probe_results(results, args.outdir, title=args.title)
 
     print(f"\n[linear_probe] ✓ Results saved to {args.outdir}")
     print(f"[linear_probe] Best selectivity: layer {best['layer']} "
