@@ -30,10 +30,16 @@ OUTROOT="${OUTROOT:-outputs}"
 BASE="EleutherAI/deep-ignorance-unfiltered"
 FILTERED="EleutherAI/deep-ignorance-e2e-strong-filter"
 UNLEARNED="${UNLEARNED:-EleutherAI/deep-ignorance-unfiltered-cb-lat}"
+CB_ONLY="EleutherAI/deep-ignorance-unfiltered-cb"
+PRETRAIN="EleutherAI/deep-ignorance-pretraining-stage-unfiltered"
 
 # Comparison names (derived from model IDs: / → _)
 COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-strong-filter"
 COMP2="EleutherAI_deep-ignorance-unfiltered__to__${UNLEARNED//\//_}"
+COMP3="EleutherAI_deep-ignorance-unfiltered__to__${PRETRAIN//\//_}"
+COMP4="EleutherAI_deep-ignorance-unfiltered__to__${CB_ONLY//\//_}"
+COMP5="${CB_ONLY//\//_}__to__${UNLEARNED//\//_}"
+COMP6="${UNLEARNED//\//_}__to__EleutherAI_deep-ignorance-e2e-strong-filter"
 
 # Per-model folder names (for analyses that run once per model, not per comparison)
 MODEL_BASE="EleutherAI_deep-ignorance-unfiltered"
@@ -64,8 +70,12 @@ echo "      MODEL DIFFS ANALYSIS PIPELINE"
 echo "=========================================="
 echo ""
 echo "Base model: $BASE"
-echo "Comparison 1: -> $FILTERED"
-echo "Comparison 2: -> $UNLEARNED"
+echo "Comparison 1: Base -> $FILTERED"
+echo "Comparison 2: Base -> $UNLEARNED"
+echo "Comparison 3: Base -> $PRETRAIN"
+echo "Comparison 4: Base -> $CB_ONLY"
+echo "Comparison 5: $CB_ONLY -> $UNLEARNED"
+echo "Comparison 6: $UNLEARNED -> $FILTERED"
 echo "Output root: $OUTROOT"
 echo ""
 
@@ -150,6 +160,20 @@ else
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
     --outdir "${OUTROOT}/${COMP2}/param_stats"
+fi
+
+echo ""
+echo "Comparison 3: Base → Pretraining"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP3}/param_stats" "per_layer.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/collect_param_stats.py \
+    --model-a "$BASE" \
+    --model-b "$PRETRAIN" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP3}/param_stats"
 fi
 
 # ============================================
@@ -623,6 +647,99 @@ for LENS in logit tuned; do
 done
 
 # ============================================
+# STEP 15: Weight Comparison (per-component cosine sim & Frobenius)
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 15: Weight Comparison"
+echo "=========================================="
+echo "Computing per-component cosine similarity & relative Frobenius between checkpoints..."
+
+echo ""
+echo "Comparison 1: Base → Filtered"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP1}/weight_comparison" "per_component.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/collect_weight_comparison.py \
+    --model-a "$BASE" \
+    --model-b "$FILTERED" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP1}/weight_comparison"
+fi
+
+echo ""
+echo "Comparison 2: Base → Unlearned (CB+LAT)"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP2}/weight_comparison" "per_component.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/collect_weight_comparison.py \
+    --model-a "$BASE" \
+    --model-b "$UNLEARNED" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP2}/weight_comparison"
+fi
+
+echo ""
+echo "Comparison 3: Base → Pretraining"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP3}/weight_comparison" "per_component.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/collect_weight_comparison.py \
+    --model-a "$BASE" \
+    --model-b "$PRETRAIN" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP3}/weight_comparison"
+fi
+
+echo ""
+echo "Comparison 4: Base → CB-only"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP4}/weight_comparison" "per_component.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/collect_weight_comparison.py \
+    --model-a "$BASE" \
+    --model-b "$CB_ONLY" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP4}/weight_comparison"
+fi
+
+echo ""
+echo "Comparison 5: CB-only → CB+LAT"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP5}/weight_comparison" "per_component.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/collect_weight_comparison.py \
+    --model-a "$CB_ONLY" \
+    --model-b "$UNLEARNED" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP5}/weight_comparison"
+fi
+
+echo ""
+echo "Comparison 6: CB+LAT → Filtered"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP6}/weight_comparison" "per_component.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/collect_weight_comparison.py \
+    --model-a "$UNLEARNED" \
+    --model-b "$FILTERED" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP6}/weight_comparison"
+fi
+
+# ============================================
 # COMPLETION
 # ============================================
 echo ""
@@ -635,6 +752,7 @@ echo ""
 echo "  <comparison>/"
 echo "    param_stats/           per_matrix.csv, per_layer.csv"
 echo "    param_plots/           Layer locality, stable rank PNGs"
+echo "    weight_comparison/     per_component.csv, summary.csv"
 echo "    activation_stats/      activation_stats.csv"
 echo "    activation_plots/      Activation norms, diffs PNGs"
 echo "    mlp_attn_analysis/     summary CSV + plots"

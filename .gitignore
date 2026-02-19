@@ -7,5 +7,6 @@ unlearned_models/
 .DS_Store
 wandb/
 *.pdf
+*.ipynb
 .ipynb_checkpoints/
 figs/
