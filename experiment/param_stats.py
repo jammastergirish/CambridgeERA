@@ -13,21 +13,35 @@
 # ]
 # ///
 
+"""
+Per-component, per-layer weight comparison between model checkpoints.
+
+Computes a comprehensive set of metrics for each weight matrix:
+  - Cosine similarity, element-wise diff stats
+  - Frobenius norm (absolute, relative, normalized)
+  - Spectral norm (dW and W, relative)
+  - Stable rank (dW and W)
+  - Optional: Empirical rank via full SVD
+
+Outputs three CSVs:
+  - per_component.csv: one row per weight matrix (all metrics)
+  - summary.csv: aggregate stats per component across layers
+  - per_layer.csv: aggregate stats per layer per coarse group (attn/mlp)
+"""
+
 import argparse
-import gc
-import json
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from collections import defaultdict
+from typing import List, Optional
 
-from typing import Optional, Set
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import torch
 from tqdm import tqdm
 
 from utils import (
-    comparison_outdir,
     SmartLoader,
     resolve_device,
     resolve_dtype,
@@ -36,138 +50,323 @@ from utils import (
     stable_rank_and_spectral,
     empirical_rank,
     write_csv,
+    comparison_outdir,
+    spectral_norm_power,
     init_wandb,
     log_csv_as_table,
     log_plots,
     finish_wandb,
 )
 
+# Coarse group mapping: granular component -> coarse group (for per_layer.csv)
+_COARSE_MAP = {
+    "qkv": "attn",
+    "proj": "attn",
+    "mlp_expand": "mlp",
+    "mlp_contract": "mlp",
+}
+
+_GRANULAR_COMPONENTS = ["qkv", "proj", "mlp_expand", "mlp_contract"]
+
+
 # ---------------------------------------------------------------------------
-# Plotting — generates per-group charts from the per_layer CSV
+# Metrics
 # ---------------------------------------------------------------------------
 
-def plot_param_stats(per_layer_csv: str, outdir: str, title: str = None):
-    """Generate param stats plots from a per-layer CSV file."""
+def _compute_metrics(
+    Wa: torch.Tensor,
+    Wb: torch.Tensor,
+    sr_iters: int = 5,
+    do_empirical_rank: bool = False,
+    empirical_threshold: float = 0.99,
+) -> dict:
+    """Compute all per-matrix metrics for a weight pair (Wa=baseline, Wb=target)."""
+    Wa_f = Wa.float()
+    Wb_f = Wb.float()
+
+    # Element-wise difference (change from A to B)
+    dW = Wb_f - Wa_f
+
+    # Cosine similarity between full weight vectors
+    cos_sim = torch.nn.functional.cosine_similarity(
+        Wa_f.flatten().unsqueeze(0), Wb_f.flatten().unsqueeze(0)
+    ).item()
+
+    # Element-wise diff stats
+    dW_flat = dW.flatten()
+    n_elem = dW_flat.numel()
+    diff_mean = dW_flat.mean().item()
+    diff_std = dW_flat.std().item()
+    diff_abs_mean = dW_flat.abs().mean().item()
+
+    # Frobenius norms
+    dW_fro = float(dW.norm().item())
+    W_fro = float(Wa_f.norm().item())
+    rel_fro = dW_fro / W_fro if W_fro > 0 else float("inf")
+    fro_norm_normalized = dW_fro / (n_elem ** 0.5)
+
+    # Stable rank and spectral norm (for both dW and W)
+    dW_sr, dW_spec = stable_rank_and_spectral(dW, iters=sr_iters)
+    W_sr, W_spec = stable_rank_and_spectral(Wa_f, iters=sr_iters)
+    dW_spec_rel = dW_spec / W_spec if W_spec > 0 else 0.0
+
+    row = {
+        "elements": n_elem,
+        "cosine_sim": cos_sim,
+        "diff_mean": diff_mean,
+        "diff_std": diff_std,
+        "diff_abs_mean": diff_abs_mean,
+        "frobenius_norm": dW_fro,
+        "W_fro": W_fro,
+        "rel_frobenius": rel_fro,
+        "fro_norm_normalized": fro_norm_normalized,
+        "diff_spectral_norm": dW_spec,
+        "W_spectral": W_spec,
+        "dW_spectral_rel": dW_spec_rel,
+        "dW_stable_rank": dW_sr,
+        "W_stable_rank": W_sr,
+    }
+
+    if do_empirical_rank:
+        row["dW_empirical_rank"] = empirical_rank(dW, threshold=empirical_threshold)
+        row["W_empirical_rank"] = empirical_rank(Wa_f, threshold=empirical_threshold)
+
+    return row
+
+
+# ---------------------------------------------------------------------------
+# Sanity checks
+# ---------------------------------------------------------------------------
+
+def _pick_sanity_params(all_linear_names: List[str], n: int = 3) -> List[str]:
+    """Pick up to n weight names that belong to known components for sanity checks."""
+    picked = []
+    for name in all_linear_names:
+        if classify_granular(name) != "other" and extract_layer(name) is not None:
+            picked.append(name)
+            if len(picked) >= n:
+                break
+    return picked
+
+
+def run_sanity_checks(
+    loader_a: SmartLoader,
+    loader_b: SmartLoader,
+    linear_names: List[str],
+    device: str,
+    dtype: torch.dtype,
+) -> bool:
+    """Run sanity checks. Returns True if all pass, False otherwise."""
+    sample = _pick_sanity_params(linear_names)
+    if not sample:
+        print("FAIL: No suitable weight matrices found for sanity checks")
+        return False
+
+    all_passed = True
+
+    # --- Check 1: Self-comparison (A vs A) ---
+    print("\n--- Sanity Check 1: Self-comparison (A vs A) ---")
+    for name in sample:
+        Wa = loader_a.get_param(name, device, dtype)
+        m = _compute_metrics(Wa, Wa)
+
+        cos_ok = m["cosine_sim"] == 1.0
+        fro_ok = m["rel_frobenius"] == 0.0
+        passed = cos_ok and fro_ok
+
+        status = "PASS" if passed else "FAIL"
+        print(f"  {status}: {name}")
+        if not cos_ok:
+            print(f"         cosine_sim = {m['cosine_sim']} (expected 1.0)")
+        if not fro_ok:
+            print(f"         rel_frobenius = {m['rel_frobenius']} (expected 0.0)")
+
+        if not passed:
+            all_passed = False
+        del Wa
+
+    # --- Check 2: Symmetry cos(A,B) == cos(B,A) ---
+    print("\n--- Sanity Check 2: Cosine similarity symmetry ---")
+    for name in sample:
+        Wa = loader_a.get_param(name, device, dtype)
+        Wb = loader_b.get_param(name, device, dtype)
+        if Wb is None or Wa.shape != Wb.shape:
+            print(f"  SKIP: {name} (shape mismatch or missing)")
+            continue
+
+        m_ab = _compute_metrics(Wa, Wb)
+        m_ba = _compute_metrics(Wb, Wa)
+
+        passed = abs(m_ab["cosine_sim"] - m_ba["cosine_sim"]) < 1e-6
+        status = "PASS" if passed else "FAIL"
+        print(f"  {status}: {name}")
+        print(f"         cos(A,B) = {m_ab['cosine_sim']:.10f}")
+        print(f"         cos(B,A) = {m_ba['cosine_sim']:.10f}")
+        if not passed:
+            print(f"         delta = {abs(m_ab['cosine_sim'] - m_ba['cosine_sim']):.2e}")
+            all_passed = False
+
+        del Wa, Wb
+
+    # --- Check 3: Valid ranges ---
+    print("\n--- Sanity Check 3: Value ranges ---")
+    for name in sample:
+        Wa = loader_a.get_param(name, device, dtype)
+        Wb = loader_b.get_param(name, device, dtype)
+        if Wb is None or Wa.shape != Wb.shape:
+            continue
+
+        m = _compute_metrics(Wa, Wb)
+
+        cos_ok = -1.0 <= m["cosine_sim"] <= 1.0
+        fro_ok = m["rel_frobenius"] >= 0.0
+        norm_ok = m["frobenius_norm"] >= 0.0
+
+        passed = cos_ok and fro_ok and norm_ok
+        status = "PASS" if passed else "FAIL"
+        print(f"  {status}: {name}")
+        if not cos_ok:
+            print(f"         cosine_sim = {m['cosine_sim']} (out of [-1, 1])")
+        if not fro_ok:
+            print(f"         rel_frobenius = {m['rel_frobenius']} (negative)")
+        if not norm_ok:
+            print(f"         frobenius_norm = {m['frobenius_norm']} (negative)")
+
+        if not passed:
+            all_passed = False
+        del Wa, Wb
+
+    # --- Summary ---
+    print()
+    if all_passed:
+        print("All sanity checks PASSED")
+    else:
+        print("Some sanity checks FAILED — aborting")
+    print()
+    return all_passed
+
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+def plot_weight_comparison(per_component_csv: str, outdir: str, title: str = None):
+    """Generate per-component plots from per_component.csv."""
     import pandas as pd
     import matplotlib.pyplot as plt
 
     os.makedirs(outdir, exist_ok=True)
 
-    dataframe = pd.read_csv(per_layer_csv)
-    print(f"[param_stats] Generating plots from {per_layer_csv} ({len(dataframe)} rows)")
+    df = pd.read_csv(per_component_csv)
+    print(f"Generating plots from {per_component_csv} ({len(df)} rows)")
 
-    for group in ["attn", "mlp"]:
-        sub = dataframe[dataframe["group"] == group].sort_values("layer")
-        if sub.empty:
-            continue
+    components = [c for c in _GRANULAR_COMPONENTS if c in df["component"].values]
+    if not components:
+        print("No recognized components found — skipping plots")
+        return
 
-        # ---- Plot A: Relative Frobenius norm (layer locality) ----
-        plt.figure(figsize=(8, 5))
-        col = "dW_fro_layer_rel" if "dW_fro_layer_rel" in sub.columns else "dW_fro_layer"
-        plt.plot(sub["layer"], sub[col], marker="o")
-        plt.xlabel("Layer")
-        ylabel = rf"$\|\Delta W\|_F / \|W\|_F$ ({group.upper()})" if col.endswith("_rel") else rf"$\|\Delta W\|_F$ per layer ({group.upper()})"
-        plt.ylabel(ylabel)
-        plt.title(title or f"Layer locality ({group})")
-        plt.grid(alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(os.path.join(outdir, f"layer_locality_{group}.png"))
-        plt.close()
+    # ---- Plot A: Relative Frobenius norm (layer locality) ----
+    fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
+    for i, comp in enumerate(components):
+        ax = axes[0, i]
+        sub = df[df["component"] == comp].sort_values("layer")
+        ax.plot(sub["layer"], sub["rel_frobenius"], marker="o")
+        ax.set_xlabel("Layer")
+        ax.set_ylabel(r"$\|\Delta W\|_F / \|W\|_F$")
+        ax.set_title(f"{comp}")
+        ax.grid(alpha=0.3)
+    fig.suptitle(title or "Layer locality — relative Frobenius norm", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "layer_locality.png"))
+    plt.close(fig)
 
-        # ---- Plot B: Stable rank ----
-        plt.figure(figsize=(8, 5))
-        plt.plot(sub["layer"], sub["mean_dW_stable_rank"], marker="o")
-        plt.xlabel("Layer")
-        plt.ylabel(rf"Mean stable rank of $\Delta W$ ({group.upper()})")
-        plt.title(title or f"Edit dimensionality - Stable Rank ({group})")
-        plt.grid(alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(os.path.join(outdir, f"stable_rank_{group}.png"))
-        plt.close()
+    # ---- Plot B: Stable rank ----
+    fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
+    for i, comp in enumerate(components):
+        ax = axes[0, i]
+        sub = df[df["component"] == comp].sort_values("layer")
+        ax.plot(sub["layer"], sub["dW_stable_rank"], marker="o")
+        ax.set_xlabel("Layer")
+        ax.set_ylabel(r"Stable rank of $\Delta W$")
+        ax.set_title(f"{comp}")
+        ax.grid(alpha=0.3)
+    fig.suptitle(title or "Edit dimensionality — stable rank", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "stable_rank.png"))
+    plt.close(fig)
 
-        # ---- Plot C: Empirical rank ----
-        if "mean_dW_empirical_rank" in sub.columns:
-            plt.figure(figsize=(8, 5))
-            plt.plot(sub["layer"], sub["mean_dW_empirical_rank"], marker="o", color="darkorange")
-            plt.xlabel("Layer")
-            plt.ylabel(rf"Mean empirical rank of $\Delta W$ ({group.upper()})")
-            plt.title(title or f"Edit dimensionality - Empirical Rank ({group})")
-            plt.grid(alpha=0.3)
-            plt.tight_layout()
-            plt.savefig(os.path.join(outdir, f"empirical_rank_{group}.png"))
-            plt.close()
+    # ---- Plot C: Relative spectral norm ----
+    fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
+    for i, comp in enumerate(components):
+        ax = axes[0, i]
+        sub = df[df["component"] == comp].sort_values("layer")
+        ax.plot(sub["layer"], sub["dW_spectral_rel"], marker="o", color="tab:red")
+        ax.set_xlabel("Layer")
+        ax.set_ylabel(r"$\sigma_1(\Delta W) / \sigma_1(W)$")
+        ax.set_title(f"{comp}")
+        ax.grid(alpha=0.3)
+    fig.suptitle(title or "Spectral norm — worst-case amplification", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "spectral_norm.png"))
+    plt.close(fig)
 
-            # ---- Plot D: Comparison of both ranks ----
-            fig, ax1 = plt.subplots(figsize=(10, 6))
+    # ---- Plot D: Empirical rank (if present) ----
+    if "dW_empirical_rank" in df.columns:
+        fig, axes = plt.subplots(1, len(components), figsize=(5 * len(components), 5), squeeze=False)
+        for i, comp in enumerate(components):
+            ax = axes[0, i]
+            sub = df[df["component"] == comp].sort_values("layer")
+            ax.plot(sub["layer"], sub["dW_empirical_rank"], marker="o", color="darkorange")
+            ax.set_xlabel("Layer")
+            ax.set_ylabel(r"Empirical rank of $\Delta W$")
+            ax.set_title(f"{comp}")
+            ax.grid(alpha=0.3)
+        fig.suptitle(title or "Edit dimensionality — empirical rank", fontsize=14)
+        fig.tight_layout()
+        fig.savefig(os.path.join(outdir, "empirical_rank.png"))
+        plt.close(fig)
 
-            color = 'tab:blue'
-            ax1.set_xlabel('Layer')
-            ax1.set_ylabel(rf'Mean stable rank of $\Delta W$', color=color)
-            ax1.plot(sub["layer"], sub["mean_dW_stable_rank"], marker="o", color=color, label="Stable Rank")
-            ax1.tick_params(axis='y', labelcolor=color)
-            ax1.grid(alpha=0.3)
+    print(f"All plots written to {outdir}")
 
-            ax2 = ax1.twinx()
-            color = 'tab:orange'
-            ax2.set_ylabel(rf'Mean empirical rank of $\Delta W$', color=color)
-            ax2.plot(sub["layer"], sub["mean_dW_empirical_rank"], marker="s", color=color, label="Empirical Rank")
-            ax2.tick_params(axis='y', labelcolor=color)
 
-            plt.title(title or f"Edit dimensionality comparison ({group.upper()})")
-
-            # Add legends from both axes
-            lines1, labels1 = ax1.get_legend_handles_labels()
-            lines2, labels2 = ax2.get_legend_handles_labels()
-            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-
-            plt.tight_layout()
-            plt.savefig(os.path.join(outdir, f"rank_comparison_{group}.png"))
-            plt.close()
-
-        # ---- Plot E: Spectral norm (worst-case amplification) ----
-        spec_col = "max_dW_spectral_rel" if "max_dW_spectral_rel" in sub.columns else None
-        if spec_col:
-            plt.figure(figsize=(8, 5))
-            plt.plot(sub["layer"], sub[spec_col], marker="o", color="tab:red")
-            plt.xlabel("Layer")
-            plt.ylabel(rf"$\sigma_1(\Delta W) / \sigma_1(W)$ ({group.upper()})")
-            plt.title(title or f"Spectral norm — worst-case amplification ({group})")
-            plt.grid(alpha=0.3)
-            plt.tight_layout()
-            plt.savefig(os.path.join(outdir, f"spectral_norm_{group}.png"))
-            plt.close()
-
-    print(f"[param_stats] ✓ All plots written to {outdir}")
-
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model-a", required=True, help="Baseline / before model path")
-    parser.add_argument("--model-b", required=True, help="After model path")
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--dtype", default="auto")
-    parser.add_argument("--sr-iters", type=int, default=5)
-    parser.add_argument("--empirical-rank", action="store_true", default=False,
-                         help="Compute empirical rank via full SVD (slow, off by default)")
-    parser.add_argument("--empirical-threshold", type=float, default=0.99,
-                         help="Threshold for empirical rank (fraction of variance to capture, default: 0.99)")
-    parser.add_argument("--outdir", default=None,
-                         help="Output dir (default: auto-derived from model names)")
-    parser.add_argument("--plot-outdir", default=None,
-                         help="Plot dir (default: auto-derived from model names)")
-    parser.add_argument("--title", default=None,
-                         help="Title for generated plots")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser(
+        description="Compute per-component, per-layer weight comparison metrics "
+                    "between two model checkpoints."
+    )
+    ap.add_argument("--model-a", required=True, help="Baseline / before model path")
+    ap.add_argument("--model-b", required=True, help="Target / after model path")
+    ap.add_argument("--device", default="auto")
+    ap.add_argument("--dtype", default="auto")
+    ap.add_argument("--outdir", default=None,
+                    help="Output dir (default: auto-derived from model names)")
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--sanity-check", action="store_true",
+                    help="Run sanity checks before main comparison and exit early on failure")
+    ap.add_argument("--trust-remote-code", action="store_true")
+    # Flags from param_stats
+    ap.add_argument("--sr-iters", type=int, default=5,
+                    help="Power iteration count for spectral norm (default: 5)")
+    ap.add_argument("--empirical-rank", action="store_true", default=False,
+                    help="Compute empirical rank via full SVD (slow, off by default)")
+    ap.add_argument("--empirical-threshold", type=float, default=0.99,
+                    help="Fraction of variance to capture for empirical rank (default: 0.99)")
+    ap.add_argument("--plot-outdir", default=None,
+                    help="Generate plots in this directory (default: no plots)")
+    ap.add_argument("--title", default=None,
+                    help="Title for generated plots")
+    args = ap.parse_args()
 
+    # Derive output directory
     if args.outdir is None:
         args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="param_stats")
-    if args.plot_outdir is None:
-        args.plot_outdir = comparison_outdir(args.model_a, args.model_b, suffix="param_plots")
 
     init_wandb("param_stats", args)
 
-    # Set seed for reproducibility (vital for Power Iteration stability)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     if torch.cuda.is_available():
@@ -176,10 +375,9 @@ def main():
     device = resolve_device(args.device)
     dtype = resolve_dtype(args.dtype, device)
 
-    print(f"[param_stats] Initializing SmartLoaders (streaming mode)")
-    print(f"  Model A (baseline) : {args.model_a}")
-    print(f"  Model B (target)   : {args.model_b}")
-    print(f"  Device: {device}  |  Dtype: {dtype}")
+    print(f"Device: {device}, Dtype: {dtype}")
+    print(f"Model A: {args.model_a}")
+    print(f"Model B: {args.model_b}")
 
     try:
         loader_a = SmartLoader(args.model_a)
@@ -188,123 +386,147 @@ def main():
         print(f"Error loading models: {e}")
         return
 
-    # Get intersect of parameters
     names_a = loader_a.get_all_param_names()
     names_b = loader_b.get_all_param_names()
-    
-    # Filter for Weights only (skip biases, layernorms mostly by name convention for stats)
-    # We stick to the logic: Must end in .weight
-    all_names = sorted(list(names_a.intersection(names_b)))
-    
-    linear_names = []
-    # Pre-scan to filter potential linear names
-    for name in all_names:
-        if name.endswith(".weight"):
-            linear_names.append(name)
+    all_names = sorted(names_a.intersection(names_b))
 
+    # Filter to weight tensors only
+    linear_names = [n for n in all_names if n.endswith(".weight")]
+
+    if args.sanity_check:
+        if not run_sanity_checks(loader_a, loader_b, linear_names, device, dtype):
+            return
+
+    # ---- Main comparison loop ----
     rows = []
-    per_layer = {}
+    per_layer_accum = {}  # (layer, coarse_group) -> running stats
 
-    print(f"[param_stats] Scanning {len(linear_names)} weight matrices for Frobenius norm, stable rank & empirical rank...")
-    
+    print(f"Scanning {len(linear_names)} weight matrices...")
+
     for name in tqdm(linear_names, desc="Comparing weight matrices", unit="matrix"):
-        # Load A
         Wa = loader_a.get_param(name, device, dtype)
         if Wa is None or Wa.ndim != 2:
             continue
-            
-        # Load B
+
         Wb = loader_b.get_param(name, device, dtype)
         if Wb is None:
             continue
-            
+
         if Wa.shape != Wb.shape:
             print(f"Skipping {name}: shape mismatch {Wa.shape} vs {Wb.shape}")
             continue
 
-        # Calc Stats
-        dW = (Wb - Wa)
-        
         layer = extract_layer(name)
-        group = classify_granular(name)
+        component = classify_granular(name)
 
-        # Here's the key part of this file!
-        dW_fro = float(dW.float().norm().item())
-        W_fro = float(Wa.float().norm().item())
-        dW_fro_rel = dW_fro / W_fro if W_fro > 0 else 0.0
-        dW_sr, dW_spec = stable_rank_and_spectral(dW, iters=args.sr_iters)
-        W_sr, W_spec = stable_rank_and_spectral(Wa, iters=args.sr_iters)
-        dW_spec_rel = dW_spec / W_spec if W_spec > 0 else 0.0
+        # Skip non-layer or non-component weights (embeddings, final LN, etc.)
+        if layer is None or component == "other":
+            del Wa, Wb
+            continue
+
+        metrics = _compute_metrics(
+            Wa, Wb,
+            sr_iters=args.sr_iters,
+            do_empirical_rank=args.empirical_rank,
+            empirical_threshold=args.empirical_threshold,
+        )
 
         row = {
             "name": name,
-            "layer": layer if layer is not None else -1,
-            "group": group,
+            "layer": layer,
+            "component": component,
             "shape0": Wa.shape[0],
             "shape1": Wa.shape[1],
-            "dW_fro": dW_fro,
-            "W_fro": W_fro,
-            "dW_fro_rel": dW_fro_rel,
-            "dW_spectral": dW_spec,
-            "W_spectral": W_spec,
-            "dW_spectral_rel": dW_spec_rel,
-            "dW_stable_rank": dW_sr,
-            "W_stable_rank": W_sr,
         }
-
-        if args.empirical_rank:
-            dW_er = empirical_rank(dW, threshold=args.empirical_threshold)
-            W_er = empirical_rank(Wa, threshold=args.empirical_threshold)
-            row["dW_empirical_rank"] = dW_er
-            row["W_empirical_rank"] = W_er
-
+        row.update(metrics)
         rows.append(row)
 
-        if layer is not None:
-            key = (layer, group)
-            defaults = {"sum_dW_fro_sq": 0.0, "sum_W_fro_sq": 0.0, "sum_dW_sr": 0.0,
-                         "max_dW_spec": 0.0, "max_W_spec": 0.0, "count": 0}
+        # Accumulate per-layer stats (coarse groups for backward compat)
+        coarse = _COARSE_MAP.get(component)
+        if coarse and layer is not None:
+            key = (layer, coarse)
+            defaults = {
+                "sum_dW_fro_sq": 0.0, "sum_W_fro_sq": 0.0,
+                "sum_dW_sr": 0.0,
+                "max_dW_spec": 0.0, "max_W_spec": 0.0,
+                "count": 0,
+            }
             if args.empirical_rank:
                 defaults["sum_dW_er"] = 0.0
-            stats = per_layer.setdefault(key, defaults)
-            stats["sum_dW_fro_sq"] += dW_fro * dW_fro
-            stats["sum_W_fro_sq"] += W_fro * W_fro
-            stats["sum_dW_sr"] += dW_sr
-            stats["max_dW_spec"] = max(stats["max_dW_spec"], dW_spec)
-            stats["max_W_spec"] = max(stats["max_W_spec"], W_spec)
+            stats = per_layer_accum.setdefault(key, defaults)
+            stats["sum_dW_fro_sq"] += metrics["frobenius_norm"] ** 2
+            stats["sum_W_fro_sq"] += metrics["W_fro"] ** 2
+            stats["sum_dW_sr"] += metrics["dW_stable_rank"]
+            stats["max_dW_spec"] = max(stats["max_dW_spec"], metrics["diff_spectral_norm"])
+            stats["max_W_spec"] = max(stats["max_W_spec"], metrics["W_spectral"])
             if args.empirical_rank:
-                stats["sum_dW_er"] += dW_er
+                stats["sum_dW_er"] += metrics["dW_empirical_rank"]
             stats["count"] += 1
-            
-        # Explicit delete to aid GC in loop
-        del Wa
-        del Wb
-        del dW
 
-    # Write Output
-    os.makedirs(args.outdir, exist_ok=True)
+        del Wa, Wb
 
-    per_matrix_fields = ["name", "layer", "group", "shape0", "shape1",
-                         "dW_fro", "W_fro", "dW_fro_rel",
-                         "dW_spectral", "W_spectral", "dW_spectral_rel",
-                         "dW_stable_rank", "W_stable_rank"]
+    # ---- Output ----
+    outdir = args.outdir
+    os.makedirs(outdir, exist_ok=True)
+
+    # 1) per_component.csv — one row per weight matrix
+    per_component_fields = [
+        "name", "layer", "component", "shape0", "shape1", "elements",
+        "cosine_sim", "rel_frobenius", "frobenius_norm", "fro_norm_normalized",
+        "W_fro", "diff_mean", "diff_std", "diff_abs_mean",
+        "diff_spectral_norm", "W_spectral", "dW_spectral_rel",
+        "dW_stable_rank", "W_stable_rank",
+    ]
     if args.empirical_rank:
-        per_matrix_fields += ["dW_empirical_rank", "W_empirical_rank"]
-    write_csv(
-        os.path.join(args.outdir, "per_matrix.csv"),
-        rows,
-        per_matrix_fields,
-    )
+        per_component_fields += ["dW_empirical_rank", "W_empirical_rank"]
+    rows.sort(key=lambda r: (r["layer"], r["component"]))
+    write_csv(os.path.join(outdir, "per_component.csv"), rows, per_component_fields)
 
-    per_layer_csv = os.path.join(args.outdir, "per_layer.csv")
+    # 2) summary.csv — aggregate stats per component across layers
+    metric_keys = [
+        "cosine_sim", "rel_frobenius", "frobenius_norm", "fro_norm_normalized",
+        "diff_mean", "diff_std", "diff_abs_mean",
+        "diff_spectral_norm", "dW_spectral_rel",
+        "dW_stable_rank", "W_stable_rank",
+    ]
+    comp_stats = defaultdict(lambda: {k: [] for k in metric_keys})
+    for r in rows:
+        c = r["component"]
+        for k in metric_keys:
+            comp_stats[c][k].append(r[k])
 
+    summary_rows = []
+    for comp in _GRANULAR_COMPONENTS:
+        if comp not in comp_stats:
+            continue
+        s = comp_stats[comp]
+        comp_rows = [r for r in rows if r["component"] == comp]
+        sr = {
+            "component": comp,
+            "n_layers": len(s["cosine_sim"]),
+            "elements": comp_rows[0]["elements"] if comp_rows else 0,
+        }
+        for k in metric_keys:
+            vals = s[k]
+            sr[f"{k}_mean"] = float(np.mean(vals))
+            sr[f"{k}_min"] = float(np.min(vals))
+            sr[f"{k}_max"] = float(np.max(vals))
+            sr[f"{k}_std"] = float(np.std(vals))
+        summary_rows.append(sr)
+
+    summary_fields = ["component", "n_layers", "elements"]
+    for k in metric_keys:
+        summary_fields.extend([f"{k}_mean", f"{k}_min", f"{k}_max", f"{k}_std"])
+    write_csv(os.path.join(outdir, "summary.csv"), summary_rows, summary_fields)
+
+    # 3) per_layer.csv — aggregate stats per layer per coarse group (attn/mlp)
     layer_rows = []
-    for (layer, group), stats in sorted(per_layer.items(), key=lambda x: (x[0][0], x[0][1])):
+    for (layer, group), stats in sorted(per_layer_accum.items(), key=lambda x: (x[0][0], x[0][1])):
         dW_fro_layer = float(np.sqrt(stats["sum_dW_fro_sq"]))
         W_fro_layer = float(np.sqrt(stats["sum_W_fro_sq"]))
         max_dW_spec = stats["max_dW_spec"]
         max_W_spec = stats["max_W_spec"]
-        row = {
+        lr = {
             "layer": layer,
             "group": group,
             "dW_fro_layer": dW_fro_layer,
@@ -317,27 +539,52 @@ def main():
             "count_mats": stats["count"],
         }
         if args.empirical_rank:
-            row["mean_dW_empirical_rank"] = stats["sum_dW_er"] / max(stats["count"], 1)
-        layer_rows.append(row)
+            lr["mean_dW_empirical_rank"] = stats["sum_dW_er"] / max(stats["count"], 1)
+        layer_rows.append(lr)
 
-    per_layer_fields = ["layer", "group",
-                        "dW_fro_layer", "W_fro_layer", "dW_fro_layer_rel",
-                        "max_dW_spectral", "max_W_spectral", "max_dW_spectral_rel",
-                        "mean_dW_stable_rank", "count_mats"]
+    per_layer_fields = [
+        "layer", "group",
+        "dW_fro_layer", "W_fro_layer", "dW_fro_layer_rel",
+        "max_dW_spectral", "max_W_spectral", "max_dW_spectral_rel",
+        "mean_dW_stable_rank", "count_mats",
+    ]
     if args.empirical_rank:
         per_layer_fields.insert(-1, "mean_dW_empirical_rank")
+    per_layer_csv = os.path.join(outdir, "per_layer.csv")
     write_csv(per_layer_csv, layer_rows, per_layer_fields)
 
-    print(f"[param_stats] ✓ Wrote {len(rows)} per-matrix rows and {len(layer_rows)} per-layer rows to {args.outdir}")
-    log_csv_as_table(os.path.join(args.outdir, "per_matrix.csv"), "per_matrix")
-    log_csv_as_table(per_layer_csv, "per_layer")
+    # ---- Log to wandb ----
+    log_csv_as_table(os.path.join(outdir, "per_component.csv"), key="per_component")
+    log_csv_as_table(os.path.join(outdir, "summary.csv"), key="summary")
+    log_csv_as_table(per_layer_csv, key="per_layer")
 
-    # Generate plots if requested
+    # ---- Stdout summary ----
+    print(f"\n{'='*70}")
+    print(f"Results: {outdir}")
+    print(f"{'='*70}")
+    print(f"{'Component':<15} {'Cos Sim':>10} {'Rel Fro':>10} {'Stable Rk':>10} {'Layers':>7}")
+    print(f"{'-'*15} {'-'*10} {'-'*10} {'-'*10} {'-'*7}")
+    for sr in summary_rows:
+        print(
+            f"{sr['component']:<15} "
+            f"{sr['cosine_sim_mean']:>10.6f} "
+            f"{sr['rel_frobenius_mean']:>10.6f} "
+            f"{sr['dW_stable_rank_mean']:>10.2f} "
+            f"{sr['n_layers']:>7}"
+        )
+    print()
+
+    # ---- Plots ----
     if args.plot_outdir:
-        plot_param_stats(per_layer_csv, args.plot_outdir, args.title)
-        log_plots(args.plot_outdir, "param_plots")
+        plot_weight_comparison(
+            os.path.join(outdir, "per_component.csv"),
+            args.plot_outdir,
+            args.title,
+        )
+        log_plots(args.plot_outdir, "weight_plots")
 
     finish_wandb()
+
 
 if __name__ == "__main__":
     main()
