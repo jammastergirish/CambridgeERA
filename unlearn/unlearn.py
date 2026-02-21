@@ -1314,7 +1314,7 @@ def main():
     print("[unlearn] Running eval benchmarks ...")
     eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiment", "eval.py")
     eval_cmd = [
-        sys.executable, eval_script,
+        "uv", "run", "--script", eval_script,
         "--model", args.outdir,
         "--device", args.device,
         "--dtype", args.dtype,
