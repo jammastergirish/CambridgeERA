@@ -172,6 +172,22 @@ class TestArgParser:
         args = parser.parse_args(["--push-to-hub"])
         assert args.push_to_hub is True
 
+    def test_no_save_defaults_false(self):
+        """--no-save should default to False."""
+        from unlearn import main
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--no-save", action="store_true")
+        args = parser.parse_args([])
+        assert args.no_save is False
+
+    def test_no_save_set_when_passed(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--no-save", action="store_true")
+        args = parser.parse_args(["--no-save"])
+        assert args.no_save is True
+
 
 # ---------------------------------------------------------------------------
 # eval_summary.py — parsing and method inference

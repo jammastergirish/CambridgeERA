@@ -987,6 +987,8 @@ def main():
                         help="Evaluate every N steps during training (0 to disable)")
     parser.add_argument("--push-to-hub", action="store_true",
                         help="Upload finished model to HuggingFace (requires HF_TOKEN env var)")
+    parser.add_argument("--no-save", action="store_true",
+                        help="Do not save the final model weights to disk (useful for sweeps to save space)")
     args = parser.parse_args()
 
     # Auto-generate output directory from method + all relevant params
@@ -1004,6 +1006,14 @@ def main():
             "model": args.model,
             "method": args.method,
             "outdir": args.outdir,
+            "max_length": args.max_length,
+            "seed": args.seed,
+            "grad_clip": args.grad_clip,
+            "grad_accum_steps": args.grad_accum_steps,
+            "eval_split": args.eval_split,
+            "eval_interval": args.eval_interval,
+            "forget_data": args.forget_data,
+            "retain_data": args.retain_data,
         }
         for param in METHOD_PARAMS[args.method]:
             hyperparameters[param] = getattr(args, param)
@@ -1299,16 +1309,19 @@ def main():
             pass
 
     # ---- Save ----
-    print(f"[unlearn] Saving model to {args.outdir} ...")
     os.makedirs(args.outdir, exist_ok=True)
+    if not args.no_save:
+        print(f"[unlearn] Saving model to {args.outdir} ...")
 
-    # Disable gradient checkpointing before saving (not serializable)
-    if hasattr(model, "gradient_checkpointing_disable"):
-        model.gradient_checkpointing_disable()
+        # Disable gradient checkpointing before saving (not serializable)
+        if hasattr(model, "gradient_checkpointing_disable"):
+            model.gradient_checkpointing_disable()
 
-    model.save_pretrained(args.outdir)
-    tokenizer.save_pretrained(args.outdir)
-    print("[unlearn] Model saved ✓")
+        model.save_pretrained(args.outdir)
+        tokenizer.save_pretrained(args.outdir)
+        print("[unlearn] Model saved ✓")
+    else:
+        print(f"[unlearn] Skipping model save (--no-save specified). The model weights will not be saved.")
 
     # ---- Auto-evaluate the unlearned model ----
     print("[unlearn] Running eval benchmarks ...")

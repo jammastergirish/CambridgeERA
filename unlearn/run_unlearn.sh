@@ -49,4 +49,5 @@ uv run --script unlearn/unlearn.py \
   ${WT_REG_LAMBDA:+--wt-reg-lambda "$WT_REG_LAMBDA"} \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
   ${PUSH_TO_HUB:+--push-to-hub} \
+  ${NO_SAVE:+--no-save} \
   --seed 42
