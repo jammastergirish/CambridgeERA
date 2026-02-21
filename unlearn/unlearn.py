@@ -1310,18 +1310,18 @@ def main():
 
     # ---- Save ----
     os.makedirs(args.outdir, exist_ok=True)
-    if not args.no_save:
-        print(f"[unlearn] Saving model to {args.outdir} ...")
+    
+    print(f"[unlearn] Saving model to {args.outdir} ...")
+    # Disable gradient checkpointing before saving (not serializable)
+    if hasattr(model, "gradient_checkpointing_disable"):
+        model.gradient_checkpointing_disable()
 
-        # Disable gradient checkpointing before saving (not serializable)
-        if hasattr(model, "gradient_checkpointing_disable"):
-            model.gradient_checkpointing_disable()
-
-        model.save_pretrained(args.outdir)
-        tokenizer.save_pretrained(args.outdir)
-        print("[unlearn] Model saved ✓")
+    model.save_pretrained(args.outdir)
+    tokenizer.save_pretrained(args.outdir)
+    if args.no_save:
+        print("[unlearn] Model saved temporarily for evaluation (will be deleted after due to --no-save) ✓")
     else:
-        print(f"[unlearn] Skipping model save (--no-save specified). The model weights will not be saved.")
+        print("[unlearn] Model saved ✓")
 
     # ---- Auto-evaluate the unlearned model ----
     print("[unlearn] Running eval benchmarks ...")
@@ -1382,6 +1382,18 @@ def main():
                 print(f"[unlearn] WARNING: HF upload failed: {e}")
         else:
             print("[unlearn] WARNING: --push-to-hub specified but HF_TOKEN not set")
+
+    # ---- Clean up weights if --no-save ----
+    if args.no_save:
+        import glob
+        print("\n[unlearn] Cleaning up model weights (--no-save specified) to save disk space...")
+        for ext in ["*.safetensors", "*.safetensors.index.json", "*.bin", "*.bin.index.json", "*.pt"]:
+            for f in glob.glob(os.path.join(args.outdir, ext)):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+        print("[unlearn] Model weights deleted ✓")
 
     print("===================================================================")
     print("===================================================================")
