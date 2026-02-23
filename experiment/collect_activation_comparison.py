@@ -258,7 +258,7 @@ def compute_activation_diffs(
 # ---------------------------------------------------------------------------
 # Plotting — generates activation norm comparison charts from the CSV
 # ---------------------------------------------------------------------------
-def plot_activation_norms(csv_path: str, outdir: str, title: str = None):
+def plot_activation_comparison(csv_path: str, outdir: str, title: str = None):
     """Generate activation norm comparison plots from a per-layer CSV file."""
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -269,7 +269,7 @@ def plot_activation_norms(csv_path: str, outdir: str, title: str = None):
     dataframe = dataframe[dataframe["layer"] != "ALL_MEAN"]
     dataframe["layer"] = dataframe["layer"].astype(int)
 
-    print(f"[activation_norms] Generating plots from {csv_path} ({len(dataframe)} rows)")
+    print(f"[collect_activation_comparison] Generating plots from {csv_path} ({len(dataframe)} rows)")
 
     for split in ["forget", "retain"]:
         sub = dataframe[dataframe["split"] == split].sort_values("layer")
@@ -320,7 +320,7 @@ def plot_activation_norms(csv_path: str, outdir: str, title: str = None):
         plt.savefig(os.path.join(outdir, f"activation_diffs_{split}.png"))
         plt.close()
 
-    print(f"[activation_norms] ✓ All plots written to {outdir}")
+    print(f"[collect_activation_comparison] ✓ All plots written to {outdir}")
 
 
 def main():
@@ -349,17 +349,17 @@ def main():
     args = parser.parse_args()
 
     if args.outdir is None:
-        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_stats")
+        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_comparison")
     if args.plot_outdir is None:
         args.plot_outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_plots")
 
-    init_wandb("activation_norms", args)
+    init_wandb("activation_comparison", args)
 
     if not args.forget_text or not os.path.exists(args.forget_text):
-        print("[activation_norms] Skipping: forget-text missing/not found")
+        print("[collect_activation_comparison] Skipping: forget-text missing/not found")
         return
     if not args.retain_text or not os.path.exists(args.retain_text):
-        print("[activation_norms] Skipping: retain-text missing/not found")
+        print("[collect_activation_comparison] Skipping: retain-text missing/not found")
         return
 
     device = resolve_device(args.device)
@@ -370,19 +370,19 @@ def main():
 
     rows = []
 
-    print(f"[activation_norms] Model A: {args.model_a}")
-    print(f"[activation_norms] Model B: {args.model_b}")
-    print(f"[activation_norms] Forget samples: {len(forget_texts)}  |  Retain samples: {len(retain_texts)}")
+    print(f"[collect_activation_comparison] Model A: {args.model_a}")
+    print(f"[collect_activation_comparison] Model B: {args.model_b}")
+    print(f"[collect_activation_comparison] Forget samples: {len(forget_texts)}  |  Retain samples: {len(retain_texts)}")
     if args.cache_fp16:
-        print("[activation_norms] ⚠ Using FP16 caching — reduced precision for faster I/O")
+        print("[collect_activation_comparison] ⚠ Using FP16 caching — reduced precision for faster I/O")
     else:
-        print("[activation_norms] Using full-precision caching")
+        print("[collect_activation_comparison] Using full-precision caching")
 
     for split_name, texts in [("forget", forget_texts), ("retain", retain_texts)]:
         cache_dir = tempfile.mkdtemp(prefix="activation_cache_")
 
         try:
-            print(f"\n[activation_norms] ── {split_name.upper()} split ──")
+            print(f"\n[collect_activation_comparison] ── {split_name.upper()} split ──")
 
             # Phase 1: Cache model A hidden states and get its absolute norms
             result_a = cache_hidden_states(
@@ -428,7 +428,7 @@ def main():
     # Write CSV output
     os.makedirs(args.outdir, exist_ok=True)
 
-    output_path = os.path.join(args.outdir, "activation_stats.csv")
+    output_path = os.path.join(args.outdir, "activation_comparison.csv")
     fieldnames = [
         "layer", "split",
         "model_a_l1_norm", "model_a_l2_norm",
@@ -436,12 +436,12 @@ def main():
         "mean_diff_l1", "mean_diff_l2",
     ]
     write_csv(output_path, rows, fieldnames)
-    print(f"\n[activation_norms] ✓ Wrote activation stats to {output_path}")
-    log_csv_as_table(output_path, "activation_stats")
+    print(f"\n[collect_activation_comparison] ✓ Wrote activation stats to {output_path}")
+    log_csv_as_table(output_path, "activation_comparison")
 
     # Generate plots if requested
     if args.plot_outdir:
-        plot_activation_norms(output_path, args.plot_outdir, args.title)
+        plot_activation_comparison(output_path, args.plot_outdir, args.title)
         log_plots(args.plot_outdir, "activation_plots")
 
     finish_wandb()

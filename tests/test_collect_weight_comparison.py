@@ -1,4 +1,4 @@
-"""Tests for experiment/param_stats.py — SmartLoader and stats computation."""
+"""Tests for experiment/collect_weight_comparison.py — SmartLoader and stats computation."""
 
 import os
 import sys

@@ -28,8 +28,8 @@ def model_outdir(model: str, root: str = "outputs", suffix: str = "") -> str:
 def comparison_outdir(model_a: str, model_b: str, root: str = "outputs", suffix: str = "") -> str:
     """Derive output directory for a two-model comparison.
 
-    E.g. comparison_outdir('org/base', 'org/filtered', suffix='param_stats')
-         → 'outputs/org_base__to__org_filtered/param_stats'
+    E.g. comparison_outdir('org/base', 'org/filtered', suffix='weight_comparison')
+         → 'outputs/org_base__to__org_filtered/weight_comparison'
     """
     san_a = model_a.replace("/", "_")
     san_b = model_b.replace("/", "_")
