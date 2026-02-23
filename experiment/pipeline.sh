@@ -30,10 +30,16 @@ OUTROOT="${OUTROOT:-outputs}"
 BASE="EleutherAI/deep-ignorance-unfiltered"
 FILTERED="EleutherAI/deep-ignorance-e2e-strong-filter"
 UNLEARNED="${UNLEARNED:-EleutherAI/deep-ignorance-unfiltered-cb-lat}"
+CB_ONLY="EleutherAI/deep-ignorance-unfiltered-cb"
+PRETRAIN="EleutherAI/deep-ignorance-pretraining-stage-unfiltered"
 
 # Comparison names (derived from model IDs: / → _)
 COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-strong-filter"
 COMP2="EleutherAI_deep-ignorance-unfiltered__to__${UNLEARNED//\//_}"
+COMP3="EleutherAI_deep-ignorance-unfiltered__to__${PRETRAIN//\//_}"
+COMP4="EleutherAI_deep-ignorance-unfiltered__to__${CB_ONLY//\//_}"
+COMP5="${CB_ONLY//\//_}__to__${UNLEARNED//\//_}"
+COMP6="${UNLEARNED//\//_}__to__EleutherAI_deep-ignorance-e2e-strong-filter"
 
 # Per-model folder names (for analyses that run once per model, not per comparison)
 MODEL_BASE="EleutherAI_deep-ignorance-unfiltered"
@@ -64,8 +70,12 @@ echo "      MODEL DIFFS ANALYSIS PIPELINE"
 echo "=========================================="
 echo ""
 echo "Base model: $BASE"
-echo "Comparison 1: -> $FILTERED"
-echo "Comparison 2: -> $UNLEARNED"
+echo "Comparison 1: Base -> $FILTERED"
+echo "Comparison 2: Base -> $UNLEARNED"
+echo "Comparison 3: Base -> $PRETRAIN"
+echo "Comparison 4: Base -> $CB_ONLY"
+echo "Comparison 5: $CB_ONLY -> $UNLEARNED"
+echo "Comparison 6: $UNLEARNED -> $FILTERED"
 echo "Output root: $OUTROOT"
 echo ""
 
@@ -115,16 +125,17 @@ else
 fi
 
 # ============================================
-# STEP 1: Parameter Statistics
+# STEP 1: Parameter Statistics & Weight Comparison
 # ============================================
 echo "=========================================="
-echo "STEP 1: Parameter Statistics (Collect + Plot)"
+echo "STEP 1: Parameter Statistics & Weight Comparison"
 echo "=========================================="
+echo "Computing per-component metrics (Frobenius, spectral, stable rank, cosine sim, etc.)"
 
 echo ""
 echo "Comparison 1: Base → Filtered"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP1}/param_stats" "per_layer.csv"; then
+if step_complete "${OUTROOT}/${COMP1}/param_stats" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/param_stats.py \
@@ -132,13 +143,15 @@ else
     --model-b "$FILTERED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --title "EleutherAI/deep-ignorance-unfiltered → EleutherAI/deep-ignorance-e2e-strong-filter"
+    --outdir "${OUTROOT}/${COMP1}/param_stats" \
+    --plot-outdir "${OUTROOT}/${COMP1}/param_plots" \
+    --title "$BASE → $FILTERED"
 fi
 
 echo ""
 echo "Comparison 2: Base → Unlearned"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP2}/param_stats" "per_layer.csv"; then
+if step_complete "${OUTROOT}/${COMP2}/param_stats" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/param_stats.py \
@@ -146,7 +159,73 @@ else
     --model-b "$UNLEARNED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP2}/param_stats" \
+    --plot-outdir "${OUTROOT}/${COMP2}/param_plots" \
     --title "$BASE → $UNLEARNED"
+fi
+
+echo ""
+echo "Comparison 3: Base → Pretraining"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP3}/param_stats" "per_matrix.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/param_stats.py \
+    --model-a "$BASE" \
+    --model-b "$PRETRAIN" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP3}/param_stats" \
+    --plot-outdir "${OUTROOT}/${COMP3}/param_plots" \
+    --title "$BASE → $PRETRAIN"
+fi
+
+echo ""
+echo "Comparison 4: Base → CB-only"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP4}/param_stats" "per_matrix.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/param_stats.py \
+    --model-a "$BASE" \
+    --model-b "$CB_ONLY" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP4}/param_stats" \
+    --plot-outdir "${OUTROOT}/${COMP4}/param_plots" \
+    --title "$BASE → $CB_ONLY"
+fi
+
+echo ""
+echo "Comparison 5: CB-only → CB+LAT"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP5}/param_stats" "per_matrix.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/param_stats.py \
+    --model-a "$CB_ONLY" \
+    --model-b "$UNLEARNED" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP5}/param_stats" \
+    --plot-outdir "${OUTROOT}/${COMP5}/param_plots" \
+    --title "$CB_ONLY → $UNLEARNED"
+fi
+
+echo ""
+echo "Comparison 6: CB+LAT → Filtered"
+echo "----------------------------------------"
+if step_complete "${OUTROOT}/${COMP6}/param_stats" "per_matrix.csv"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/param_stats.py \
+    --model-a "$UNLEARNED" \
+    --model-b "$FILTERED" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE" \
+    --outdir "${OUTROOT}/${COMP6}/param_stats" \
+    --plot-outdir "${OUTROOT}/${COMP6}/param_plots" \
+    --title "$UNLEARNED → $FILTERED"
 fi
 
 # ============================================
@@ -220,7 +299,7 @@ if step_complete "${OUTROOT}/${COMP1}/mlp_attn_analysis" "mlp_attn_summary.csv";
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/analyze_mlp_vs_attn.py \
-    --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_layer.csv" \
+    --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_coarse_layer.csv" \
     --per-matrix-csv "${OUTROOT}/${COMP1}/param_stats/per_matrix.csv" \
     --outdir "${OUTROOT}/${COMP1}/mlp_attn_analysis" \
     --title "E2E Strong Filter: MLP vs Attention"
@@ -232,7 +311,7 @@ if step_complete "${OUTROOT}/${COMP2}/mlp_attn_analysis" "mlp_attn_summary.csv";
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/analyze_mlp_vs_attn.py \
-    --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
+    --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_coarse_layer.csv" \
     --per-matrix-csv "${OUTROOT}/${COMP2}/param_stats/per_matrix.csv" \
     --outdir "${OUTROOT}/${COMP2}/mlp_attn_analysis" \
     --title "${UNLEARNED##*/}: MLP vs Attention"
@@ -567,8 +646,8 @@ echo ""
 echo "All results saved under: ${OUTROOT}/"
 echo ""
 echo "  <comparison>/"
-echo "    param_stats/           per_matrix.csv, per_layer.csv"
-echo "    param_plots/           Layer locality, stable rank PNGs"
+echo "    param_stats/            per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv"
+echo "    param_plots/            Layer locality, stable rank, spectral norm PNGs"
 echo "    activation_stats/      activation_stats.csv"
 echo "    activation_plots/      Activation norms, diffs PNGs"
 echo "    mlp_attn_analysis/     summary CSV + plots"
