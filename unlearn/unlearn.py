@@ -1044,12 +1044,18 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # ---- Load model ----
-    print("[unlearn] Loading model...")
+    # ---- Load base model ----
+    print(f"[unlearn] Loading base model: {args.model}")
+    
+    # If device is auto, let accelerate distribute it across all available GPUs
+    # Otherwise, load it to the CPU first and then manually .to(device) it
+    device_map_kwargs = {"device_map": "auto"} if args.device == "auto" else {}
+    
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, torch_dtype=pt_dtype, trust_remote_code=True
+        args.model, torch_dtype=pt_dtype, trust_remote_code=True, **device_map_kwargs
     )
-    model.to(device)
+    if args.device != "auto":
+        model.to(device)
     model.train()
 
     # Enable gradient checkpointing to save GPU memory at the cost of
@@ -1065,9 +1071,10 @@ def main():
     if args.method in ("dpo", "npo"):
         print("[unlearn] Loading reference model (frozen copy)...")
         ref_model = AutoModelForCausalLM.from_pretrained(
-            args.model, torch_dtype=pt_dtype, trust_remote_code=True
+            args.model, torch_dtype=pt_dtype, trust_remote_code=True, **device_map_kwargs
         )
-        ref_model.to(device)
+        if args.device != "auto":
+            ref_model.to(device)
         ref_model.eval()  # permanently in eval mode
         for p in ref_model.parameters():
             p.requires_grad = False  # freeze all weights

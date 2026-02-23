@@ -387,7 +387,10 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype).to(device)
+    device_map_kwargs = {"device_map": "auto"} if device == "auto" else {}
+    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype, **device_map_kwargs)
+    if device != "auto":
+        model.to(device)
     model.eval()
 
     num_layers = get_num_layers(model)

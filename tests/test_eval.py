@@ -402,3 +402,80 @@ class TestSimpleEvaluateCall:
 
         mock_tm.assert_called_once()
         assert mock_tm.call_args.kwargs["include_path"].endswith("lm_eval_tasks")
+
+
+# ---------------------------------------------------------------------------
+# W&B Logging
+# ---------------------------------------------------------------------------
+class TestWandbLogging:
+    """Test Weights & Biases logging integration."""
+
+    @patch.dict("sys.modules", {"wandb": MagicMock()})
+    def test_wandb_not_called_without_project(self, mock_lm_eval_results, tmp_path):
+        import wandb
+        wandb.init.reset_mock()
+        wandb.log.reset_mock()
+        outdir = str(tmp_path / "out")
+        with patch.object(eval_module.lm_eval, "simple_evaluate", return_value=mock_lm_eval_results):
+            with patch.object(eval_module, "TaskManager"):
+                with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir]):
+                    eval_module.main()
+
+        wandb.init.assert_not_called()
+        wandb.log.assert_not_called()
+
+    @patch.dict("sys.modules", {"wandb": MagicMock()})
+    def test_wandb_called_with_project(self, mock_lm_eval_results, tmp_path):
+        import wandb
+        wandb.init.reset_mock()
+        wandb.log.reset_mock()
+        wandb.summary.update.reset_mock()
+        wandb.finish.reset_mock()
+        outdir = str(tmp_path / "out")
+        with patch.object(eval_module.lm_eval, "simple_evaluate", return_value=mock_lm_eval_results):
+            with patch.object(eval_module, "TaskManager"):
+                with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir, 
+                                        "--wandb-project", "my-test-proj"]):
+                    eval_module.main()
+
+        wandb.init.assert_called_once()
+        init_kwargs = wandb.init.call_args.kwargs
+        assert init_kwargs["project"] == "my-test-proj"
+        # Defaults to model name if run_name not provided
+        assert init_kwargs["name"] == "org/test"
+        
+        wandb.log.assert_called_once()
+        log_data = wandb.log.call_args.args[0]
+        assert "eval_bench/mmlu/acc" in log_data
+        
+        wandb.summary.update.assert_called_once_with(log_data)
+        wandb.finish.assert_called_once()
+
+    @patch.dict("sys.modules", {"wandb": MagicMock()})
+    def test_wandb_uses_custom_name(self, mock_lm_eval_results, tmp_path):
+        import wandb
+        wandb.init.reset_mock()
+        outdir = str(tmp_path / "out")
+        with patch.object(eval_module.lm_eval, "simple_evaluate", return_value=mock_lm_eval_results):
+            with patch.object(eval_module, "TaskManager"):
+                with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir, 
+                                        "--wandb-project", "my-test-proj", "--wandb-name", "custom-run-123"]):
+                    eval_module.main()
+
+        init_kwargs = wandb.init.call_args.kwargs
+        assert init_kwargs["name"] == "custom-run-123"
+
+    @patch("builtins.print")
+    def test_wandb_import_error_handled_gracefully(self, mock_print, mock_lm_eval_results, tmp_path):
+        outdir = str(tmp_path / "out")
+        with patch.object(eval_module.lm_eval, "simple_evaluate", return_value=mock_lm_eval_results):
+            with patch.object(eval_module, "TaskManager"):
+                with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir, 
+                                        "--wandb-project", "my-test-proj"]):
+                    # Force the runtime import to fail by putting None in sys.modules
+                    with patch.dict("sys.modules", {"wandb": None}):
+                        eval_module.main()
+
+        # The fallback "Failed to log to W&B" should be printed without crashing
+        printed_texts = " ".join([call.args[0] for call in mock_print.call_args_list if call.args])
+        assert "WARNING: Failed to log to W&B" in printed_texts

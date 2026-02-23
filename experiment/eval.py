@@ -6,6 +6,7 @@
 #   "transformers",
 #   "accelerate",
 #   "lm-eval",
+#   "wandb",
 # ]
 # ///
 
@@ -84,6 +85,8 @@ def main():
                         help="Max samples per task (default: full benchmark)")
     parser.add_argument("--batch-size", default="auto", help="Batch size (default: auto)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--wandb-project", type=str, default=None, help="W&B project to log results to")
+    parser.add_argument("--wandb-name", type=str, default=None, help="W&B run name")
     args = parser.parse_args()
 
     # Auto-derive outdir from model name if not specified
@@ -172,6 +175,25 @@ def main():
         print(f"         {task_name}.json")
     print(f"         summary.json")
     print(f"         high_level_summary.md")
+
+    # Log to W&B if requested
+    if args.wandb_project:
+        try:
+            import wandb
+            run_name = args.wandb_name or args.model
+            wandb.init(project=args.wandb_project, name=run_name, config=vars(args))
+            flat = {}
+            for task_name, task_results in results["results"].items():
+                for metric_key, value in task_results.items():
+                    if metric_key.endswith(",none") and not metric_key.startswith("alias"):
+                        clean_metric = metric_key.replace(",none", "")
+                        flat[f"eval_bench/{task_name}/{clean_metric}"] = value
+            wandb.log(flat)
+            wandb.summary.update(flat)
+            wandb.finish()
+            print(f"[eval] ✓ Metrics logged to Weights & Biases (project: {args.wandb_project}, run: {run_name})")
+        except Exception as e:
+            print(f"[eval] WARNING: Failed to log to W&B: {e}")
 
 
 def _write_high_level_summary(results: dict, model: str, outdir: str) -> None:

@@ -24,10 +24,29 @@ def load_model(model_id: str):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    print(f"Loading model {model_id}...")
+    # Use device_map="auto" if a GPU is available, otherwise load to CPU
+    # The 'device' variable here indicates the *preferred* device, not necessarily "auto"
+    # We'll use device_map="auto" if a GPU is available, otherwise explicitly load to CPU
+    device_map_kwargs = {}
+    if torch.cuda.is_available() or (torch.backends.mps.is_available() and torch.backends.mps.is_built()):
+        device_map_kwargs["device_map"] = "auto"
+        # If device_map="auto" is used, the model will handle placement,
+        # so we don't explicitly call .to(device) later.
+        # However, we still report the initially detected 'device' for user info.
+    else:
+        # For CPU, device_map="auto" is not typically used, load directly to CPU
+        pass # No device_map_kwargs needed, model will load to CPU by default or we'll .to('cpu')
+
     model = AutoModelForCausalLM.from_pretrained(
-        model_id, torch_dtype=dtype, trust_remote_code=True
+        model_id,
+        torch_dtype=dtype,
+        trust_remote_code=True,
+        **device_map_kwargs
     )
-    model.to(device)
+    # If device_map="auto" was not used (e.g., on CPU), explicitly move model to the determined device
+    if "device_map" not in device_map_kwargs:
+        model.to(device)
     model.eval()
     return model, tokenizer, device
 
