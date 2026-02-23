@@ -26,6 +26,37 @@ DTYPE="${DTYPE:-auto}"
 
 echo "=== Unlearning: method=${METHOD}  model=${BASE} ==="
 
+# Check if this exact sweep config has already finished in W&B
+if uv run --script unlearn/unlearn.py \
+  --model "$BASE" \
+  --method "$METHOD" \
+  --forget-data data/forget.txt \
+  --retain-data data/retain.txt \
+  --device "$DEVICE" \
+  --dtype "$DTYPE" \
+  ${LR:+--lr "$LR"} \
+  ${EPOCHS:+--epochs "$EPOCHS"} \
+  ${BATCH_SIZE:+--batch-size "$BATCH_SIZE"} \
+  ${MAX_LENGTH:+--max-length "$MAX_LENGTH"} \
+  ${BETA:+--beta "$BETA"} \
+  ${ALPHA:+--alpha "$ALPHA"} \
+  ${STEERING_COEFF:+--steering-coeff "$STEERING_COEFF"} \
+  ${LAYER_ID:+--layer-id "$LAYER_ID"} \
+  ${FORGET_WEIGHT:+--forget-weight "$FORGET_WEIGHT"} \
+  ${RETAIN_WEIGHT:+--retain-weight "$RETAIN_WEIGHT"} \
+  ${LAT_EPS:+--lat-eps "$LAT_EPS"} \
+  ${LAT_STEPS:+--lat-steps "$LAT_STEPS"} \
+  ${WT_NOISE_STD:+--wt-noise-std "$WT_NOISE_STD"} \
+  ${WT_REG_LAMBDA:+--wt-reg-lambda "$WT_REG_LAMBDA"} \
+  ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
+  ${PUSH_TO_HUB:+--push-to-hub} \
+  ${NO_SAVE:+--no-save} \
+  --seed 42 \
+  --check-wandb-only; then
+  echo "=== Skipping ${METHOD}: Already finished successfully in W&B ==="
+  exit 0
+fi
+
 uv run --script unlearn/unlearn.py \
   --model "$BASE" \
   --method "$METHOD" \

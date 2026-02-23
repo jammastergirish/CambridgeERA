@@ -989,10 +989,37 @@ def main():
                         help="Upload finished model to HuggingFace (requires HF_TOKEN env var)")
     parser.add_argument("--no-save", action="store_true",
                         help="Do not save the final model weights to disk (useful for sweeps to save space)")
+    parser.add_argument("--check-wandb-only", action="store_true",
+                        help="Check if this specific run configuration already finished in W&B and exit 0 if so, 1 otherwise.")
     args = parser.parse_args()
 
     # Auto-generate output directory from method + all relevant params
     args.outdir = build_outdir(args)
+    
+    # If we are just checking idempotency, do it now before allocating any GPU RAM
+    if args.check_wandb_only:
+        # W&B runs in this project are named as "{model_basename}/{run_name}"
+        model_basename = os.path.basename(os.path.normpath(args.model))
+        run_name = os.path.basename(args.outdir)
+        full_display_name = f"{model_basename}/{run_name}"
+
+        try:
+            import wandb
+            api = wandb.Api()
+            project_name = os.environ.get("WANDB_PROJECT", "cambridge_era")
+            runs = api.runs(f"{project_name}", filters={"display_name": full_display_name})
+            for r in runs:
+                if r.state == "finished":
+                    print(f"[unlearn] Idempotency check: Run '{full_display_name}' already finished in W&B. Skipping.")
+                    sys.exit(0)
+        except Exception as e:
+            # If W&B API drops or isn't authed, ignore and assume we need to run
+            pass
+        
+        # If we didn't find a finished run, exit 1 to signal that training should proceed
+        print(f"[unlearn] Idempotency check: Run '{full_display_name}' not found or not finished. Needs training.")
+        sys.exit(1)
+
     print(f"[unlearn] Output directory: {args.outdir}")
 
     # ---- W&B ----
