@@ -15,6 +15,7 @@
 #   "pandas",
 #   "scikit-learn",
 #   "scipy",
+#   "python-dotenv",
 # ]
 # ///
 
