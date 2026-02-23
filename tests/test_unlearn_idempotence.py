@@ -52,10 +52,19 @@ def test_check_wandb_only_already_finished(mock_wandb_api):
                 unlearn_script.main()
             assert exc.value.code == 0
 
-        # Verify the API was actually queried with the right project
+        # Verify the API was actually queried with the right project AND exact display_name 
         mock_api_instance.runs.assert_called_once()
         args, kwargs = mock_api_instance.runs.call_args
         assert "cambridge_era" in args[0] # The default project name
+        
+        # This is CRITICAL: ensure the organization prefix is kept
+        # Instead of just "cb__ep1_..."" it should be "EleutherAI_deep-ignorance-unfiltered/cb_..."
+        assert "filters" in kwargs
+        assert "display_name" in kwargs["filters"]
+        requested_name = kwargs["filters"]["display_name"]
+        
+        # It must include the model name as the prefix, just like W&B does natively
+        assert requested_name.startswith("EleutherAI_deep-ignorance-unfiltered/cb")
 
 
 @patch("wandb.Api")
@@ -90,6 +99,9 @@ def test_check_wandb_only_not_finished(mock_wandb_api):
             with pytest.raises(SystemExit) as exc:
                 unlearn_script.main()
             assert exc.value.code == 1
+
+        args, kwargs = mock_api_instance.runs.call_args
+        assert kwargs["filters"]["display_name"].startswith("EleutherAI_deep-ignorance-unfiltered/cb")
 
 
 @patch("wandb.Api")
