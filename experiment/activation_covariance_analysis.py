@@ -337,17 +337,23 @@ def main():
         f"{len(retain_texts)} retain texts (max-samples={args.max_samples})"
     )
 
-    # Load models
-    print(f"[activation_covariance] Loading model A (baseline): {args.model_a}")
+    # Load tokenizers and models
+    print(f"[activation_covariance] Loading base model: {args.model_a}")
     tokenizer = AutoTokenizer.from_pretrained(args.model_a)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+        
+    device_map_kwargs = {"device_map": "auto"} if device == "auto" else {}
 
-    model_a = AutoModelForCausalLM.from_pretrained(args.model_a, torch_dtype=dtype).to(device)
+    model_a = AutoModelForCausalLM.from_pretrained(args.model_a, torch_dtype=dtype, **device_map_kwargs)
+    if device != "auto":
+        model_a.to(device)
     model_a.eval()
 
-    print(f"[activation_covariance] Loading model B (target): {args.model_b}")
-    model_b = AutoModelForCausalLM.from_pretrained(args.model_b, torch_dtype=dtype).to(device)
+    print(f"[activation_covariance] Loading unlearned model: {args.model_b}")
+    model_b = AutoModelForCausalLM.from_pretrained(args.model_b, torch_dtype=dtype, **device_map_kwargs)
+    if device != "auto":
+        model_b.to(device)
     model_b.eval()
 
     # Determine layer count

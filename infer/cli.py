@@ -32,15 +32,20 @@ def load_model(model_id: str):
         device = "cpu"
         dtype = torch.float32
 
-    print(f"Loading {model_id} on {device} ({dtype})")
+    print(f"Loading model {model_id}...")
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    device_map_kwargs = {"device_map": "auto"} if device == "auto" else {}
     model = AutoModelForCausalLM.from_pretrained(
-        model_id, torch_dtype=dtype, trust_remote_code=True
+        model_id,
+        torch_dtype=dtype,
+        trust_remote_code=True,
+        **device_map_kwargs
     )
-    model.to(device)
+    if device != "auto":
+        model.to(device)
     model.eval()
     return model, tokenizer, device
 

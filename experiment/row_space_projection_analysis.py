@@ -330,13 +330,17 @@ def main():
         f"{len(retain_texts)} retain texts (max-samples={args.max_samples})"
     )
 
-    # Load tokenizer and models
-    print("[row_space_projection] Loading models...")
+    # Load tokenizers and models
+    print(f"Loading Base Model: {args.model_a}...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_a)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model_a = AutoModelForCausalLM.from_pretrained(args.model_a, torch_dtype=dtype).to(device)
+    device_map_kwargs = {"device_map": "auto"} if device == "auto" else {}
+
+    model_a = AutoModelForCausalLM.from_pretrained(args.model_a, torch_dtype=dtype, **device_map_kwargs)
+    if device != "auto":
+        model_a.to(device)
     model_a.eval()
 
     loader_a = SmartLoader(args.model_a)
