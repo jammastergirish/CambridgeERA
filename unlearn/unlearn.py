@@ -998,10 +998,8 @@ def main():
     
     # If we are just checking idempotency, do it now before allocating any GPU RAM
     if args.check_wandb_only:
-        # W&B runs in this project are named as "{model_basename}/{run_name}"
-        model_basename = os.path.basename(os.path.normpath(args.model))
-        run_name = os.path.basename(args.outdir)
-        full_display_name = f"{model_basename}/{run_name}"
+        import utils
+        full_display_name = utils._derive_run_name("unlearn", args)
 
         try:
             import wandb
