@@ -1,17 +1,12 @@
 Fetching runs from project 'cambridge_era'...
 
-Successfully processed 90 runs with evaluation metrics out of the total runs.
+Successfully processed 92 runs with evaluation metrics out of the total runs.
 =====================================
              BASELINES               
 =====================================
-No baseline runs found.
-
-To generate and log baselines to W&B, run these commands from the project root:
-  uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered \
-      --wandb-project cambridge_era --wandb-name EleutherAI/deep-ignorance-unfiltered
-
-  uv run experiment/eval.py --model EleutherAI/deep-ignorance-e2e-strong-filter \
-      --wandb-project cambridge_era --wandb-name EleutherAI/deep-ignorance-e2e-strong-filter
+                                       Name   MMLU  WMDP (Robust) WMDP (Cloze)  WMDP (Categorized)
+EleutherAI/deep-ignorance-e2e-strong-filter 0.4316         0.2499         None              0.4006
+       EleutherAI/deep-ignorance-unfiltered 0.4499         0.2573         None              0.5263
 
 --- Best Models By Method ---
 

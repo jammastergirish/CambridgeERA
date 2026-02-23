@@ -400,7 +400,7 @@ After creating unlearned models (or when evaluating baseline base/filtered model
 
 ```bash
 # Fetch and print the best models grouped by unlearning method
-uv run unlearn/analysis/analyze_runs.py
+uv run unlearn/analysis/analyze_runs.py > best_unlearning_models.txt
 ```
 
 > [!NOTE]
