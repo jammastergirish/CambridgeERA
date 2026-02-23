@@ -135,7 +135,7 @@ echo "Computing per-component metrics (Frobenius, spectral, stable rank, cosine 
 echo ""
 echo "Comparison 1: Base → Filtered"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP1}/param_stats" "per_component.csv"; then
+if step_complete "${OUTROOT}/${COMP1}/param_stats" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/param_stats.py \
@@ -151,7 +151,7 @@ fi
 echo ""
 echo "Comparison 2: Base → Unlearned"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP2}/param_stats" "per_component.csv"; then
+if step_complete "${OUTROOT}/${COMP2}/param_stats" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/param_stats.py \
@@ -167,7 +167,7 @@ fi
 echo ""
 echo "Comparison 3: Base → Pretraining"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP3}/param_stats" "per_component.csv"; then
+if step_complete "${OUTROOT}/${COMP3}/param_stats" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/param_stats.py \
@@ -183,7 +183,7 @@ fi
 echo ""
 echo "Comparison 4: Base → CB-only"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP4}/param_stats" "per_component.csv"; then
+if step_complete "${OUTROOT}/${COMP4}/param_stats" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/param_stats.py \
@@ -199,7 +199,7 @@ fi
 echo ""
 echo "Comparison 5: CB-only → CB+LAT"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP5}/param_stats" "per_component.csv"; then
+if step_complete "${OUTROOT}/${COMP5}/param_stats" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/param_stats.py \
@@ -215,7 +215,7 @@ fi
 echo ""
 echo "Comparison 6: CB+LAT → Filtered"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP6}/param_stats" "per_component.csv"; then
+if step_complete "${OUTROOT}/${COMP6}/param_stats" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/param_stats.py \
@@ -299,8 +299,8 @@ if step_complete "${OUTROOT}/${COMP1}/mlp_attn_analysis" "mlp_attn_summary.csv";
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/analyze_mlp_vs_attn.py \
-    --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_layer.csv" \
-    --per-matrix-csv "${OUTROOT}/${COMP1}/param_stats/per_component.csv" \
+    --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_coarse_layer.csv" \
+    --per-matrix-csv "${OUTROOT}/${COMP1}/param_stats/per_matrix.csv" \
     --outdir "${OUTROOT}/${COMP1}/mlp_attn_analysis" \
     --title "E2E Strong Filter: MLP vs Attention"
 fi
@@ -311,8 +311,8 @@ if step_complete "${OUTROOT}/${COMP2}/mlp_attn_analysis" "mlp_attn_summary.csv";
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/analyze_mlp_vs_attn.py \
-    --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_layer.csv" \
-    --per-matrix-csv "${OUTROOT}/${COMP2}/param_stats/per_component.csv" \
+    --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_coarse_layer.csv" \
+    --per-matrix-csv "${OUTROOT}/${COMP2}/param_stats/per_matrix.csv" \
     --outdir "${OUTROOT}/${COMP2}/mlp_attn_analysis" \
     --title "${UNLEARNED##*/}: MLP vs Attention"
 fi
@@ -646,7 +646,7 @@ echo ""
 echo "All results saved under: ${OUTROOT}/"
 echo ""
 echo "  <comparison>/"
-echo "    param_stats/            per_component.csv, summary.csv, per_layer.csv"
+echo "    param_stats/            per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv"
 echo "    param_plots/            Layer locality, stable rank, spectral norm PNGs"
 echo "    activation_stats/      activation_stats.csv"
 echo "    activation_plots/      Activation norms, diffs PNGs"

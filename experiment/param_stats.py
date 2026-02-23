@@ -23,10 +23,11 @@ Computes a comprehensive set of metrics for each weight matrix:
   - Stable rank (dW and W)
   - Optional: Empirical rank via full SVD
 
-Outputs three CSVs:
-  - per_component.csv: one row per weight matrix (all metrics)
-  - summary.csv: aggregate stats per component across layers
-  - per_layer.csv: aggregate stats per layer per coarse group (attn/mlp)
+Outputs four CSVs:
+  - per_matrix.csv: one row per weight matrix (all metrics)
+  - per_component.csv: aggregate stats per granular component (qkv/proj/mlp_expand/mlp_contract) across layers
+  - per_layer.csv: aggregate stats per layer per granular component (qkv/proj/mlp_expand/mlp_contract)
+  - per_coarse_layer.csv: aggregate stats per layer per coarse group (attn/mlp)
 """
 
 import argparse
@@ -58,7 +59,7 @@ from utils import (
     finish_wandb,
 )
 
-# Coarse group mapping: granular component -> coarse group (for per_layer.csv)
+# Coarse group mapping: granular component -> coarse group (for per_coarse_layer.csv)
 _COARSE_MAP = {
     "qkv": "attn",
     "proj": "attn",
@@ -250,15 +251,15 @@ def run_sanity_checks(
 # Plotting
 # ---------------------------------------------------------------------------
 
-def plot_weight_comparison(per_component_csv: str, outdir: str, title: str = None):
-    """Generate per-component plots from per_component.csv."""
+def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None):
+    """Generate per-component plots from per_matrix.csv."""
     import pandas as pd
     import matplotlib.pyplot as plt
 
     os.makedirs(outdir, exist_ok=True)
 
-    df = pd.read_csv(per_component_csv)
-    print(f"Generating plots from {per_component_csv} ({len(df)} rows)")
+    df = pd.read_csv(per_matrix_csv)
+    print(f"Generating plots from {per_matrix_csv} ({len(df)} rows)")
 
     components = [c for c in _GRANULAR_COMPONENTS if c in df["component"].values]
     if not components:
@@ -469,8 +470,8 @@ def main():
     outdir = args.outdir
     os.makedirs(outdir, exist_ok=True)
 
-    # 1) per_component.csv — one row per weight matrix
-    per_component_fields = [
+    # 1) per_matrix.csv — one row per weight matrix
+    per_matrix_fields = [
         "name", "layer", "component", "shape0", "shape1", "elements",
         "cosine_sim", "rel_frobenius", "frobenius_norm", "fro_norm_normalized",
         "W_fro", "diff_mean", "diff_std", "diff_abs_mean",
@@ -478,11 +479,12 @@ def main():
         "dW_stable_rank", "W_stable_rank",
     ]
     if args.empirical_rank:
-        per_component_fields += ["dW_empirical_rank", "W_empirical_rank"]
+        per_matrix_fields += ["dW_empirical_rank", "W_empirical_rank"]
     rows.sort(key=lambda r: (r["layer"], r["component"]))
-    write_csv(os.path.join(outdir, "per_component.csv"), rows, per_component_fields)
+    per_matrix_csv = os.path.join(outdir, "per_matrix.csv")
+    write_csv(per_matrix_csv, rows, per_matrix_fields)
 
-    # 2) summary.csv — aggregate stats per component across layers
+    # 2) per_component.csv — aggregate stats per granular component across layers
     metric_keys = [
         "cosine_sim", "rel_frobenius", "frobenius_norm", "fro_norm_normalized",
         "diff_mean", "diff_std", "diff_abs_mean",
@@ -517,9 +519,66 @@ def main():
     summary_fields = ["component", "n_layers", "elements"]
     for k in metric_keys:
         summary_fields.extend([f"{k}_mean", f"{k}_min", f"{k}_max", f"{k}_std"])
-    write_csv(os.path.join(outdir, "summary.csv"), summary_rows, summary_fields)
+    write_csv(os.path.join(outdir, "per_component.csv"), summary_rows, summary_fields)
 
-    # 3) per_layer.csv — aggregate stats per layer per coarse group (attn/mlp)
+    # 3) per_layer.csv — aggregate stats per layer per granular component
+    per_layer_granular = defaultdict(lambda: {
+        "sum_dW_fro_sq": 0.0, "sum_W_fro_sq": 0.0,
+        "sum_dW_sr": 0.0,
+        "max_dW_spec": 0.0, "max_W_spec": 0.0,
+        "count": 0,
+    })
+    if args.empirical_rank:
+        for k in per_layer_granular.values():
+            k["sum_dW_er"] = 0.0
+    for r in rows:
+        layer = r["layer"]
+        comp = r["component"]
+        key = (layer, comp)
+        stats = per_layer_granular[key]
+        if args.empirical_rank and "sum_dW_er" not in stats:
+            stats["sum_dW_er"] = 0.0
+        stats["sum_dW_fro_sq"] += r["frobenius_norm"] ** 2
+        stats["sum_W_fro_sq"] += r["W_fro"] ** 2
+        stats["sum_dW_sr"] += r["dW_stable_rank"]
+        stats["max_dW_spec"] = max(stats["max_dW_spec"], r["diff_spectral_norm"])
+        stats["max_W_spec"] = max(stats["max_W_spec"], r["W_spectral"])
+        if args.empirical_rank:
+            stats["sum_dW_er"] += r.get("dW_empirical_rank", 0.0)
+        stats["count"] += 1
+
+    granular_layer_rows = []
+    for (layer, comp), stats in sorted(per_layer_granular.items(), key=lambda x: (x[0][0], x[0][1])):
+        dW_fro = float(np.sqrt(stats["sum_dW_fro_sq"]))
+        W_fro = float(np.sqrt(stats["sum_W_fro_sq"]))
+        lr = {
+            "layer": layer,
+            "component": comp,
+            "dW_fro_layer": dW_fro,
+            "W_fro_layer": W_fro,
+            "dW_fro_layer_rel": dW_fro / W_fro if W_fro > 0 else 0.0,
+            "max_dW_spectral": stats["max_dW_spec"],
+            "max_W_spectral": stats["max_W_spec"],
+            "max_dW_spectral_rel": stats["max_dW_spec"] / stats["max_W_spec"] if stats["max_W_spec"] > 0 else 0.0,
+            "mean_dW_stable_rank": stats["sum_dW_sr"] / max(stats["count"], 1),
+            "count_mats": stats["count"],
+        }
+        if args.empirical_rank:
+            lr["mean_dW_empirical_rank"] = stats["sum_dW_er"] / max(stats["count"], 1)
+        granular_layer_rows.append(lr)
+
+    per_layer_granular_fields = [
+        "layer", "component",
+        "dW_fro_layer", "W_fro_layer", "dW_fro_layer_rel",
+        "max_dW_spectral", "max_W_spectral", "max_dW_spectral_rel",
+        "mean_dW_stable_rank", "count_mats",
+    ]
+    if args.empirical_rank:
+        per_layer_granular_fields.insert(-1, "mean_dW_empirical_rank")
+    per_layer_csv = os.path.join(outdir, "per_layer.csv")
+    write_csv(per_layer_csv, granular_layer_rows, per_layer_granular_fields)
+
+    # 4) per_coarse_layer.csv — aggregate stats per layer per coarse group (attn/mlp)
     layer_rows = []
     for (layer, group), stats in sorted(per_layer_accum.items(), key=lambda x: (x[0][0], x[0][1])):
         dW_fro_layer = float(np.sqrt(stats["sum_dW_fro_sq"]))
@@ -550,13 +609,14 @@ def main():
     ]
     if args.empirical_rank:
         per_layer_fields.insert(-1, "mean_dW_empirical_rank")
-    per_layer_csv = os.path.join(outdir, "per_layer.csv")
-    write_csv(per_layer_csv, layer_rows, per_layer_fields)
+    per_coarse_layer_csv = os.path.join(outdir, "per_coarse_layer.csv")
+    write_csv(per_coarse_layer_csv, layer_rows, per_layer_fields)
 
     # ---- Log to wandb ----
+    log_csv_as_table(per_matrix_csv, key="per_matrix")
     log_csv_as_table(os.path.join(outdir, "per_component.csv"), key="per_component")
-    log_csv_as_table(os.path.join(outdir, "summary.csv"), key="summary")
     log_csv_as_table(per_layer_csv, key="per_layer")
+    log_csv_as_table(per_coarse_layer_csv, key="per_coarse_layer")
 
     # ---- Stdout summary ----
     print(f"\n{'='*70}")
@@ -577,7 +637,7 @@ def main():
     # ---- Plots ----
     if args.plot_outdir:
         plot_weight_comparison(
-            os.path.join(outdir, "per_component.csv"),
+            per_matrix_csv,
             args.plot_outdir,
             args.title,
         )
