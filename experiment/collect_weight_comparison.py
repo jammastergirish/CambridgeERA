@@ -349,7 +349,7 @@ def main():
     ap.add_argument("--sanity-check", action="store_true",
                     help="Run sanity checks before main comparison and exit early on failure")
     ap.add_argument("--trust-remote-code", action="store_true")
-    # Flags from param_stats
+    # Flags from collect_weight_comparison
     ap.add_argument("--sr-iters", type=int, default=5,
                     help="Power iteration count for spectral norm (default: 5)")
     ap.add_argument("--empirical-rank", action="store_true", default=False,
@@ -364,9 +364,9 @@ def main():
 
     # Derive output directory
     if args.outdir is None:
-        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="param_stats")
+        args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="weight_comparison")
 
-    init_wandb("param_stats", args)
+    init_wandb("weight_comparison", args)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

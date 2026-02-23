@@ -12,7 +12,7 @@
 """
 Compare weight-change magnitudes between MLP and Attention layers.
 
-Reads the per-layer and per-matrix CSVs produced by ``param_stats.py`` and
+Reads the per-layer and per-matrix CSVs produced by ``collect_weight_comparison.py`` and
 generates:
   1. A side-by-side plot of Frobenius-norm changes (MLP vs Attention) plus
      the per-layer ratio.
@@ -234,8 +234,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Compare weight-change magnitudes between MLP and Attention layers."
     )
-    parser.add_argument("--per-layer-csv", required=True, help="Path to per_layer.csv from param_stats.py")
-    parser.add_argument("--per-matrix-csv", required=True, help="Path to per_matrix.csv from param_stats.py")
+    parser.add_argument("--per-layer-csv", required=True, help="Path to per_layer.csv from collect_weight_comparison.py")
+    parser.add_argument("--per-matrix-csv", required=True, help="Path to per_matrix.csv from collect_weight_comparison.py")
     parser.add_argument("--outdir", default="outputs/mlp_attn_analysis")
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()

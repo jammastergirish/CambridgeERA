@@ -55,8 +55,8 @@ class TestModelOutdir:
 # ---------------------------------------------------------------------------
 class TestComparisonOutdir:
     def test_basic(self):
-        result = comparison_outdir("org/base", "org/filtered", suffix="param_stats")
-        assert result == os.path.join("outputs", "org_base__to__org_filtered", "param_stats")
+        result = comparison_outdir("org/base", "org/filtered", suffix="weight_comparison")
+        assert result == os.path.join("outputs", "org_base__to__org_filtered", "weight_comparison")
 
     def test_no_suffix(self):
         result = comparison_outdir("org/base", "org/filtered")

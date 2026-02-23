@@ -135,7 +135,7 @@ Runs MMLU (Massive Multitask Language Understanding) on each model before the ex
 
 These examine `W_modified`, `W_base`, and `ΔW = W_modified − W_base` directly—treating the intervention as a matrix perturbation.
 
-#### Step 1: Parameter Statistics (`experiment/param_stats.py`)
+#### Step 1: Parameter Statistics (`experiment/collect_weight_comparison.py`)
 
 **Question:** *How large is the intervention, and where is it concentrated?*
 
@@ -199,7 +199,7 @@ Decomposes each MLP update ΔW into components that lie in the **column space** 
 
 These run the model on actual text and measure *what it computes*, not just what its parameters look like. All activation scripts cap input at `--max-samples 500` texts per split by default to keep runtimes manageable (override with e.g. `--max-samples 1000` for more statistical power).
 
-##### Step 3: Activation Norms (`experiment/activation_norms.py`)
+##### Step 3: Activation Norms (`experiment/collect_activation_comparison.py`)
 
 **Question:** *Does the intervention globally suppress or amplify activations?*
 
@@ -347,9 +347,9 @@ All results are saved under a single root (default `outputs/`):
 ```
 outputs/
   <comparison>/                        # Steps 1–4, 7–12: per model-pair
-    param_stats/           per_matrix.csv, per_layer.csv
+    weight_comparison/     per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv
     param_plots/           Layer locality, stable rank, rank comparison PNGs
-    activation_stats/      activation_stats.csv
+    activation_comparison/ activation_comparison.csv
     activation_plots/      Activation norms, activation diffs PNGs
     mlp_attn_analysis/     summary CSV + plots
     null_space_analysis/   null_space_results.csv + plots
@@ -578,7 +578,7 @@ uv run infer/run.py
 
 ## Appendix A: CSV Column Reference
 
-### `param_stats/per_matrix.csv`
+### `weight_comparison/per_matrix.csv`
 
 One row per weight matrix in the model.
 
@@ -602,7 +602,7 @@ One row per weight matrix in the model.
 
 \* *Only present when `--empirical-rank` flag is passed (opt-in, requires full SVD).*
 
-### `param_stats/per_layer.csv`
+### `weight_comparison/per_layer.csv`
 
 Aggregated statistics per (layer, group) pair.
 
@@ -622,7 +622,7 @@ Aggregated statistics per (layer, group) pair.
 
 \* *Only present when `--empirical-rank` flag is passed.*
 
-### `activation_stats/activation_stats.csv`
+### `activation_comparison/activation_comparison.csv`
 
 One row per (layer, split) combination.
 

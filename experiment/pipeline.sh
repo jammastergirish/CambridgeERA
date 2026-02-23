@@ -135,15 +135,15 @@ echo "Computing per-component metrics (Frobenius, spectral, stable rank, cosine 
 echo ""
 echo "Comparison 1: Base → Filtered"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP1}/param_stats" "per_matrix.csv"; then
+if step_complete "${OUTROOT}/${COMP1}/weight_comparison" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/param_stats.py \
+  uv run experiment/collect_weight_comparison.py \
     --model-a "$BASE" \
     --model-b "$FILTERED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/param_stats" \
+    --outdir "${OUTROOT}/${COMP1}/weight_comparison" \
     --plot-outdir "${OUTROOT}/${COMP1}/param_plots" \
     --title "$BASE → $FILTERED"
 fi
@@ -151,15 +151,15 @@ fi
 echo ""
 echo "Comparison 2: Base → Unlearned"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP2}/param_stats" "per_matrix.csv"; then
+if step_complete "${OUTROOT}/${COMP2}/weight_comparison" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/param_stats.py \
+  uv run experiment/collect_weight_comparison.py \
     --model-a "$BASE" \
     --model-b "$UNLEARNED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/param_stats" \
+    --outdir "${OUTROOT}/${COMP2}/weight_comparison" \
     --plot-outdir "${OUTROOT}/${COMP2}/param_plots" \
     --title "$BASE → $UNLEARNED"
 fi
@@ -167,15 +167,15 @@ fi
 echo ""
 echo "Comparison 3: Base → Pretraining"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP3}/param_stats" "per_matrix.csv"; then
+if step_complete "${OUTROOT}/${COMP3}/weight_comparison" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/param_stats.py \
+  uv run experiment/collect_weight_comparison.py \
     --model-a "$BASE" \
     --model-b "$PRETRAIN" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP3}/param_stats" \
+    --outdir "${OUTROOT}/${COMP3}/weight_comparison" \
     --plot-outdir "${OUTROOT}/${COMP3}/param_plots" \
     --title "$BASE → $PRETRAIN"
 fi
@@ -183,15 +183,15 @@ fi
 echo ""
 echo "Comparison 4: Base → CB-only"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP4}/param_stats" "per_matrix.csv"; then
+if step_complete "${OUTROOT}/${COMP4}/weight_comparison" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/param_stats.py \
+  uv run experiment/collect_weight_comparison.py \
     --model-a "$BASE" \
     --model-b "$CB_ONLY" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP4}/param_stats" \
+    --outdir "${OUTROOT}/${COMP4}/weight_comparison" \
     --plot-outdir "${OUTROOT}/${COMP4}/param_plots" \
     --title "$BASE → $CB_ONLY"
 fi
@@ -199,15 +199,15 @@ fi
 echo ""
 echo "Comparison 5: CB-only → CB+LAT"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP5}/param_stats" "per_matrix.csv"; then
+if step_complete "${OUTROOT}/${COMP5}/weight_comparison" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/param_stats.py \
+  uv run experiment/collect_weight_comparison.py \
     --model-a "$CB_ONLY" \
     --model-b "$UNLEARNED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP5}/param_stats" \
+    --outdir "${OUTROOT}/${COMP5}/weight_comparison" \
     --plot-outdir "${OUTROOT}/${COMP5}/param_plots" \
     --title "$CB_ONLY → $UNLEARNED"
 fi
@@ -215,15 +215,15 @@ fi
 echo ""
 echo "Comparison 6: CB+LAT → Filtered"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP6}/param_stats" "per_matrix.csv"; then
+if step_complete "${OUTROOT}/${COMP6}/weight_comparison" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/param_stats.py \
+  uv run experiment/collect_weight_comparison.py \
     --model-a "$UNLEARNED" \
     --model-b "$FILTERED" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP6}/param_stats" \
+    --outdir "${OUTROOT}/${COMP6}/weight_comparison" \
     --plot-outdir "${OUTROOT}/${COMP6}/param_plots" \
     --title "$UNLEARNED → $FILTERED"
 fi
@@ -255,10 +255,10 @@ else
   echo ""
   echo "Comparison 1: Base → Filtered"
   echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${COMP1}/activation_stats" "activation_stats.csv"; then
+  if step_complete "${OUTROOT}/${COMP1}/activation_comparison" "activation_comparison.csv"; then
     echo "  ✓ Already complete — skipping"
   else
-    uv run experiment/activation_norms.py \
+    uv run experiment/collect_activation_comparison.py \
       --model-a "$BASE" \
       --model-b "$FILTERED" \
       --forget-text "$FORGET" \
@@ -271,10 +271,10 @@ else
   echo ""
   echo "Comparison 2: Base → Unlearned"
   echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${COMP2}/activation_stats" "activation_stats.csv"; then
+  if step_complete "${OUTROOT}/${COMP2}/activation_comparison" "activation_comparison.csv"; then
     echo "  ✓ Already complete — skipping"
   else
-    uv run experiment/activation_norms.py \
+    uv run experiment/collect_activation_comparison.py \
       --model-a "$BASE" \
       --model-b "$UNLEARNED" \
       --forget-text "$FORGET" \
@@ -299,8 +299,8 @@ if step_complete "${OUTROOT}/${COMP1}/mlp_attn_analysis" "mlp_attn_summary.csv";
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/analyze_mlp_vs_attn.py \
-    --per-layer-csv "${OUTROOT}/${COMP1}/param_stats/per_coarse_layer.csv" \
-    --per-matrix-csv "${OUTROOT}/${COMP1}/param_stats/per_matrix.csv" \
+    --per-layer-csv "${OUTROOT}/${COMP1}/weight_comparison/per_coarse_layer.csv" \
+    --per-matrix-csv "${OUTROOT}/${COMP1}/weight_comparison/per_matrix.csv" \
     --outdir "${OUTROOT}/${COMP1}/mlp_attn_analysis" \
     --title "E2E Strong Filter: MLP vs Attention"
 fi
@@ -311,8 +311,8 @@ if step_complete "${OUTROOT}/${COMP2}/mlp_attn_analysis" "mlp_attn_summary.csv";
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/analyze_mlp_vs_attn.py \
-    --per-layer-csv "${OUTROOT}/${COMP2}/param_stats/per_coarse_layer.csv" \
-    --per-matrix-csv "${OUTROOT}/${COMP2}/param_stats/per_matrix.csv" \
+    --per-layer-csv "${OUTROOT}/${COMP2}/weight_comparison/per_coarse_layer.csv" \
+    --per-matrix-csv "${OUTROOT}/${COMP2}/weight_comparison/per_matrix.csv" \
     --outdir "${OUTROOT}/${COMP2}/mlp_attn_analysis" \
     --title "${UNLEARNED##*/}: MLP vs Attention"
 fi
@@ -646,9 +646,9 @@ echo ""
 echo "All results saved under: ${OUTROOT}/"
 echo ""
 echo "  <comparison>/"
-echo "    param_stats/            per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv"
+echo "    weight_comparison/      per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv"
 echo "    param_plots/            Layer locality, stable rank, spectral norm PNGs"
-echo "    activation_stats/      activation_stats.csv"
+echo "    activation_comparison/ activation_comparison.csv"
 echo "    activation_plots/      Activation norms, diffs PNGs"
 echo "    mlp_attn_analysis/     summary CSV + plots"
 echo "    null_space_analysis/   null_space_results.csv + plots"
