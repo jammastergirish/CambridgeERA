@@ -1,6 +1,6 @@
 Fetching runs from project 'cambridge_era'...
 
-Successfully processed 143 runs with evaluation metrics out of the total runs.
+Successfully processed 146 runs with evaluation metrics out of the total runs.
 =====================================
              BASELINES               
 =====================================
@@ -37,8 +37,8 @@ Method: dpo
 EleutherAI_deep-ignorance-unfiltered/dpo__ep3_lr3e-05_bs4_b0.1 0.4041         0.3548        0.3011              0.4179
 EleutherAI_deep-ignorance-unfiltered/dpo__ep1_lr3e-05_bs4_b0.1 0.3968         0.3675        0.3086              0.4430
 EleutherAI_deep-ignorance-unfiltered/dpo__ep1_lr1e-05_bs4_b0.5 0.4222         0.3790        0.3336              0.4753
+EleutherAI_deep-ignorance-unfiltered/dpo__ep2_lr1e-05_bs4_b0.5 0.4213         0.3906        0.3346              0.4784
 EleutherAI_deep-ignorance-unfiltered/dpo__ep1_lr1e-05_bs4_b0.1 0.4294         0.3986        0.3485              0.4886
-EleutherAI_deep-ignorance-unfiltered/dpo__ep3_lr1e-05_bs4_b0.1 0.4303         0.3986        0.3262              0.4933
 
 =====================================
 Method: ga
@@ -66,9 +66,9 @@ Method: grad_diff
                                                                    Name   MMLU  WMDP (Robust)  WMDP (Cloze)  WMDP (Categorized)
   EleutherAI_deep-ignorance-unfiltered/grad_diff__ep3_lr1e-05_bs4_fw0.5 0.2688         0.2592        0.2481              0.2639
 EleutherAI_deep-ignorance-unfiltered/grad_diff__ep2_lr1.4e-05_bs4_fw1.0 0.2544         0.2569        0.2500              0.2647
+  EleutherAI_deep-ignorance-unfiltered/grad_diff__ep5_lr2e-05_bs4_fw0.5 0.2567         0.2569        0.2565              0.2655
   EleutherAI_deep-ignorance-unfiltered/grad_diff__ep3_lr2e-05_bs4_fw0.5 0.2562         0.2569        0.2519              0.2655
   EleutherAI_deep-ignorance-unfiltered/grad_diff__ep1_lr3e-05_bs4_fw1.0 0.2553         0.2569        0.2658              0.2655
-  EleutherAI_deep-ignorance-unfiltered/grad_diff__ep3_lr2e-05_bs4_fw1.0 0.2549         0.2569        0.2537              0.2655
 
 =====================================
 Method: lat
