@@ -13,6 +13,6 @@ for r in runs:
         print(f"Name: {name}")
         print(f"MMLU: {r.summary.get('eval_bench/mmlu/acc')}")
         print(f"WMDP R: {r.summary.get('eval_bench/wmdp_bio_robust_rewritten/acc')}")
-        print(f"WMDP C: {r.summary.get('eval_bench/wmdp_bio_cloze_verified/acc')}")
+        print(f"WMDP C: {r.summary.get('eval_bench/wmdp_bio_cloze_verified/acc_norm')}")
         print(f"WMDP Cat: {r.summary.get('eval_bench/wmdp_bio_categorized_mcqa/acc')}")
         print("---")
