@@ -18,175 +18,14 @@
 #   LAYER_ID, FORGET_WEIGHT, RETAIN_WEIGHT, LAT_EPS, LAT_STEPS,
 #   WT_NOISE_STD, WT_REG_LAMBDA, EVAL_SPLIT
 #
-# Multi-GPU behaviour (automatic):
-#   When multiple CUDA GPUs are available and the model does not fit on a
-#   single GPU, this script auto-detects the minimum GPU group size needed
-#   and, if more than one group is possible, dispatches multiple jobs in
-#   parallel (one group per job).  Set GPUS_PER_JOB=N to override.
+# For parallel multi-GPU sweeps, use parallel_sweep.sh instead of calling
+# this script directly from a sweep loop.
 set -euo pipefail
 
 METHOD="${1:?Usage: $0 <ga_simple|ga|grad_diff|dpo|npo|simnpo|rmu|cb|lat|cb_lat|wt_dist|wt_dist_reg>}"
 BASE="${BASE:-EleutherAI/deep-ignorance-unfiltered}"
 DEVICE="${DEVICE:-auto}"
 DTYPE="${DTYPE:-auto}"
-
-# ---------------------------------------------------------------------------
-# MULTI-GPU DISPATCH
-#
-# _RUN_UNLEARN_WORKER is set by this script when it re-invokes itself as a
-# worker bound to a specific CUDA_VISIBLE_DEVICES group.  If it is already
-# set we are inside a worker and skip all dispatch logic.
-# ---------------------------------------------------------------------------
-if [[ -z "${_RUN_UNLEARN_WORKER:-}" ]]; then
-
-  # --- 1. Count available GPUs -------------------------------------------
-  NUM_GPUS=0
-  if command -v nvidia-smi &>/dev/null; then
-    NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l || echo 0)
-  fi
-
-  if [[ "$NUM_GPUS" -le 1 ]]; then
-    # 0 or 1 GPU: run directly, no dispatch needed
-    true  # fall through to the run block below
-  else
-    # --- 2. Determine GPU group size (GPUs per job) ----------------------
-    # Use GPUS_PER_JOB env var if set, otherwise auto-probe model VRAM.
-    if [[ -n "${GPUS_PER_JOB:-}" ]]; then
-      GROUP_SIZE="$GPUS_PER_JOB"
-      echo "[run_unlearn] GPUS_PER_JOB=${GROUP_SIZE} (override)"
-    else
-      echo "[run_unlearn] Probing model VRAM requirements (this takes ~30 s)..."
-
-      # Quick Python probe: load model with device_map=auto and report how
-      # many GPUs were actually used + total VRAM allocated.
-      PROBE_OUTPUT=$(python - "$BASE" "$DTYPE" <<'PYEOF' 2>/dev/null || echo "ERROR")
-import sys, os
-model_id, dtype_str = sys.argv[1], sys.argv[2]
-import torch
-dtype_map = {"bf16": torch.bfloat16, "fp16": torch.float16,
-             "fp32": torch.float32, "auto": torch.bfloat16 if torch.cuda.is_available() else torch.float32}
-pt_dtype = dtype_map.get(dtype_str, torch.bfloat16)
-
-from transformers import AutoModelForCausalLM
-try:
-    m = AutoModelForCausalLM.from_pretrained(
-        model_id, device_map="auto", torch_dtype=pt_dtype,
-        low_cpu_mem_usage=True,
-    )
-    gpus_used = set()
-    for p in m.parameters():
-        if p.device.type == "cuda":
-            gpus_used.add(p.device.index)
-    total_bytes = sum(torch.cuda.memory_allocated(i) for i in range(torch.cuda.device_count()))
-    print(f"{len(gpus_used)} {total_bytes}")
-    del m
-    torch.cuda.empty_cache()
-except Exception as e:
-    print(f"ERROR: {e}", file=sys.stderr)
-    print("ERROR")
-PYEOF
-
-      if [[ "$PROBE_OUTPUT" == ERROR* ]] || [[ -z "$PROBE_OUTPUT" ]]; then
-        echo "[run_unlearn] VRAM probe failed; defaulting to all ${NUM_GPUS} GPUs for one job."
-        GROUP_SIZE="$NUM_GPUS"
-      else
-        MIN_GPUS_NEEDED=$(echo "$PROBE_OUTPUT" | awk '{print $1}')
-        TOTAL_BYTES=$(echo "$PROBE_OUTPUT" | awk '{print $2}')
-        TOTAL_GB=$(awk "BEGIN {printf \"%.1f\", $TOTAL_BYTES/1073741824}")
-        echo "[run_unlearn] Model loaded across ${MIN_GPUS_NEEDED} GPU(s), using ${TOTAL_GB} GB total"
-
-        # Round up to nearest power-of-two group size that is >= MIN_GPUS_NEEDED
-        # and that evenly divides NUM_GPUS.
-        GROUP_SIZE="$NUM_GPUS"  # safe fallback
-        for gs in 1 2 4 8 16; do
-          if [[ "$gs" -ge "$MIN_GPUS_NEEDED" ]] && (( NUM_GPUS % gs == 0 )); then
-            GROUP_SIZE="$gs"
-            break
-          fi
-        done
-      fi
-
-      echo "[run_unlearn] Selected ${GROUP_SIZE} GPU(s) per job on ${NUM_GPUS} total GPU(s)"
-    fi
-
-    NUM_GROUPS=$(( NUM_GPUS / GROUP_SIZE ))
-
-    if [[ "$NUM_GROUPS" -le 1 ]]; then
-      # Only one group fits; no parallelism benefit, just run directly.
-      echo "[run_unlearn] Running single job across all ${NUM_GPUS} GPU(s)."
-      # fall through to run block
-    else
-      # --- 3. Dispatch NUM_GROUPS parallel worker jobs ---------------------
-      echo "[run_unlearn] Dispatching ${NUM_GROUPS} parallel job(s) × ${GROUP_SIZE} GPU(s) each"
-
-      # Build the full job list by collecting all env vars that run_unlearn
-      # accepts, so workers inherit the exact same config.
-      FORWARD_VARS=(
-        BASE DEVICE DTYPE
-        ${LR:+LR=$LR}
-        ${EPOCHS:+EPOCHS=$EPOCHS}
-        ${BATCH_SIZE:+BATCH_SIZE=$BATCH_SIZE}
-        ${MAX_LENGTH:+MAX_LENGTH=$MAX_LENGTH}
-        ${BETA:+BETA=$BETA}
-        ${ALPHA:+ALPHA=$ALPHA}
-        ${STEERING_COEFF:+STEERING_COEFF=$STEERING_COEFF}
-        ${LAYER_ID:+LAYER_ID=$LAYER_ID}
-        ${FORGET_WEIGHT:+FORGET_WEIGHT=$FORGET_WEIGHT}
-        ${RETAIN_WEIGHT:+RETAIN_WEIGHT=$RETAIN_WEIGHT}
-        ${LAT_EPS:+LAT_EPS=$LAT_EPS}
-        ${LAT_STEPS:+LAT_STEPS=$LAT_STEPS}
-        ${WT_NOISE_STD:+WT_NOISE_STD=$WT_NOISE_STD}
-        ${WT_REG_LAMBDA:+WT_REG_LAMBDA=$WT_REG_LAMBDA}
-        ${EVAL_SPLIT:+EVAL_SPLIT=$EVAL_SPLIT}
-        ${PUSH_TO_HUB:+PUSH_TO_HUB=$PUSH_TO_HUB}
-        ${NO_SAVE:+NO_SAVE=$NO_SAVE}
-      )
-
-      PIDS=()
-      for (( g=0; g<NUM_GROUPS; g++ )); do
-        START=$(( g * GROUP_SIZE ))
-        END=$(( START + GROUP_SIZE - 1 ))
-        GPU_LIST=$(seq -s, "$START" "$END")
-
-        LOG_FILE="/tmp/run_unlearn_group${g}_$$.log"
-        echo "[run_unlearn] Group ${g}: CUDA_VISIBLE_DEVICES=${GPU_LIST} → ${LOG_FILE}"
-
-        # Re-invoke this script as a worker with the assigned GPU group.
-        # _RUN_UNLEARN_WORKER prevents re-entry into dispatch logic.
-        # CUDA_VISIBLE_DEVICES limits which physical GPUs the process sees.
-        env \
-          _RUN_UNLEARN_WORKER=1 \
-          CUDA_VISIBLE_DEVICES="$GPU_LIST" \
-          DEVICE=auto \
-          "${FORWARD_VARS[@]}" \
-          bash "$0" "$METHOD" >"$LOG_FILE" 2>&1 &
-
-        PIDS+=($!)
-      done
-
-      # Wait for all workers and report their exit codes
-      ALL_OK=1
-      for i in "${!PIDS[@]}"; do
-        pid="${PIDS[$i]}"
-        if wait "$pid"; then
-          echo "[run_unlearn] Group ${i} finished OK (PID $pid)"
-        else
-          echo "[run_unlearn] Group ${i} FAILED (PID $pid) — see /tmp/run_unlearn_group${i}_$$.log"
-          ALL_OK=0
-        fi
-      done
-
-      if [[ "$ALL_OK" -eq 0 ]]; then
-        exit 1
-      fi
-      exit 0
-    fi
-  fi
-fi
-
-# ---------------------------------------------------------------------------
-# ACTUAL UNLEARN RUN (single job, runs on whatever CUDA_VISIBLE_DEVICES is set)
-# ---------------------------------------------------------------------------
 
 echo "=== Unlearning: method=${METHOD}  model=${BASE} ==="
 
@@ -196,8 +35,8 @@ if uv run --script unlearn/unlearn.py \
   --method "$METHOD" \
   --forget-data data/forget.txt \
   --retain-data data/retain.txt \
-  --device "${DEVICE}" \
-  --dtype "${DTYPE}" \
+  --device "$DEVICE" \
+  --dtype "$DTYPE" \
   ${LR:+--lr "$LR"} \
   ${EPOCHS:+--epochs "$EPOCHS"} \
   ${BATCH_SIZE:+--batch-size "$BATCH_SIZE"} \
@@ -226,8 +65,8 @@ uv run --script unlearn/unlearn.py \
   --method "$METHOD" \
   --forget-data data/forget.txt \
   --retain-data data/retain.txt \
-  --device "${DEVICE}" \
-  --dtype "${DTYPE}" \
+  --device "$DEVICE" \
+  --dtype "$DTYPE" \
   ${LR:+--lr "$LR"} \
   ${EPOCHS:+--epochs "$EPOCHS"} \
   ${BATCH_SIZE:+--batch-size "$BATCH_SIZE"} \
