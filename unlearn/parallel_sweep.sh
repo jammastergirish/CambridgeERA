@@ -100,9 +100,10 @@ try:
         capture_output=True, text=True, check=True)
     vram_gb = int(r.stdout.strip().split("\n")[0]) / 1024
 
-    # GPUs needed: model size × 1.25 overhead / VRAM per GPU, rounded up, minimum 1
+    # Training VRAM = params + gradients + Adam m/v states + activations ≈ 4.5× model size
+    # (much higher than inference which is ~1.25×)
     import math
-    gpus_needed = max(1, math.ceil(model_gb * 1.25 / vram_gb))
+    gpus_needed = max(1, math.ceil(model_gb * 4.5 / vram_gb))
     print(gpus_needed)
 
 except Exception as e:
