@@ -31,6 +31,16 @@ SWEEP_SCRIPT="${1:?Usage: $0 <sweep_script>}"
 cd "$(dirname "$0")/.."
 
 BASE="${BASE:-EleutherAI/deep-ignorance-unfiltered}"
+
+# Export variables from .env so subprocesses (wandb, HF) pick up keys without
+# relying on Python's load_dotenv() — parallel subshells need them in the shell env.
+if [[ -f .env ]]; then
+    set -o allexport
+    # shellcheck source=/dev/null
+    source .env
+    set +o allexport
+    echo "[parallel_sweep] Loaded .env"
+fi
 DTYPE="${DTYPE:-auto}"
 REAL_RUN="$(pwd)/unlearn/run_unlearn.sh"
 
