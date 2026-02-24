@@ -56,8 +56,9 @@ if [[ -n "${GPUS_PER_JOB:-}" ]]; then
 else
   echo "[parallel_sweep] Probing VRAM requirements for ${BASE} (~30 s)..."
 
-  # Load the model with device_map=auto and report how many GPUs it spread to.
-  PROBE=$(python - "$BASE" "$DTYPE" <<'PYEOF' 2>/dev/null || echo "ERROR")
+  # Write probe to a temp file — heredocs inside $() are fragile across bash versions.
+  _PROBE_PY=$(mktemp /tmp/vram_probe_XXXXXX.py)
+  cat > "$_PROBE_PY" << 'PYEOF'
 import sys, torch
 model_id, dtype_str = sys.argv[1], sys.argv[2]
 dtype_map = {"bf16": torch.bfloat16, "fp16": torch.float16,
@@ -75,6 +76,8 @@ except Exception as e:
     print("ERROR", file=sys.stderr)
     print("ERROR")
 PYEOF
+  PROBE=$(python "$_PROBE_PY" "$BASE" "$DTYPE" 2>/dev/null || echo "ERROR")
+  rm -f "$_PROBE_PY"
 
   if [[ "$PROBE" == ERROR* ]] || [[ -z "$PROBE" ]]; then
     echo "[parallel_sweep] Probe failed; defaulting to all ${NUM_GPUS} GPUs per job."
