@@ -100,8 +100,8 @@ except Exception as e:
     print(f"ERROR: {e}", file=sys.stderr)
     print("ERROR")
 PYEOF
-  PROBE=$(uv run python "$_PROBE_PY" "$BASE" "$DTYPE" 2>&1 || echo "ERROR")
-  echo "[parallel_sweep] Probe raw output: '${PROBE}'"
+  PROBE=$(uv run --with transformers python "$_PROBE_PY" "$BASE" "$DTYPE" 2>/dev/null || echo "ERROR")
+  echo "[parallel_sweep] Probe output: '${PROBE}' (GPUs needed estimate)"
   rm -f "$_PROBE_PY"
 
   if [[ "$PROBE" == ERROR* ]] || [[ -z "$PROBE" ]]; then
