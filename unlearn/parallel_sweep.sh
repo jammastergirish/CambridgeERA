@@ -76,7 +76,7 @@ except Exception as e:
     print("ERROR", file=sys.stderr)
     print("ERROR")
 PYEOF
-  PROBE=$(python "$_PROBE_PY" "$BASE" "$DTYPE" 2>/dev/null || echo "ERROR")
+  PROBE=$(uv run python "$_PROBE_PY" "$BASE" "$DTYPE" 2>/dev/null || echo "ERROR")
   rm -f "$_PROBE_PY"
 
   if [[ "$PROBE" == ERROR* ]] || [[ -z "$PROBE" ]]; then
