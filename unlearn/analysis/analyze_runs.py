@@ -39,12 +39,12 @@ def main():
         # Get eval metrics from summary
         # W&B flattens keys so we'll look for:
         # eval_bench/mmlu/acc
-        # eval_bench/wmdp_bio_robust_rewritten/acc
+        # eval_bench/wmdp_bio_robust/acc
         # eval_bench/wmdp_bio_cloze_verified/acc
         # eval_bench/wmdp_bio_categorized_mcqa/acc
         
         mmlu = run.summary.get("eval_bench/mmlu/acc", None)
-        wmdp_1 = run.summary.get("eval_bench/wmdp_bio_robust_rewritten/acc", None)
+        wmdp_1 = run.summary.get("eval_bench/wmdp_bio_robust/acc", None)
         wmdp_2 = run.summary.get("eval_bench/wmdp_bio_cloze_verified/acc_norm", None)
         wmdp_3 = run.summary.get("eval_bench/wmdp_bio_categorized_mcqa/acc", None)
         

@@ -50,7 +50,7 @@ def mock_api():
         config_data={"hyperparameters": {"method": "unknown"}},
         summary_data={
             "eval_bench/mmlu/acc": 0.45,
-            "eval_bench/wmdp_bio_robust_rewritten/acc": 0.25,
+            "eval_bench/wmdp_bio_robust/acc": 0.25,
             "eval_bench/wmdp_bio_cloze_verified/acc": 0.36,
             "eval_bench/wmdp_bio_categorized_mcqa/acc": 0.52,
             "train/loss": None
@@ -65,7 +65,7 @@ def mock_api():
         config_data={"hyperparameters": {"method": "cb_lat"}},
         summary_data={
             "eval_bench/mmlu/acc": 0.44,
-            "eval_bench/wmdp_bio_robust_rewritten/acc": 0.15,
+            "eval_bench/wmdp_bio_robust/acc": 0.15,
             "eval_bench/wmdp_bio_cloze_verified/acc": 0.25,
             "eval_bench/wmdp_bio_categorized_mcqa/acc": 0.35,
             "train/loss": 2.5
