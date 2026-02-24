@@ -54,34 +54,58 @@ if [[ -n "${GPUS_PER_JOB:-}" ]]; then
   GROUP_SIZE="$GPUS_PER_JOB"
   echo "[parallel_sweep] GPUS_PER_JOB=${GROUP_SIZE} (manual override)"
 else
-  echo "[parallel_sweep] Probing VRAM requirements for ${BASE} (~30 s)..."
+  echo "[parallel_sweep] Probing VRAM requirements for ${BASE} (config-based, fast)..."
 
-  # Write probe to a temp file — heredocs inside $() are fragile across bash versions.
+  # Estimate GPUs needed from model config — downloads only the small config JSON,
+  # no model weights needed. Uses nvidia-smi for per-GPU VRAM.
   _PROBE_PY=$(mktemp /tmp/vram_probe_XXXXXX.py)
   cat > "$_PROBE_PY" << 'PYEOF'
-import sys, torch
+import sys, subprocess
 model_id, dtype_str = sys.argv[1], sys.argv[2]
-dtype_map = {"bf16": torch.bfloat16, "fp16": torch.float16,
-             "fp32": torch.float32, "auto": torch.bfloat16}
-pt_dtype = dtype_map.get(dtype_str, torch.bfloat16)
-from transformers import AutoModelForCausalLM
+dtype_bytes = {"bf16": 2, "fp16": 2, "fp32": 4, "auto": 2}.get(dtype_str, 2)
+
 try:
-    m = AutoModelForCausalLM.from_pretrained(
-        model_id, device_map="auto", torch_dtype=pt_dtype, low_cpu_mem_usage=True)
-    gpus_used = {p.device.index for p in m.parameters() if p.device.type == "cuda"}
-    print(len(gpus_used))
-    del m
-    torch.cuda.empty_cache()
+    from transformers import AutoConfig
+    cfg = AutoConfig.from_pretrained(model_id)
+
+    # Estimate parameter count from standard transformer config fields
+    hidden   = getattr(cfg, "hidden_size",        getattr(cfg, "d_model",   4096))
+    n_layers = getattr(cfg, "num_hidden_layers",  getattr(cfg, "n_layers",    32))
+    vocab    = getattr(cfg, "vocab_size",          32000)
+    inter    = getattr(cfg, "intermediate_size",   hidden * 4)
+    heads    = getattr(cfg, "num_attention_heads", 32)
+    kv_heads = getattr(cfg, "num_key_value_heads", heads)
+
+    p_embed  = vocab * hidden * 2                          # embed + lm_head
+    p_attn   = (hidden * hidden                            # Q
+                + 2 * (hidden // heads) * kv_heads * hidden  # K, V
+                + hidden * hidden)                         # O
+    p_mlp    = hidden * inter * 3                          # gate, up, down
+    p_total  = p_embed + (p_attn + p_mlp + 2 * hidden) * n_layers
+    model_gb = p_total * dtype_bytes / 1e9
+
+    # Per-GPU VRAM via nvidia-smi
+    r = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, check=True)
+    vram_gb = int(r.stdout.strip().split("\n")[0]) / 1024
+
+    # GPUs needed: model size × 1.25 overhead / VRAM per GPU, rounded up, minimum 1
+    import math
+    gpus_needed = max(1, math.ceil(model_gb * 1.25 / vram_gb))
+    print(gpus_needed)
+
 except Exception as e:
-    print("ERROR", file=sys.stderr)
+    import sys
+    print(f"ERROR: {e}", file=sys.stderr)
     print("ERROR")
 PYEOF
   PROBE=$(uv run python "$_PROBE_PY" "$BASE" "$DTYPE" 2>/dev/null || echo "ERROR")
   rm -f "$_PROBE_PY"
 
   if [[ "$PROBE" == ERROR* ]] || [[ -z "$PROBE" ]]; then
-    echo "[parallel_sweep] Probe failed; defaulting to all ${NUM_GPUS} GPUs per job."
-    GROUP_SIZE="$NUM_GPUS"
+    echo "[parallel_sweep] Probe failed; defaulting to 1 GPU per job (override with GPUS_PER_JOB=N if you hit OOM)."
+    GROUP_SIZE=1
   else
     MIN_GPUS="$PROBE"
     GROUP_SIZE="$NUM_GPUS"  # safe fallback
