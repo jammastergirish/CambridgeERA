@@ -1,6 +1,6 @@
 Fetching runs from project 'cambridge_era'...
 
-Successfully processed 146 runs with evaluation metrics out of the total runs.
+Successfully processed 151 runs with evaluation metrics out of the total runs.
 =====================================
              BASELINES               
 =====================================
@@ -105,10 +105,10 @@ Method: simnpo
 =====================================
                                                                     Name   MMLU  WMDP (Robust)  WMDP (Cloze)  WMDP (Categorized)
 EleutherAI_deep-ignorance-unfiltered/simnpo__ep1_lr0.0001_bs4_b0.1_rw1.0 0.2806         0.2661        0.2732              0.2459
+ EleutherAI_deep-ignorance-unfiltered/simnpo__ep3_lr7e-05_bs4_b0.1_rw1.0 0.3855         0.2569        0.2639              0.2773
+ EleutherAI_deep-ignorance-unfiltered/simnpo__ep2_lr7e-05_bs4_b0.1_rw1.0 0.3960         0.2834        0.2649              0.3064
+ EleutherAI_deep-ignorance-unfiltered/simnpo__ep4_lr5e-05_bs4_b0.1_rw1.0 0.4092         0.2788        0.2677              0.3095
  EleutherAI_deep-ignorance-unfiltered/simnpo__ep3_lr5e-05_bs4_b0.1_rw1.0 0.4113         0.2811        0.2667              0.3189
- EleutherAI_deep-ignorance-unfiltered/simnpo__ep2_lr5e-05_bs4_b0.1_rw1.0 0.4217         0.3018        0.2853              0.3480
- EleutherAI_deep-ignorance-unfiltered/simnpo__ep4_lr3e-05_bs4_b0.1_rw1.0 0.4104         0.3341        0.3216              0.3936
- EleutherAI_deep-ignorance-unfiltered/simnpo__ep3_lr3e-05_bs4_b0.1_rw1.0 0.4185         0.3514        0.3364              0.4116
 
 =====================================
 Method: wt_dist
