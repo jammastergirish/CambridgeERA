@@ -161,16 +161,37 @@ For every weight matrix `W` in the model, this computes:
 
 | Metric | Formula | What it tells you |
 |---|---|---|
-| **Relative Frobenius norm** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F}{\lVert W \rVert_F}$ | Normalized magnitude of change—what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
+| **Relative Frobenius norm** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F}{\lVert W \rVert_F}$ | Normalized magnitude of change — what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
 | **Frobenius norm** of $\Delta W$ | $\lVert \Delta W \rVert_F = \sqrt{\sum_{ij} \Delta W_{ij}^2}$ | Raw total magnitude (unnormalized; also recorded for completeness) |
-| **Spectral norm** of $\Delta W$ | $\frac{\sigma_1(\Delta W)}{\sigma_1(W)}$ | Relative worst-case amplification—how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
+| **Spectral norm** of $\Delta W$ | $\frac{\sigma_1(\Delta W)}{\sigma_1(W)}$ | Relative worst-case amplification — how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
 | **Stable rank** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F^2}{\lVert \Delta W \rVert_2^2}$ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank $\approx 1$. A full-rank rewrite gives stable rank $\approx \min(m,n)$. |
 | **Stable rank** of $W$ | $\frac{\lVert W \rVert_F^2}{\lVert W \rVert_2^2}$ | Baseline dimensionality for comparison |
-| **Empirical rank** (opt-in: `--empirical-rank`) | $\min k$ s.t. $\sum_{i}^{k} \sigma_i^2 \geq 0.99 \cdot \sum \sigma_i^2$ | Discrete count of dimensions capturing 99% of variance (requires full SVD, so slow, so we default to not do this) |
+| **Empirical rank** (opt-in: `--empirical-rank`) | $\min k$ s.t. $\sum_{i}^{k} \sigma_i^2 \geq 0.99 \cdot \sum \sigma_i^2$ | Discrete count of dimensions capturing 99% of variance (requires full SVD, off by default) |
 
-These are aggregated per layer and split into **MLP vs Attention** groups, then plotted. The layer locality plot uses the **relative** Frobenius norm so layers are directly comparable; a separate spectral norm plot shows worst-case amplification per layer.
+These metrics are collected at the per-matrix level, then aggregated across three levels of granularity and saved as four CSVs:
 
-**Why this matters:** If unlearning produces low-rank, localized updates (small relative $\lVert \Delta W \rVert_F$ concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The stable rank quantifies this precisely—it's the "soft" version of matrix rank, robust to noise.
+| CSV | Granularity | Key use |
+|---|---|---|
+| `per_matrix.csv` | One row per weight matrix | Full detail; basis for all other aggregations |
+| `per_component.csv` | One row per component type, averaged across all layers | High-level "which part of the model changed most?" |
+| `per_layer.csv` | One row per (layer, component) pair | Layer-by-layer breakdown within each component |
+| `per_coarse_layer.csv` | One row per (layer, coarse group) pair | Backward-compatible `attn` vs `mlp` split used by Step 4 |
+
+The four **component** types map onto the internal structure of each transformer block:
+
+| Component | What it covers | Coarse group |
+|---|---|---|
+| `qkv` | Query, key, and value projection weights | `attn` |
+| `proj` | Attention output projection | `attn` |
+| `mlp_expand` | First MLP linear (hidden → 4×hidden) | `mlp` |
+| `mlp_contract` | Second MLP linear (4×hidden → hidden) | `mlp` |
+
+Plots are generated per component (one panel each), showing layer locality (relative Frobenius norm), stable rank, and relative spectral norm across layers.
+
+**Why this matters:** If unlearning produces low-rank, localized updates (small relative $\lVert \Delta W \rVert_F$ concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The component breakdown further reveals *where* within each layer the changes land — e.g., if edits concentrate in `proj` (attention output) rather than `mlp_expand`/`mlp_contract` (knowledge storage), that suggests the intervention is redirecting routing rather than erasing stored associations.
+
+> [!NOTE]
+> **Kyungeun's addition.** The original script aggregated all attention weights together and all MLP weights together (`attn`/`mlp`). Kyungeun refactored the analysis to track four finer-grained components — `qkv`, `proj`, `mlp_expand`, `mlp_contract` — separately across layers, added cosine similarity and element-wise diff stats to every row, and introduced the `per_component.csv` and `per_layer.csv` (granular) outputs. The old coarse aggregation is preserved as `per_coarse_layer.csv` so that Step 4 still works unchanged.
 
 ---
 
@@ -648,49 +669,76 @@ uv run infer/run.py
 
 ### `weight_comparison/per_matrix.csv`
 
-One row per weight matrix in the model.
+One row per weight matrix. The primary output; all other CSVs are derived from this.
 
 | Column | Description |
 | :--- | :--- |
 | `name` | Full parameter name (e.g., `gpt_neox.layers.10.mlp.dense_h_to_4h.weight`) |
-| `layer` | Integer layer index extracted from name (`-1` if not layer-specific) |
-| `group` | Coarse grouping: `attn` (attention) or `mlp` (feed-forward) |
+| `layer` | Integer layer index extracted from name |
+| `component` | Granular component: `qkv`, `proj`, `mlp_expand`, or `mlp_contract` |
 | `shape0` | Matrix rows (output features) |
 | `shape1` | Matrix columns (input features) |
-| `dW_fro` | Frobenius norm of the weight difference: $\lVert \Delta W \rVert_F$ |
-| `W_fro` | Frobenius norm of the original (base) weight: $\lVert W \rVert_F$ |
-| `dW_fro_rel` | Relative Frobenius norm: $\frac{\lVert \Delta W \rVert_F}{\lVert W \rVert_F}$ (fraction of original weight changed) |
-| `dW_spectral` | Spectral norm (largest singular value) of $\Delta W$: $\sigma_1(\Delta W)$ |
-| `W_spectral` | Spectral norm of the original (base) weight: $\sigma_1(W)$ |
-| `dW_spectral_rel` | Relative spectral norm: $\frac{\sigma_1(\Delta W)}{\sigma_1(W)}$ |
-| `dW_stable_rank` | Stable rank of $\Delta W$: $\frac{\lVert \Delta W \rVert_F^2}{\lVert \Delta W \rVert_2^2}$ |
-| `W_stable_rank` | Stable rank of the original (base) weights |
+| `elements` | Total number of parameters in this matrix |
+| `cosine_sim` | Cosine similarity between $W$ and $W'$ (1.0 = unchanged direction) |
+| `rel_frobenius` | $\frac{\lVert \Delta W \rVert_F}{\lVert W \rVert_F}$ — fraction of original weight that moved |
+| `frobenius_norm` | $\lVert \Delta W \rVert_F$ — raw magnitude of change |
+| `fro_norm_normalized` | $\lVert \Delta W \rVert_F / \sqrt{n}$ — size-normalized Frobenius norm |
+| `W_fro` | $\lVert W \rVert_F$ — Frobenius norm of the original weight |
+| `diff_mean` | Mean element-wise difference |
+| `diff_std` | Std of element-wise differences |
+| `diff_abs_mean` | Mean absolute element-wise difference |
+| `diff_spectral_norm` | $\sigma_1(\Delta W)$ — spectral norm of the update |
+| `W_spectral` | $\sigma_1(W)$ — spectral norm of the original weight |
+| `dW_spectral_rel` | $\sigma_1(\Delta W) / \sigma_1(W)$ — relative spectral norm |
+| `dW_stable_rank` | $\lVert \Delta W \rVert_F^2 / \sigma_1(\Delta W)^2$ — effective dimensionality of the update |
+| `W_stable_rank` | Stable rank of the original weight |
 | `dW_empirical_rank`* | Number of singular values of $\Delta W$ capturing 99% of variance |
-| `W_empirical_rank`* | Number of singular values of W capturing 99% of variance |
+| `W_empirical_rank`* | Number of singular values of $W$ capturing 99% of variance |
 
 \* *Only present when `--empirical-rank` flag is passed (opt-in, requires full SVD).*
 
+### `weight_comparison/per_component.csv`
+
+One row per component type (`qkv`, `proj`, `mlp_expand`, `mlp_contract`), with each metric averaged/min/max/std across all layers. Quick summary of which part of the model changed most overall.
+
+| Column | Description |
+| :--- | :--- |
+| `component` | Component type |
+| `n_layers` | Number of layers with this component |
+| `<metric>_mean/min/max/std` | Aggregated statistics for each metric in `per_matrix.csv` |
+
 ### `weight_comparison/per_layer.csv`
 
-Aggregated statistics per (layer, group) pair.
+One row per `(layer, component)` pair — the most useful file for plotting layer-by-layer change profiles broken down by component.
 
 | Column | Description |
 | :--- | :--- |
 | `layer` | Integer layer index |
-| `group` | `attn` or `mlp` |
-| `dW_fro_layer` | Root-sum-square of Frobenius norms in this group: $\sqrt{\sum \lVert \Delta W_i \rVert_F^2}$ |
-| `W_fro_layer` | Root-sum-square of original weight Frobenius norms: $\sqrt{\sum \lVert W_i \rVert_F^2}$ |
-| `dW_fro_layer_rel` | Relative change: `dW_fro_layer / W_fro_layer` |
-| `max_dW_spectral` | Max spectral norm of $\Delta W$ across matrices in this group |
-| `max_W_spectral` | Max spectral norm of $W$ across matrices in this group |
-| `max_dW_spectral_rel` | Relative spectral norm: `max_dW_spectral / max_W_spectral` |
-| `mean_dW_stable_rank` | Mean stable rank of $\Delta W$ across matrices in this group |
-| `mean_dW_empirical_rank`* | Mean empirical rank of $\Delta W$ across matrices in this group |
-| `count_mats` | Number of weight matrices aggregated in this group |
+| `component` | Granular component: `qkv`, `proj`, `mlp_expand`, or `mlp_contract` |
+| `dW_fro_layer` | Root-sum-square of Frobenius norms: $\sqrt{\sum \lVert \Delta W_i \rVert_F^2}$ |
+| `W_fro_layer` | Root-sum-square of original Frobenius norms |
+| `dW_fro_layer_rel` | `dW_fro_layer / W_fro_layer` |
+| `max_dW_spectral` | Max spectral norm of $\Delta W$ across matrices in this component/layer |
+| `max_W_spectral` | Max spectral norm of $W$ across matrices in this component/layer |
+| `max_dW_spectral_rel` | `max_dW_spectral / max_W_spectral` |
+| `mean_dW_stable_rank` | Mean stable rank of $\Delta W$ across matrices |
+| `count_mats` | Number of weight matrices aggregated |
+| `mean_dW_empirical_rank`* | Mean empirical rank of $\Delta W$ |
 
 \* *Only present when `--empirical-rank` flag is passed.*
 
+### `weight_comparison/per_coarse_layer.csv`
+
+Same aggregation as `per_layer.csv` but using the coarse `attn` / `mlp` grouping (`qkv`+`proj` → `attn`, `mlp_expand`+`mlp_contract` → `mlp`). Used by Step 4 (`analyze_mlp_vs_attn.py`).
+
+| Column | Description |
+| :--- | :--- |
+| `layer` | Integer layer index |
+| `group` | Coarse group: `attn` or `mlp` |
+| *(remaining columns)* | Same as `per_layer.csv` above |
+
 ### `activation_comparison/activation_comparison.csv`
+
 
 One row per (layer, split) combination.
 
