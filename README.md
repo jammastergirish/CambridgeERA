@@ -634,11 +634,23 @@ Two inference options are available:
 ### Command Line Interface
 
 ```bash
-# Single prompt inference
+# Single prompt inference (auto-picks the GPU with most free VRAM)
 uv run infer/cli.py --model EleutherAI/deep-ignorance-unfiltered --prompt "What is biotin?"
+
+# Pin to a specific GPU
+uv run infer/cli.py --model EleutherAI/deep-ignorance-unfiltered --prompt "..." --device cuda:1
+
+# Force a specific dtype or run on CPU
+uv run infer/cli.py --model EleutherAI/deep-ignorance-unfiltered --prompt "..." --device cpu --dtype fp32
 ```
 
-Add `--max-tokens` to control output length (default 200).
+| Flag | Default | Description |
+|---|---|---|
+| `--max-tokens` | 200 | Maximum new tokens to generate |
+| `--device` | `auto` | `auto` (best GPU), `cuda`, `cuda:N`, `mps`, `cpu` |
+| `--dtype` | `auto` | `auto` (bf16 on CUDA, fp16 on MPS, fp32 on CPU), `fp32`, `fp16`, `bf16` |
+
+With `--device auto` (the default), `device_map="auto"` is passed to HuggingFace so accelerate automatically places the model on the GPU with the most free memory — the same behaviour as `unlearn.py`.
 
 ### Streamlit Web UI
 

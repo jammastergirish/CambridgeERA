@@ -85,9 +85,9 @@
 | --- | --- | --- | --- | --- | --- |
 | EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs4_b0.1_rw0.3 | 0.1349 | 0.3803 | 0.2454 | 0.2695 | 0.2742 |
 | EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs8_b0.1_rw1.0 | 0.1310 | 0.4110 | 0.2800 | 0.3104 | 0.3064 |
+| EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs8_b0.1_rw1.0 | 0.1310 | 0.4110 | 0.2800 | 0.3104 | 0.3064 |
 | EleutherAI_deep-ignorance-unfiltered/npo__ep4_lr5e-05_bs8_b0.1_rw1.0 | 0.1302 | 0.3998 | 0.2696 | 0.2900 | 0.2922 |
 | EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs16_b0.1_rw0.3 | 0.1245 | 0.3734 | 0.2488 | 0.3141 | 0.2812 |
-| EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs16_b0.1_rw0.7 | 0.1220 | 0.3905 | 0.2684 | 0.3178 | 0.2993 |
 
 ### rmu
 
@@ -106,8 +106,8 @@
 | EleutherAI_deep-ignorance-unfiltered/simnpo__ep3_lr7e-05_bs4_b0.1_rw0.3 | 0.1475 | 0.3905 | 0.2431 | 0.2593 | 0.2443 |
 | EleutherAI_deep-ignorance-unfiltered/simnpo__ep3_lr7e-05_bs4_b0.1_rw0.5 | 0.1339 | 0.3955 | 0.2615 | 0.2695 | 0.2969 |
 | EleutherAI_deep-ignorance-unfiltered/simnpo__ep3_lr7e-05_bs4_b0.1_rw0.7 | 0.1305 | 0.4001 | 0.2696 | 0.2714 | 0.2914 |
+| EleutherAI_deep-ignorance-unfiltered/simnpo__ep3_lr7e-05_bs4_b0.1_rw0.7 | 0.1305 | 0.4001 | 0.2696 | 0.2714 | 0.2914 |
 | EleutherAI_deep-ignorance-unfiltered/simnpo__ep4_lr5e-05_bs4_b0.1_rw1.0 | 0.1304 | 0.4092 | 0.2788 | 0.2677 | 0.3095 |
-| EleutherAI_deep-ignorance-unfiltered/simnpo__ep3_lr5e-05_bs4_b0.1_rw1.0 | 0.1302 | 0.4113 | 0.2811 | 0.2667 | 0.3189 |
 
 ### wt_dist
 
