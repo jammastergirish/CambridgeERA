@@ -98,11 +98,18 @@ def main():
     if args.dtype != "auto":
         model_args += f",dtype={args.dtype}"
 
-    # Resolve device
+    # Resolve device — use pick_best_gpu() so lm_eval lands on the freest GPU.
+    # lm_eval does its own internal from_pretrained and ignores device_map_kwargs,
+    # so we restrict it to one GPU via CUDA_VISIBLE_DEVICES instead of relying
+    # on PyTorch device placement after the fact.
+    import torch
+    from utils import pick_best_gpu
     device = args.device
     if device == "auto":
-        import torch
         if torch.cuda.is_available():
+            best = pick_best_gpu()
+            # Restrict lm_eval's view to just this GPU; it will call it "cuda:0"
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(best)
             device = "cuda"
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             device = "mps"
