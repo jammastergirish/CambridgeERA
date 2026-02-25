@@ -152,10 +152,6 @@ Runs a suite of benchmarks on each model before the expensive mechanistic diagno
 
 ---
 
-#### Parameter-Space
-
-These examine `W_modified`, `W_base`, and `ΔW = W_modified − W_base` directly—treating the intervention as a matrix perturbation.
-
 #### Step 1: Parameter Statistics (`experiment/collect_weight_comparison.py`)
 
 **Question:** *How large is the intervention, and where is it concentrated?*
@@ -198,50 +194,7 @@ Plots are generated per component (one panel each), showing layer locality (rela
 
 ---
 
-#### Step 4: MLP vs Attention Breakdown (`experiment/analyze_mlp_vs_attn.py`)
-
-**Question:** *Are the changes concentrated in MLP (knowledge storage) or Attention (routing/composition)?*
-
-Takes the per-matrix stats from Step 1 and computes the ratio of MLP change to Attention change at each layer. Addresses the mechanistic hypothesis that knowledge is primarily stored in MLP layers (the "key-value memory" view from [Geva et al](https://arxiv.org/pdf/2012.14913).), while attention layers handle routing.
-
-**Why this matters:** If unlearning only modifies attention layers, it might be redirecting *routing around* the knowledge rather than erasing it — explaining why adversarial fine-tuning can recover the information.
-
----
-
-##### Step 7: Null Space & Subspace Analysis (`experiment/null_space_analysis.py`)
-
-**Question:** *Is the update low-rank, and do the principal subspaces shift?*
-
-For 50 sampled weight matrices, computes full SVD and measures:
-
-| Metric | What it tells you |
-|---|---|
-| **Top-10 SV variance ratio** | What fraction of ΔW's energy is in its top 10 singular directions? High → very low-rank update. |
-| **Effective rank** | How many singular values needed to capture 99% of variance |
-| **Subspace alignment** (Grassmann distance) | Do the top-k singular vectors of W_base and W_modified span similar subspaces? High alignment → the intervention didn't change *what directions* the matrix uses, only *how much* it uses them. |
-
-**Why this matters:** A low-rank ΔW with high subspace alignment means the unlearning intervention is a small perturbation within the existing computational manifold — it didn't rewire the representations, it just nudged the gains. This is precisely the geometric signature of brittleness: a small counter-perturbation (fine-tuning) can undo it.
-
----
-
-##### Step 10: MLP Nullspace Alignment (`experiment/mlp_nullspace_alignment.py`)
-
-**Question:** *Does ΔW lie in the nullspace of the original W?*
-
-Decomposes each MLP update ΔW into components that lie in the **column space** vs. **null space** of the original weight matrix W.
-
-- **Nullspace component** ("off-manifold"): Changes orthogonal to what W originally computed. These add new directions without disrupting existing computations.
-- **Column space component** ("on-manifold"): Changes that directly interfere with existing computations.
-
-**Why this matters:** If unlearning updates are primarily in the nullspace, the model's existing computations are barely disturbed — the "unlearned" knowledge may still flow through the same channels, just with a small additive correction that's easy to remove. True knowledge erasure should require on-manifold changes that destroy the original computation.
-
----
-
-#### Activation-Space
-
-These run the model on actual text and measure *what it computes*, not just what its parameters look like. All activation scripts cap input at `--max-samples 500` texts per split by default to keep runtimes manageable (override with e.g. `--max-samples 1000` for more statistical power).
-
-##### Step 3: Activation Norms (`experiment/collect_activation_comparison.py`)
+#### Step 3: Activation Norms (`experiment/collect_activation_comparison.py`)
 
 **Question:** *Does the intervention globally suppress or amplify activations?*
 
@@ -258,73 +211,20 @@ Both are averaged across all tokens (weighted by attention mask). They are **not
 
 ---
 
-##### Step 8: Activation Separation (`experiment/activation_separation_analysis.py`)
+#### Step 4: MLP vs Attention Breakdown (`experiment/analyze_mlp_vs_attn.py`)
 
-**Question:** *Can you tell forget-text activations apart from retain-text activations? Does the intervention change this?*
+**Question:** *Are the changes concentrated in MLP (knowledge storage) or Attention (routing/composition)?*
 
-At each layer, extracts the centroid of forget-text activations and retain-text activations, then measures their separation via:
+Takes the per-matrix stats from Step 1 and computes the ratio of MLP change to Attention change at each layer. Addresses the mechanistic hypothesis that knowledge is primarily stored in MLP layers (the "key-value memory" view from [Geva et al](https://arxiv.org/pdf/2012.14913).), while attention layers handle routing.
 
-| Metric | What it captures |
-|---|---|
-| **Cosine distance** between centroids | Direction-based separation |
-| **AUC** (linear classifier) | How linearly separable are the two distributions? |
-| **Variance ratio** | Between-class vs. within-class variance (like Fisher's discriminant) |
-
-**Why this matters:** If unlearning *increases* the separation between forget and retain activations (pushes them apart), that's evidence the model is actively routing forget-text to a different computational path. If separation stays similar, the model treats both text types the same way internally — it hasn't genuinely distinguished "knowledge to suppress."
+**Why this matters:** If unlearning only modifies attention layers, it might be redirecting *routing around* the knowledge rather than erasing it — explaining why adversarial fine-tuning can recover the information.
 
 ---
 
-##### Step 9: Activation Covariance Analysis (`experiment/activation_covariance_analysis.py`)
-
-**Question:** *Does the intervention change the shape of the activation distribution?*
-
-Computes the eigenvalue spectrum of the activation covariance matrix at each layer and measures:
-
-| Metric | What it captures |
-|---|---|
-| **Effective rank** (of covariance) | How many dimensions do activations meaningfully occupy? |
-| **Spectral entropy** | How uniform is the energy distribution across dimensions? |
-| **Wasserstein distance** | How much did the spectrum change between base and modified model? |
-
-A key output is the **selectivity ratio**: (Wasserstein distance on forget text) / (Wasserstein distance on retain text). High selectivity = the intervention specifically reshapes forget-domain representations while leaving retain-domain representations intact.
-
-**Why this matters:** This captures something the norms miss — two distributions can have identical norms but completely different *shapes*. If filtering fundamentally restructures the covariance (high Wasserstein, changed effective rank) while unlearning barely disturbs it, that's evidence the representations aren't actually changing.
-
----
-
-##### Step 11: Row Space Projection (`experiment/row_space_projection_analysis.py`)
-
-**Question:** *Do activations from forget-text align more with the directions the intervention modified?*
-
-Computes the SVD of ΔW at each MLP layer and measures how much the *input activations* project onto the row space (input-side principal directions) of ΔW.
-
-If forget-text activations have high projection onto ΔW's row space while retain-text activations don't, the update is *precisely targeted* — it modifies exactly the directions that forget-text activates. The **selectivity ratio** quantifies this.
-
-**Why this matters:** This is perhaps the most mechanistically informative diagnostic. It directly tests whether the intervention is *geometrically aligned* with the specific input patterns it needs to suppress. High selectivity + low rank = a surgical intervention that only fires on forget-domain inputs. Low selectivity = a blunt instrument that affects everything equally. And crucially, high selectivity + low rank is also the easiest to undo: just learn a small correction in that same low-dimensional subspace.
-
----
-
-##### Step 12: Local Lipschitz Analysis (`experiment/local_lipschitzness_analysis.py`)
-
-**Question:** *Did the intervention make the model's output more or less sensitive to input perturbations?*
-
-Estimates the local Lipschitz constant by perturbing input embeddings with small noise (ε-balls) and measuring how much the output changes. Also computes gradient norms and output variance under perturbation, separately for forget and retain texts.
-
-| Outcome | Interpretation |
-|---|---|
-| Forget text becomes **rougher** (higher Lipschitz) | Model is unstable on forget inputs — outputs shift erratically |
-| Forget text becomes **smoother** (lower Lipschitz) | Model learned to ignore/suppress forget-domain features |
-| Retain text stays **similar** | Intervention didn't damage general capabilities |
-
-**Why this matters:** A model that becomes rougher on forget text hasn't *learned to not know* something — it's in an unstable regime where small pushes (fine-tuning) can tip it back. Smoothness changes are a direct indicator of whether the loss landscape around forget-domain inputs is fundamentally reshaped or just locally perturbed.
-
----
-
-##### Step 5: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
+#### Step 5: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
 
 > [!NOTE]
 > **Tuned lens is opt-in** (`ENABLE_TUNED_LENS=1`). By default, only the logit lens runs (~3 min total across all three models). The tuned lens trains a per-layer affine probe for all 33 layers of each model, costing ~1hr per model (~3hrs total). It is more accurate at early layers where the logit lens is unreliable, but the key signals for this project — the late-layer steady climb and the final-output suppression — are equally visible in the logit lens. Only enable the tuned lens if you specifically need reliable early-layer readings.
-
 
 **Question:** *At which layer does the model "know" the answer to WMDP-Bio questions?*
 
@@ -349,6 +249,97 @@ For each question, the lens computes the average log-probability of each answer 
 
 ---
 
+#### Step 7: Null Space & Subspace Analysis (`experiment/null_space_analysis.py`)
+
+**Question:** *Is the update low-rank, and do the principal subspaces shift?*
+
+For 50 sampled weight matrices, computes full SVD and measures:
+
+| Metric | What it tells you |
+|---|---|
+| **Top-10 SV variance ratio** | What fraction of ΔW's energy is in its top 10 singular directions? High → very low-rank update. |
+| **Effective rank** | How many singular values needed to capture 99% of variance |
+| **Subspace alignment** (Grassmann distance) | Do the top-k singular vectors of W_base and W_modified span similar subspaces? High alignment → the intervention didn't change *what directions* the matrix uses, only *how much* it uses them. |
+
+**Why this matters:** A low-rank ΔW with high subspace alignment means the unlearning intervention is a small perturbation within the existing computational manifold — it didn't rewire the representations, it just nudged the gains. This is precisely the geometric signature of brittleness: a small counter-perturbation (fine-tuning) can undo it.
+
+---
+
+#### Step 8: Activation Separation (`experiment/activation_separation_analysis.py`)
+
+**Question:** *Can you tell forget-text activations apart from retain-text activations? Does the intervention change this?*
+
+At each layer, extracts the centroid of forget-text activations and retain-text activations, then measures their separation via:
+
+| Metric | What it captures |
+|---|---|
+| **Cosine distance** between centroids | Direction-based separation |
+| **AUC** (linear classifier) | How linearly separable are the two distributions? |
+| **Variance ratio** | Between-class vs. within-class variance (like Fisher's discriminant) |
+
+**Why this matters:** If unlearning *increases* the separation between forget and retain activations (pushes them apart), that's evidence the model is actively routing forget-text to a different computational path. If separation stays similar, the model treats both text types the same way internally — it hasn't genuinely distinguished "knowledge to suppress."
+
+---
+
+#### Step 9: Activation Covariance Analysis (`experiment/activation_covariance_analysis.py`)
+
+**Question:** *Does the intervention change the shape of the activation distribution?*
+
+Computes the eigenvalue spectrum of the activation covariance matrix at each layer and measures:
+
+| Metric | What it captures |
+|---|---|
+| **Effective rank** (of covariance) | How many dimensions do activations meaningfully occupy? |
+| **Spectral entropy** | How uniform is the energy distribution across dimensions? |
+| **Wasserstein distance** | How much did the spectrum change between base and modified model? |
+
+A key output is the **selectivity ratio**: (Wasserstein distance on forget text) / (Wasserstein distance on retain text). High selectivity = the intervention specifically reshapes forget-domain representations while leaving retain-domain representations intact.
+
+**Why this matters:** This captures something the norms miss — two distributions can have identical norms but completely different *shapes*. If filtering fundamentally restructures the covariance (high Wasserstein, changed effective rank) while unlearning barely disturbs it, that's evidence the representations aren't actually changing.
+
+---
+
+#### Step 10: MLP Nullspace Alignment (`experiment/mlp_nullspace_alignment.py`)
+
+**Question:** *Does ΔW lie in the nullspace of the original W?*
+
+Decomposes each MLP update ΔW into components that lie in the **column space** vs. **null space** of the original weight matrix W.
+
+- **Nullspace component** ("off-manifold"): Changes orthogonal to what W originally computed. These add new directions without disrupting existing computations.
+- **Column space component** ("on-manifold"): Changes that directly interfere with existing computations.
+
+**Why this matters:** If unlearning updates are primarily in the nullspace, the model's existing computations are barely disturbed — the "unlearned" knowledge may still flow through the same channels, just with a small additive correction that's easy to remove. True knowledge erasure should require on-manifold changes that destroy the original computation.
+
+---
+
+#### Step 11: Row Space Projection (`experiment/row_space_projection_analysis.py`)
+
+**Question:** *Do activations from forget-text align more with the directions the intervention modified?*
+
+Computes the SVD of ΔW at each MLP layer and measures how much the *input activations* project onto the row space (input-side principal directions) of ΔW.
+
+If forget-text activations have high projection onto ΔW's row space while retain-text activations don't, the update is *precisely targeted* — it modifies exactly the directions that forget-text activates. The **selectivity ratio** quantifies this.
+
+**Why this matters:** This is perhaps the most mechanistically informative diagnostic. It directly tests whether the intervention is *geometrically aligned* with the specific input patterns it needs to suppress. High selectivity + low rank = a surgical intervention that only fires on forget-domain inputs. Low selectivity = a blunt instrument that affects everything equally. And crucially, high selectivity + low rank is also the easiest to undo: just learn a small correction in that same low-dimensional subspace.
+
+---
+
+#### Step 12: Local Lipschitz Analysis (`experiment/local_lipschitzness_analysis.py`)
+
+**Question:** *Did the intervention make the model's output more or less sensitive to input perturbations?*
+
+Estimates the local Lipschitz constant by perturbing input embeddings with small noise (ε-balls) and measuring how much the output changes. Also computes gradient norms and output variance under perturbation, separately for forget and retain texts.
+
+| Outcome | Interpretation |
+|---|---|
+| Forget text becomes **rougher** (higher Lipschitz) | Model is unstable on forget inputs — outputs shift erratically |
+| Forget text becomes **smoother** (lower Lipschitz) | Model learned to ignore/suppress forget-domain features |
+| Retain text stays **similar** | Intervention didn't damage general capabilities |
+
+**Why this matters:** A model that becomes rougher on forget text hasn't *learned to not know* something — it's in an unstable regime where small pushes (fine-tuning) can tip it back. Smoothness changes are a direct indicator of whether the loss landscape around forget-domain inputs is fundamentally reshaped or just locally perturbed.
+
+---
+
 ### The Big Picture
 
 The diagnostics answer an escalating series of questions:
@@ -356,15 +347,56 @@ The diagnostics answer an escalating series of questions:
 | Level | Question | Steps |
 |---|---|---|
 | **Capabilities** | Does the model still work at all? | 0 |
-| **Magnitude** | How much changed? | 1–2 |
-| **Location** | Where — MLP or Attention? Which layers? | 4 |
+| **Magnitude** | How much changed? | 1 |
+| **Location** | Where — MLP or Attention? Which layers? | 3, 4 |
 | **Knowledge Depth** | At which layer does the model know WMDP answers? | 5 |
 | **Geometry** | What shape is ΔW? Low-rank? Nullspace-aligned? | 7, 10 |
-| **Function** | Do activations actually change on target text? | 3, 8–9 |
+| **Function** | Do activations actually change on target text? | 8–9 |
 | **Precision** | Is the change *targeted* at forget-domain inputs? | 11 |
 | **Stability** | Is the new behavior robust or fragile? | 12 |
 
 The thesis prediction is that unlearning methods (CB-LAT) will show: small magnitude, attention-localized, low-rank, nullspace-aligned, minimal activation change, low selectivity, and increased roughness — the full mechanistic signature of a brittle intervention. While filtering will show the opposite across every dimension.
+
+
+**Question:** *How large is the intervention, and where is it concentrated?*
+
+For every weight matrix `W` in the model, this computes:
+
+| Metric | Formula | What it tells you |
+|---|---|---|
+| **Relative Frobenius norm** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F}{\lVert W \rVert_F}$ | Normalized magnitude of change — what fraction of the original weight moved? Comparable across layers regardless of matrix size. |
+| **Frobenius norm** of $\Delta W$ | $\lVert \Delta W \rVert_F = \sqrt{\sum_{ij} \Delta W_{ij}^2}$ | Raw total magnitude (unnormalized; also recorded for completeness) |
+| **Spectral norm** of $\Delta W$ | $\frac{\sigma_1(\Delta W)}{\sigma_1(W)}$ | Relative worst-case amplification — how much did the dominant singular direction shift? High spectral + low stable rank = a sharp rank-1 spike. |
+| **Stable rank** of $\Delta W$ | $\frac{\lVert \Delta W \rVert_F^2}{\lVert \Delta W \rVert_2^2}$ | Effective dimensionality of the update. A rank-1 perturbation (e.g., LoRA-style) gives stable rank $\approx 1$. A full-rank rewrite gives stable rank $\approx \min(m,n)$. |
+| **Stable rank** of $W$ | $\frac{\lVert W \rVert_F^2}{\lVert W \rVert_2^2}$ | Baseline dimensionality for comparison |
+| **Empirical rank** (opt-in: `--empirical-rank`) | $\min k$ s.t. $\sum_{i}^{k} \sigma_i^2 \geq 0.99 \cdot \sum \sigma_i^2$ | Discrete count of dimensions capturing 99% of variance (requires full SVD, off by default) |
+
+These metrics are collected at the per-matrix level, then aggregated across three levels of granularity and saved as four CSVs:
+
+| CSV | Granularity | Key use |
+|---|---|---|
+| `per_matrix.csv` | One row per weight matrix | Full detail; basis for all other aggregations |
+| `per_component.csv` | One row per component type, averaged across all layers | High-level "which part of the model changed most?" |
+| `per_layer.csv` | One row per (layer, component) pair | Layer-by-layer breakdown within each component |
+| `per_coarse_layer.csv` | One row per (layer, coarse group) pair | Backward-compatible `attn` vs `mlp` split used by Step 4 |
+
+The four **component** types map onto the internal structure of each transformer block:
+
+| Component | What it covers | Coarse group |
+|---|---|---|
+| `qkv` | Query, key, and value projection weights | `attn` |
+| `proj` | Attention output projection | `attn` |
+| `mlp_expand` | First MLP linear (hidden → 4×hidden) | `mlp` |
+| `mlp_contract` | Second MLP linear (4×hidden → hidden) | `mlp` |
+
+Plots are generated per component (one panel each), showing layer locality (relative Frobenius norm), stable rank, and relative spectral norm across layers.
+
+**Why this matters:** If unlearning produces low-rank, localized updates (small relative $\lVert \Delta W \rVert_F$ concentrated in a few layers) while filtering produces high-rank, distributed updates, that's direct evidence that unlearning is a *shallow patch* rather than a *deep restructuring*. The component breakdown further reveals *where* within each layer the changes land — e.g., if edits concentrate in `proj` (attention output) rather than `mlp_expand`/`mlp_contract` (knowledge storage), that suggests the intervention is redirecting routing rather than erasing stored associations.
+
+> [!NOTE]
+> **Kyungeun's addition.** The original script aggregated all attention weights together and all MLP weights together (`attn`/`mlp`). Kyungeun refactored the analysis to track four finer-grained components — `qkv`, `proj`, `mlp_expand`, `mlp_contract` — separately across layers, added cosine similarity and element-wise diff stats to every row, and introduced the `per_component.csv` and `per_layer.csv` (granular) outputs. The old coarse aggregation is preserved as `per_coarse_layer.csv` so that Step 4 still works unchanged.
+
+
 
 ---
 

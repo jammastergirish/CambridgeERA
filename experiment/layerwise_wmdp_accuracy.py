@@ -372,7 +372,7 @@ def main():
     if args.outdir is None:
         args.outdir = model_outdir(args.model, suffix=f"wmdp_{args.lens}_lens")
 
-    init_wandb("wmdp_lens", args)
+    init_wandb(f"wmdp_{args.lens}_lens", args)
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
