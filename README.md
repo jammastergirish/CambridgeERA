@@ -132,18 +132,20 @@ graph TD
 
 ---
 
-#### Step 0: MMLU Evaluation (`experiment/eval_mmlu.py`)
+#### Step 0: Benchmark Evaluation (`experiment/eval.py`)
 
-**Question:** *Does the model still have general capabilities?*
+**Question:** *Does the model still have general capabilities, and has it forgotten the target knowledge?*
 
-Runs MMLU (Massive Multitask Language Understanding) on each model before the expensive mechanistic diagnostics. This immediately identifies models that have catastrophically collapsed during unlearning (e.g., repeating degenerate tokens). Default 1000 questions sampled uniformly across all 57 MMLU subjects.
+Runs a suite of benchmarks on each model before the expensive mechanistic diagnostics. This immediately identifies models that have catastrophically collapsed during unlearning (e.g., repeating degenerate tokens), and checks whether the target WMDP-Bio knowledge has actually been suppressed.
 
-| Metric | What it tells you |
-|---|---|
-| **Overall accuracy** | Collapsed models score near random chance (0.25) or below |
-| **Per-subject accuracy** | Reveals whether damage is uniform or domain-specific |
+| Benchmark | Metric | What it tells you |
+|---|---|---|
+| **MMLU** | Overall + per-subject accuracy | Collapsed models score near random chance (0.25) or below |
+| **WMDP-Bio** | MCQ accuracy | Should drop toward chance (0.25) in a well-unlearned model |
+| **HellaSwag** | Accuracy | Checks commonsense reasoning is preserved |
+| **TruthfulQA** | Accuracy | Checks general truthfulness is preserved |
 
-> **Note:** Results are stored **per-model** (not per-comparison) since MMLU evaluates a single model's capabilities.
+> **Note:** Results are stored **per-model** (not per-comparison) since benchmarks evaluate a single model's capabilities.
 
 ---
 
