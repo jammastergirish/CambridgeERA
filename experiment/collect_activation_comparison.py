@@ -57,7 +57,7 @@ def _load_model(model_id: str, dtype: torch.dtype, device: str, method_name: str
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     print(f"[{method_name}] Loading model: {model_id}...")
-    device_map_kwargs = {"device_map": "auto"} if device == "auto" else {}
+    device_map_kwargs = {"device_map": "auto"} if device == "cuda" else {}
     
     # 2. Load the specified model
     if method_name in ("peft", "lora"):
@@ -69,10 +69,9 @@ def _load_model(model_id: str, dtype: torch.dtype, device: str, method_name: str
         model = AutoModelForCausalLM.from_pretrained(
             model_id, torch_dtype=dtype, **device_map_kwargs
         )
-    if device != "auto":
+    if not device_map_kwargs:
         model.to(device)
     model.eval()
-    model.to(device)
     return model, tokenizer
 
 

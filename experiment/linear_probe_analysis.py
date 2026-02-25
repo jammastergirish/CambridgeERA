@@ -290,10 +290,10 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    device_map_kwargs = {"device_map": "auto"} if device == "auto" else {}
+    device_map_kwargs = {"device_map": "auto"} if device == "cuda" else {}
 
     model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype, **device_map_kwargs)
-    if device != "auto":
+    if not device_map_kwargs:
         model.to(device)
     model.eval()
 
