@@ -989,6 +989,8 @@ def main():
                         help="Upload finished model to HuggingFace (requires HF_TOKEN env var)")
     parser.add_argument("--no-save", action="store_true",
                         help="Do not save the final model weights to disk (useful for sweeps to save space)")
+    parser.add_argument("--no-eval", action="store_true",
+                        help="Skip benchmark evaluation after training (useful when pushing to HuggingFace)")
     parser.add_argument("--check-wandb-only", action="store_true",
                         help="Check if this specific run configuration already finished in W&B and exit 0 if so, 1 otherwise.")
     args = parser.parse_args()
@@ -1356,46 +1358,49 @@ def main():
         print("[unlearn] Model saved ✓")
 
     # ---- Auto-evaluate the unlearned model ----
-    print("[unlearn] Running eval benchmarks ...")
-    eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiment", "eval.py")
-    eval_cmd = [
-        "uv", "run", "--script", eval_script,
-        "--model", args.outdir,
-        "--device", args.device,
-        "--dtype", args.dtype,
-    ]
-    try:
-        import subprocess
-        result = subprocess.run(eval_cmd, capture_output=False, text=True)
-        if result.returncode == 0:
-            print("[unlearn] Eval complete ✓")
-            # Log eval metrics to W&B
-            eval_summary_path = os.path.join(
-                model_outdir(args.outdir, suffix="evals"), "summary.json"
-            )
-            if os.path.exists(eval_summary_path):
-                import json
-                with open(eval_summary_path) as f:
-                    eval_data = json.load(f)
-                try:
-                    import wandb
-                    if wandb.run is not None:
-                        eval_results = eval_data.get("results", {})
-                        flat = {}
-                        for task, metrics in eval_results.items():
-                            for metric_key, value in metrics.items():
-                                if metric_key.endswith(",none") and not metric_key.startswith("alias"):
-                                    clean = metric_key.replace(",none", "")
-                                    flat[f"eval_bench/{task}/{clean}"] = value
-                        wandb.log(flat)
-                        wandb.summary.update(flat)
-                        print(f"[unlearn] Eval metrics logged to W&B ✓ ({len(flat)} metrics)")
-                except ImportError:
-                    pass
-        else:
-            print(f"[unlearn] WARNING: eval returned exit code {result.returncode}")
-    except Exception as e:
-        print(f"[unlearn] WARNING: eval failed: {e}")
+    if args.no_eval:
+        print("[unlearn] Skipping eval benchmarks (--no-eval specified)")
+    else:
+        print("[unlearn] Running eval benchmarks ...")
+        eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiment", "eval.py")
+        eval_cmd = [
+            "uv", "run", "--script", eval_script,
+            "--model", args.outdir,
+            "--device", args.device,
+            "--dtype", args.dtype,
+        ]
+        try:
+            import subprocess
+            result = subprocess.run(eval_cmd, capture_output=False, text=True)
+            if result.returncode == 0:
+                print("[unlearn] Eval complete ✓")
+                # Log eval metrics to W&B
+                eval_summary_path = os.path.join(
+                    model_outdir(args.outdir, suffix="evals"), "summary.json"
+                )
+                if os.path.exists(eval_summary_path):
+                    import json
+                    with open(eval_summary_path) as f:
+                        eval_data = json.load(f)
+                    try:
+                        import wandb
+                        if wandb.run is not None:
+                            eval_results = eval_data.get("results", {})
+                            flat = {}
+                            for task, metrics in eval_results.items():
+                                for metric_key, value in metrics.items():
+                                    if metric_key.endswith(",none") and not metric_key.startswith("alias"):
+                                        clean = metric_key.replace(",none", "")
+                                        flat[f"eval_bench/{task}/{clean}"] = value
+                            wandb.log(flat)
+                            wandb.summary.update(flat)
+                            print(f"[unlearn] Eval metrics logged to W&B ✓ ({len(flat)} metrics)")
+                    except ImportError:
+                        pass
+            else:
+                print(f"[unlearn] WARNING: eval returned exit code {result.returncode}")
+        except Exception as e:
+            print(f"[unlearn] WARNING: eval failed: {e}")
 
     # ---- Upload to HuggingFace (only if --push-to-hub) ----
     if args.push_to_hub:

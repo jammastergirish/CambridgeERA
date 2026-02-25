@@ -16,7 +16,7 @@
 # Environment overrides:
 #   LR, EPOCHS, BATCH_SIZE, MAX_LENGTH, BETA, ALPHA, STEERING_COEFF,
 #   LAYER_ID, FORGET_WEIGHT, RETAIN_WEIGHT, LAT_EPS, LAT_STEPS,
-#   WT_NOISE_STD, WT_REG_LAMBDA, EVAL_SPLIT
+#   WT_NOISE_STD, WT_REG_LAMBDA, EVAL_SPLIT, PUSH_TO_HUB, NO_SAVE, NO_EVAL
 #
 # For parallel multi-GPU sweeps, use parallel_sweep.sh instead of calling
 # this script directly from a sweep loop.
@@ -54,6 +54,7 @@ if uv run --script unlearn/unlearn.py \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
   ${PUSH_TO_HUB:+--push-to-hub} \
   ${NO_SAVE:+--no-save} \
+  ${NO_EVAL:+--no-eval} \
   --seed 42 \
   --check-wandb-only; then
   echo "=== Skipping ${METHOD}: Already finished successfully in W&B ==="
@@ -84,4 +85,5 @@ uv run --script unlearn/unlearn.py \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
   ${PUSH_TO_HUB:+--push-to-hub} \
   ${NO_SAVE:+--no-save} \
+  ${NO_EVAL:+--no-eval} \
   --seed 42
