@@ -51,6 +51,66 @@ for bs in "8" "16"; do
     done
 done
 
+# ---------------------------------------------------------------
+# Retain-weight fine-grained ablation for both methods
+#
+# Sweep 4 showed rw=0.1 and rw=0.5 at lr5e-05 ep3:
+#   rw=0.5 → WMDP Cat 0.2765, MMLU 0.3648  (great WMDP, big MMLU hit)
+#   rw=0.1 → WMDP Cat 0.2490, MMLU 0.3472  (best WMDP, heavy MMLU hit)
+#
+# Fill in the gaps: rw=0.3 and rw=0.7 sit between those data points.
+# rw=0.5 included for NPO (ran for simnpo in sweep 4 already, will be skipped).
+# Also test the same rw values at lr7e-05 for simnpo (best WMDP LR).
+# ---------------------------------------------------------------
+
+# simnpo: rw sweep at optimal lr5e-05
+for rw in "0.3" "0.5" "0.7"; do
+    echo -e "\n>>> [simnpo] EPOCHS=3, LR=5e-05, BS=4, BETA=0.1, RETAIN_WEIGHT=${rw} <<<"
+    EPOCHS=3 LR=5e-05 BATCH_SIZE=4 BETA=0.1 RETAIN_WEIGHT=$rw \
+        ./unlearn/run_unlearn.sh simnpo
+done
+
+# simnpo: rw sweep at lr7e-05 (best WMDP lr, so far only rw=1.0 tested there)
+for rw in "0.3" "0.5" "0.7"; do
+    echo -e "\n>>> [simnpo] EPOCHS=3, LR=7e-05, BS=4, BETA=0.1, RETAIN_WEIGHT=${rw} <<<"
+    EPOCHS=3 LR=7e-05 BATCH_SIZE=4 BETA=0.1 RETAIN_WEIGHT=$rw \
+        ./unlearn/run_unlearn.sh simnpo
+done
+
+# npo: rw sweep at optimal lr5e-05 (rw was only ever 1.0 for npo at this lr)
+for rw in "0.3" "0.5" "0.7"; do
+    echo -e "\n>>> [npo] EPOCHS=3, LR=5e-05, BS=4, BETA=0.1, RETAIN_WEIGHT=${rw} <<<"
+    EPOCHS=3 LR=5e-05 BATCH_SIZE=4 BETA=0.1 RETAIN_WEIGHT=$rw \
+        ./unlearn/run_unlearn.sh npo
+done
+
+# ---------------------------------------------------------------
+# Retain-weight × batch-size cross sweep
+#
+# Combines the two dimensions we're now exploring: does a larger batch
+# size interact with retain_weight? rw=0.5 and rw=0.7 are the most
+# useful midpoints — low enough to get meaningful unlearning but not
+# collapsing MMLU. bs=8 and bs=16 are the two larger sizes from above.
+# ---------------------------------------------------------------
+
+# simnpo: rw × bs at lr5e-05
+for rw in "0.5" "0.7"; do
+    for bs in "8" "16"; do
+        echo -e "\n>>> [simnpo] EPOCHS=3, LR=5e-05, BS=${bs}, BETA=0.1, RETAIN_WEIGHT=${rw} <<<"
+        EPOCHS=3 LR=5e-05 BATCH_SIZE=$bs BETA=0.1 RETAIN_WEIGHT=$rw \
+            ./unlearn/run_unlearn.sh simnpo
+    done
+done
+
+# npo: rw × bs at lr5e-05
+for rw in "0.5" "0.7"; do
+    for bs in "8" "16"; do
+        echo -e "\n>>> [npo] EPOCHS=3, LR=5e-05, BS=${bs}, BETA=0.1, RETAIN_WEIGHT=${rw} <<<"
+        EPOCHS=3 LR=5e-05 BATCH_SIZE=$bs BETA=0.1 RETAIN_WEIGHT=$rw \
+            ./unlearn/run_unlearn.sh npo
+    done
+done
+
 echo "=========================================================="
 echo "Sweep 5 completed successfully!"
 echo "=========================================================="
