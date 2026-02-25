@@ -302,10 +302,13 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 Evaluates WMDP-Bio multiple-choice accuracy at every transformer layer using a **logit lens** (default) or **tuned lens**:
 
-- **Logit lens:** Applies the model's own final LayerNorm + unembedding head (`lm_head`) to intermediate hidden states. Zero training cost.
-- **Tuned lens:** Trains a per-layer affine transform (`nn.Linear`) mapping hidden states → vocab logits. More accurate at early layers but requires a training pass.
+- **Logit lens:** Applies the model's own final LayerNorm + unembedding head (`embed_out`) to intermediate hidden states. Zero training cost.
+- **Tuned lens:** Trains a per-layer affine transform (`nn.Linear`) mapping hidden states → vocab logits. More accurate at early layers but requires a training pass on held-out WMDP data (default: 30%).
 
-For each question, the lens computes log-probabilities of each answer choice at the target layer and picks the highest.
+> [!NOTE]
+> **Logit lens reliability at early layers.** The logit lens applies the *final* model's LayerNorm and unembedding head to *intermediate* hidden states. At early layers, those hidden states live in a very different distribution than what the unembedding head was trained on, so accuracy readings at those layers are unreliable — they'll appear to hover near chance (0.25) regardless of what the model actually "knows" at that point. This isn't a bug; it's a fundamental limitation of the zero-cost approach. The **tuned lens** trains a lightweight affine correction per layer to compensate for this distribution mismatch, giving more interpretable early-layer results at the cost of a training pass.
+
+For each question, the lens computes the average log-probability of each answer choice's tokens appended to the question, then picks the highest-scoring choice — the same MCQ scoring convention used by `lm-evaluation-harness`.
 
 | Metric | What it tells you |
 |---|---|
