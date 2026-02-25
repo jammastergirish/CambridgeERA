@@ -82,8 +82,11 @@ ENABLE_PRETRAIN_COMPARISON=1 ./experiment/pipeline.sh
 # Include the full CB-only chain (COMP4: Base→CB, COMP5: CB→Unlearned, COMP6: Unlearned→Filtered)
 ENABLE_CB_COMPARISONS=1 ./experiment/pipeline.sh
 
+# Also run the tuned lens in Step 5 (slow — ~1hr per model; logit lens only by default)
+ENABLE_TUNED_LENS=1 ./experiment/pipeline.sh
+
 # Enable everything
-ENABLE_PRETRAIN_COMPARISON=1 ENABLE_CB_COMPARISONS=1 ./experiment/pipeline.sh
+ENABLE_PRETRAIN_COMPARISON=1 ENABLE_CB_COMPARISONS=1 ENABLE_TUNED_LENS=1 ./experiment/pipeline.sh
 ```
 
 Already-completed steps are automatically skipped (pass `--force` to rerun).
@@ -318,6 +321,10 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 ---
 
 ##### Step 5: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
+
+> [!NOTE]
+> **Tuned lens is opt-in** (`ENABLE_TUNED_LENS=1`). By default, only the logit lens runs (~3 min total across all three models). The tuned lens trains a per-layer affine probe for all 33 layers of each model, costing ~1hr per model (~3hrs total). It is more accurate at early layers where the logit lens is unreliable, but the key signals for this project — the late-layer steady climb and the final-output suppression — are equally visible in the logit lens. Only enable the tuned lens if you specifically need reliable early-layer readings.
+
 
 **Question:** *At which layer does the model "know" the answer to WMDP-Bio questions?*
 

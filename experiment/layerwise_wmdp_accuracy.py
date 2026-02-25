@@ -298,6 +298,7 @@ def plot_wmdp_lens_results(
     final_accuracy: float,
     lens_type: str,
     outdir: str,
+    model_name: str = "",
     title: Optional[str] = None,
 ) -> None:
     """Create the 1×2 panel of WMDP accuracy and delta plots."""
@@ -330,7 +331,10 @@ def plot_wmdp_lens_results(
     axis.set_title("Accuracy Delta from Final Layer")
     axis.grid(alpha=0.3)
 
-    plt.suptitle(title or f"Layer-wise WMDP-Bio Accuracy ({lens_type} lens)", fontsize=12)
+    default_title = f"Layer-wise WMDP-Bio Accuracy ({lens_type} lens)"
+    if model_name:
+        default_title = f"{model_name}\n{default_title}"
+    plt.suptitle(title or default_title, fontsize=11)
     plt.tight_layout()
     plt.savefig(os.path.join(outdir, "wmdp_lens_analysis.png"), dpi=150)
     plt.close()
@@ -468,7 +472,8 @@ def main():
         json.dump(summary, fh, indent=2)
 
     # Plots
-    plot_wmdp_lens_results(results, final_accuracy, args.lens, args.outdir, title=args.title)
+    plot_wmdp_lens_results(results, final_accuracy, args.lens, args.outdir,
+                           model_name=args.model, title=args.title)
 
     print(f"\n[wmdp_lens] ✓ Results saved to {args.outdir}")
     print(f"[wmdp_lens] Best layer: {best['layer']} (accuracy={best['accuracy']:.4f})")

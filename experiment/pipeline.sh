@@ -39,6 +39,8 @@ PRETRAIN="EleutherAI/deep-ignorance-pretraining-stage-unfiltered"
 # COMP4: Base→CB-only, COMP5: CB-only→Unlearned, COMP6: Unlearned→Filtered
 ENABLE_PRETRAIN_COMPARISON="${ENABLE_PRETRAIN_COMPARISON:-0}"
 ENABLE_CB_COMPARISONS="${ENABLE_CB_COMPARISONS:-0}"
+# Tuned lens is slow (~1hr per model). Logit lens runs by default; set to 1 to also run tuned lens.
+ENABLE_TUNED_LENS="${ENABLE_TUNED_LENS:-0}"
 
 # Comparison names (derived from model IDs: / → _)
 COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-strong-filter"
@@ -347,12 +349,22 @@ fi
 # ============================================
 echo ""
 echo "=========================================="
-echo "STEP 6: Layer-wise WMDP Accuracy (Logit + Tuned Lens)"
+echo "STEP 5: Layer-wise WMDP Accuracy (Logit Lens)"
 echo "=========================================="
 echo "Measuring WMDP-Bio MCQ accuracy at every transformer layer..."
 echo "(Results stored per-model, not per-comparison)"
+if [[ "$ENABLE_TUNED_LENS" == "1" ]]; then
+  echo "Tuned lens enabled — will also train per-layer affine probes (~1hr per model)"
+else
+  echo "Tuned lens disabled — logit lens only (set ENABLE_TUNED_LENS=1 to enable)"
+fi
 
-for LENS in logit tuned; do
+LENS_MODES="logit"
+if [[ "$ENABLE_TUNED_LENS" == "1" ]]; then
+  LENS_MODES="logit tuned"
+fi
+
+for LENS in $LENS_MODES; do
   echo ""
   echo "--- Lens: ${LENS} ---"
 
