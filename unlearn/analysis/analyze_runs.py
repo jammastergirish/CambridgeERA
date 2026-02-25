@@ -87,9 +87,16 @@ def main():
         return
 
     df = pd.DataFrame(data)
+
+    # Calculate a combined score
+    # Goal: Maximize MMLU (retain) and Minimize WMDP_Robust (forget)
+    # So we want to maximize: (MMLU) - (WMDP_Robust)
+    # This gives equal weight to a 1% gain in MMLU and a 1% drop in WMDP
+    df["Score"] = df["MMLU"] - df["WMDP (Robust)"]
+
     print(f"\nSuccessfully processed {len(df)} runs with evaluation metrics.\n")
 
-    cols = ["Name", "MMLU", "WMDP (Robust)", "WMDP (Cloze)", "WMDP (Categorized)"]
+    cols = ["Name", "Score", "MMLU", "WMDP (Robust)", "WMDP (Cloze)", "WMDP (Categorized)"]
 
     baselines_df = df[df["IsBase"]].sort_values("Name")
     sweeps_df    = df[~df["IsBase"]]
@@ -117,17 +124,18 @@ def main():
         # Best models by method
         # ------------------------------------------------------------------ #
         f.write("## Best Models By Method\n\n")
+        f.write("*Ranked by Score = MMLU - WMDP (Robust)*\n\n")
 
         sweeps_df = sweeps_df.sort_values(
-            by=["Method", "WMDP (Categorized)", "MMLU"],
-            ascending=[True, True, False],
+            by=["Method", "Score", "MMLU"],
+            ascending=[True, False, False],
         )
 
         for method, group in sweeps_df.groupby("Method"):
             f.write(f"### {method}\n\n")
             best = group.sort_values(
-                by=["WMDP (Categorized)", "MMLU"],
-                ascending=[True, False],
+                by=["Score", "MMLU"],
+                ascending=[False, False],
             ).head(5)
             f.write(_md_table(best, cols) + "\n\n")
 
