@@ -77,12 +77,38 @@ def compute_spectral_norm(A: torch.Tensor) -> float:
 
 
 # --- Device / dtype resolution ---
+def pick_best_gpu() -> int:
+    """Return the index of the CUDA GPU with the most free VRAM.
+
+    Uses torch.cuda.mem_get_info() which is fast (no subprocess).
+    Falls back to GPU 0 if only one GPU is present or on any error.
+    """
+    n = torch.cuda.device_count()
+    if n <= 1:
+        return 0
+    best_idx, best_free = 0, 0
+    for i in range(n):
+        try:
+            free, _ = torch.cuda.mem_get_info(i)
+            if free > best_free:
+                best_free = free
+                best_idx = i
+        except Exception:
+            pass
+    return best_idx
+
+
 def resolve_device(device: str) -> str:
-    """Resolve 'auto' device to the best available (cuda > mps > cpu)."""
+    """Resolve 'auto' device to the best available (cuda:N > mps > cpu).
+
+    When multiple CUDA GPUs are present, picks the one with the most free
+    VRAM so the model doesn't land on an already-busy GPU.
+    """
     if device != "auto":
         resolved = device
     elif torch.cuda.is_available():
-        resolved = "cuda"
+        best = pick_best_gpu()
+        resolved = f"cuda:{best}"
     elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
         resolved = "mps"
     else:

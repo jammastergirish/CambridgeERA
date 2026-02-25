@@ -25,24 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from utils import resolve_device, resolve_dtype
-except ImportError:
-    def resolve_device(device: str) -> str:
-        if device != "auto":
-            return device
-        if torch.cuda.is_available():
-            return "cuda"
-        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            return "mps"
-        return "cpu"
-
-    def resolve_dtype(dtype: str, device: str) -> torch.dtype:
-        if dtype == "auto":
-            if device == "cuda":
-                return torch.bfloat16
-            if device == "mps":
-                return torch.float16
-            return torch.float32
-        return {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}[dtype]
+except ImportError as e:
+    raise ImportError(f"Could not import utils.py from project root: {e}") from e
 
 
 def load_model(model_id: str, device: str = "auto", dtype: str = "auto"):

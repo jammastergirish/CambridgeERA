@@ -46,39 +46,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # ---------------------------------------------------------------------------
 try:
     from utils import resolve_device, resolve_dtype, model_outdir
-except ImportError:
-
-    def resolve_device(device: str) -> str:
-        if device != "auto":
-            return device
-        if torch.cuda.is_available():
-            return "cuda"
-        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            return "mps"
-        return "cpu"
-
-    def resolve_dtype(dtype: str, device: str) -> torch.dtype:
-        if dtype == "auto":
-            if device == "cuda":
-                return torch.bfloat16
-            if device == "mps":
-                return torch.float16
-            return torch.float32
-        mapping = {
-            "fp32": torch.float32,
-            "fp16": torch.float16,
-            "bf16": torch.bfloat16,
-        }
-        if dtype not in mapping:
-            raise ValueError(f"Unknown dtype '{dtype}'. Use auto|fp32|fp16|bf16")
-        return mapping[dtype]
-
-    def model_outdir(model: str, root: str = "outputs", suffix: str = "") -> str:
-        sanitized = model.replace("/", "_")
-        parts = [root, sanitized]
-        if suffix:
-            parts.append(suffix)
-        return os.path.join(*parts)
+except ImportError as e:
+    raise ImportError(f"Could not import utils.py from project root: {e}") from e
 
 
 # ===================================================================
