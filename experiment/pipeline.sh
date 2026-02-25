@@ -363,7 +363,8 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
+    --dtype "$ACTIVATION_DTYPE" \
+    --outdir "${OUTROOT}/${MODEL_BASE}/linear_probes"
 fi
 
 echo ""
@@ -377,7 +378,8 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
+    --dtype "$ACTIVATION_DTYPE" \
+    --outdir "${OUTROOT}/${MODEL_FILTERED}/linear_probes"
 fi
 
 echo ""
@@ -391,7 +393,8 @@ else
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
+    --dtype "$ACTIVATION_DTYPE" \
+    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/linear_probes"
 fi
 
 # ============================================
@@ -418,7 +421,8 @@ for LENS in logit tuned; do
       --model "$BASE" \
       --lens "$LENS" \
       --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE"
+      --dtype "$ACTIVATION_DTYPE" \
+      --outdir "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens"
   fi
 
   echo ""
@@ -431,7 +435,8 @@ for LENS in logit tuned; do
       --model "$FILTERED" \
       --lens "$LENS" \
       --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE"
+      --dtype "$ACTIVATION_DTYPE" \
+      --outdir "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens"
   fi
 
   echo ""
@@ -444,7 +449,8 @@ for LENS in logit tuned; do
       --model "$UNLEARNED" \
       --lens "$LENS" \
       --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE"
+      --dtype "$ACTIVATION_DTYPE" \
+      --outdir "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens"
   fi
 done
 
