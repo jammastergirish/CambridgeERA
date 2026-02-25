@@ -102,18 +102,26 @@ class TestAnalyzeRuns:
     @patch('builtins.print')
     def test_main_fetches_runs(self, mock_print, mock_load, mock_wandb, mock_api):
         mock_wandb.Api.return_value = mock_api
-        ar.main()
         
-        mock_api.runs.assert_called_once_with("cambridge_era")
+        with patch('builtins.open') as mock_open:
+            mock_file = MagicMock()
+            mock_open.return_value.__enter__.return_value = mock_file
+            ar.main()
         
-        # Check printed output includes our baselines and methods
+        mock_api.runs.assert_called_once_with(
+            "cambridge_era",
+            filters={"$and": [{"state": "finished"}, {"summary_metrics.eval_bench/mmlu/acc": {"$exists": True}}]},
+            per_page=500
+        )
+        
         printed_text = " ".join([call_args[0][0] for call_args in mock_print.call_args_list if call_args[0]])
+        file_text = " ".join([call_args[0][0] for call_args in mock_file.write.call_args_list if call_args[0]])
         
         assert "Successfully processed 2 runs" in printed_text
-        assert "BASELINES" in printed_text
-        assert "EleutherAI/deep-ignorance-unfiltered" in printed_text
-        assert "Best Models By Method" in printed_text
-        assert "cb_lat" in printed_text
+        assert "## Baselines" in file_text
+        assert "EleutherAI/deep-ignorance-unfiltered" in file_text
+        assert "## Best Models By Method" in file_text
+        assert "cb_lat" in file_text
         
     @patch('analyze_runs.wandb')
     @patch('analyze_runs.load_dotenv')
@@ -145,8 +153,11 @@ class TestAnalyzeRuns:
         mock_api.runs.return_value = [run]
         mock_wandb.Api.return_value = mock_api
         
-        ar.main()
+        with patch('builtins.open') as mock_open:
+            mock_file = MagicMock()
+            mock_open.return_value.__enter__.return_value = mock_file
+            ar.main()
         
-        printed_text = " ".join([call_args[0][0] for call_args in mock_print.call_args_list if call_args[0]])
-        assert "No baseline runs found" in printed_text
-        assert "uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered" in printed_text
+        file_text = " ".join([call_args[0][0] for call_args in mock_file.write.call_args_list if call_args[0]])
+        assert "No baseline runs found" in file_text
+        assert "uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered" in file_text
