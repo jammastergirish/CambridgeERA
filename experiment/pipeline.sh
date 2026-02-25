@@ -343,61 +343,6 @@ else
 fi
 
 # ============================================
-# STEP 5: Linear Probe Analysis (per-model)
-# ============================================
-echo ""
-echo "=========================================="
-echo "STEP 5: Linear Probe Analysis"
-echo "=========================================="
-echo "Training per-layer linear probes to locate forget-set knowledge..."
-echo "(Results stored per-model, not per-comparison)"
-
-echo ""
-echo "Model: $BASE"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_BASE}/linear_probes" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/linear_probe_analysis.py \
-    --model "$BASE" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_BASE}/linear_probes"
-fi
-
-echo ""
-echo "Model: $FILTERED"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_FILTERED}/linear_probes" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/linear_probe_analysis.py \
-    --model "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_FILTERED}/linear_probes"
-fi
-
-echo ""
-echo "Model: $UNLEARNED"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/linear_probes" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/linear_probe_analysis.py \
-    --model "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --outdir "${OUTROOT}/${MODEL_UNLEARNED}/linear_probes"
-fi
-
-# ============================================
 # STEP 6: Layer-wise WMDP Accuracy (per-model)
 # ============================================
 echo ""

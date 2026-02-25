@@ -296,27 +296,7 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ---
 
-##### Step 5: Linear Probe Analysis (`experiment/linear_probe_analysis.py`)
-
-**Question:** *At which layer is the forget-set knowledge  linearly encoded?*
-
-For each layer, this script extracts the **last-token hidden state** on both forget and retain texts, then trains a logistic regression "probe" to classify whether an activation came from forget or retain text.
-
-| Metric | What it tells you |
-|---|---|
-| **Probe accuracy** | How well a linear classifier can distinguish forget from retain activations at this layer |
-| **Selectivity** | Accuracy minus majority-class baseline — how much the probe exceeds random guessing. High selectivity = the layer linearly encodes the forget/retain distinction. |
-| **AUC** (Area Under the ROC Curve) | How well the probe ranks forget vs retain samples, regardless of threshold. 0.5 = random, 1.0 = perfect separation. More robust than accuracy when class sizes are imbalanced. |
-
-Default probe: `LogisticRegression(C=1.0, max_iter=1000)` — adjustable via `--C` and `--max-iter`.
-
-**Why this matters:** This identifies *where* in the network the model stores information that distinguishes hazardous content from benign content. In a well-unlearned model, you'd expect low selectivity everywhere — the model genuinely can't tell the domains apart. In a poorly unlearned model, the probes will still find layers with high selectivity, meaning the knowledge is still encoded and a linear readout can recover it. Comparing probe profiles across BASE, FILTERED, and UNLEARNED reveals whether unlearning actually erased the representation or just hid it from the output head.
-
-> **Note:** Unlike other steps, results are stored **per-model** (not per-comparison) since probes analyze a single model's representations.
-
----
-
-##### Step 6: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
+##### Step 5: Layer-wise WMDP Accuracy (`experiment/layerwise_wmdp_accuracy.py`)
 
 **Question:** *At which layer does the model "know" the answer to WMDP-Bio questions?*
 
@@ -334,7 +314,7 @@ For each question, the lens computes log-probabilities of each answer choice at 
 
 **Why this matters:** A base model will show WMDP accuracy ramping up through mid-to-late layers — knowledge "crystallizes" as representations flow through the network. In a well-unlearned model, you'd expect accuracy to stay near chance (0.25 for 4-way MCQ) at *every* layer, not just the final one. If accuracy is high at intermediate layers but drops at the output, the knowledge is merely hidden, not erased — and a simple probe or fine-tuning attack could recover it.
 
-> **Note:** Like Step 5, results are stored **per-model**.
+> **Note:** Results are stored **per-model** (not per-comparison).
 
 ---
 
@@ -347,8 +327,7 @@ The diagnostics answer an escalating series of questions:
 | **Capabilities** | Does the model still work at all? | 0 |
 | **Magnitude** | How much changed? | 1–2 |
 | **Location** | Where — MLP or Attention? Which layers? | 4 |
-| **Knowledge Localization** | Where is forget-set knowledge encoded? | 5 |
-| **Knowledge Depth** | At which layer does the model know WMDP answers? | 6 |
+| **Knowledge Depth** | At which layer does the model know WMDP answers? | 5 |
 | **Geometry** | What shape is ΔW? Low-rank? Nullspace-aligned? | 7, 10 |
 | **Function** | Do activations actually change on target text? | 3, 8–9 |
 | **Precision** | Is the change *targeted* at forget-domain inputs? | 11 |
@@ -377,9 +356,8 @@ outputs/
     row_space_projection/  projection metrics + plots
     lipschitzness/         Lipschitz estimates + plots
 
-  <model>/                             # Steps 0, 5–6: per individual model
+  <model>/                             # Steps 0, 5: per individual model
     evals/                 summary.json, high_level_summary.md
-    linear_probes/         probe_results.csv, summary.json + plot
     wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot
     wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot
 ```
