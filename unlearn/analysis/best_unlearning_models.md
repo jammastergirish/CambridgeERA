@@ -23,11 +23,11 @@
 
 | Name | Score | MMLU | WMDP (Robust) | WMDP (Cloze) | WMDP (Categorized) |
 | --- | --- | --- | --- | --- | --- |
+| EleutherAI_deep-ignorance-unfiltered/cb_lat__ep3_lr3e-05_bs8_a50.0_sc20.0_le0.1_ls5_ly5-6-7 | 0.1177 | 0.3826 | 0.2650 | 0.2742 | 0.2710 |
 | EleutherAI_deep-ignorance-unfiltered/cb_lat__ep3_lr3e-05_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7 | 0.1023 | 0.3512 | 0.2488 | 0.2965 | 0.2357 |
-| EleutherAI_deep-ignorance-unfiltered/cb_lat__ep1_lr1.2e-05_bs4_a100.0_sc20.0_le0.1_ls5_ly5-10-15-20-25-30 | 0.0266 | 0.4494 | 0.4228 | 0.3615 | 0.5208 |
-| EleutherAI_deep-ignorance-unfiltered/cb_lat__ep1_lr3e-05_bs4_a100.0_sc20.0_le0.1_ls5_ly5-10-15-20-25-30 | 0.0221 | 0.4495 | 0.4274 | 0.3699 | 0.5216 |
-| EleutherAI_deep-ignorance-unfiltered/cb_lat__ep1_lr1e-05_bs4_a100.0_sc20.0_le0.1_ls5_ly5-10-15-20-25-30 | 0.0215 | 0.4489 | 0.4274 | 0.3625 | 0.5232 |
-| EleutherAI_deep-ignorance-unfiltered/cb_lat__ep1_lr1.2e-05_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7 | 0.0212 | 0.4498 | 0.4286 | 0.3597 | 0.5255 |
+| EleutherAI_deep-ignorance-unfiltered/cb_lat__ep3_lr7e-05_bs8_a100.0_sc20.0_le0.1_ls5_ly5-6-7 | 0.0924 | 0.3458 | 0.2535 | 0.2714 | 0.2647 |
+| EleutherAI_deep-ignorance-unfiltered/cb_lat__ep3_lr3e-05_bs4_a50.0_sc20.0_le0.1_ls5_ly5-6-7 | 0.0899 | 0.3526 | 0.2627 | 0.2649 | 0.2529 |
+| EleutherAI_deep-ignorance-unfiltered/cb_lat__ep3_lr3e-05_bs4_a100.0_sc20.0_le0.5_ls5_ly5-6-7 | 0.0786 | 0.3494 | 0.2707 | 0.3002 | 0.2569 |
 
 ### dpo
 
@@ -85,9 +85,9 @@
 | --- | --- | --- | --- | --- | --- |
 | EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs4_b0.1_rw0.3 | 0.1349 | 0.3803 | 0.2454 | 0.2695 | 0.2742 |
 | EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs8_b0.1_rw1.0 | 0.1310 | 0.4110 | 0.2800 | 0.3104 | 0.3064 |
+| EleutherAI_deep-ignorance-unfiltered/npo__ep4_lr5e-05_bs8_b0.1_rw1.0 | 0.1302 | 0.3998 | 0.2696 | 0.2900 | 0.2922 |
+| EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs16_b0.1_rw0.3 | 0.1245 | 0.3734 | 0.2488 | 0.3141 | 0.2812 |
 | EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs16_b0.1_rw0.7 | 0.1220 | 0.3905 | 0.2684 | 0.3178 | 0.2993 |
-| EleutherAI_deep-ignorance-unfiltered/npo__ep3_lr5e-05_bs8_b0.1_rw0.7 | 0.1212 | 0.4034 | 0.2823 | 0.3020 | 0.3260 |
-| EleutherAI_deep-ignorance-unfiltered/npo__ep1_lr5e-05_bs4_b0.1_rw1.0 | 0.1182 | 0.4120 | 0.2938 | 0.3002 | 0.3551 |
 
 ### rmu
 
