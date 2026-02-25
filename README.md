@@ -75,15 +75,24 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 
 # Run pipeline for a specific unlearned model
 UNLEARNED=girishgupta/EleutherAI_deep-ignorance-unfiltered__ga ./experiment/pipeline.sh
+
+# Include the pretraining-checkpoint comparison (COMP3)
+ENABLE_PRETRAIN_COMPARISON=1 ./experiment/pipeline.sh
+
+# Include the full CB-only chain (COMP4: Base→CB, COMP5: CB→Unlearned, COMP6: Unlearned→Filtered)
+ENABLE_CB_COMPARISONS=1 ./experiment/pipeline.sh
+
+# Enable everything
+ENABLE_PRETRAIN_COMPARISON=1 ENABLE_CB_COMPARISONS=1 ./experiment/pipeline.sh
 ```
 
-The Base→Filtered comparison runs once and is shared across runs. Already-completed steps are automatically skipped (pass `--force` to rerun).
+Already-completed steps are automatically skipped (pass `--force` to rerun).
 
 ---
 
 ### Experimental Pipeline
 
-The pipeline performs experiments on three models sharing identical architecture. 
+The pipeline performs experiments on three models sharing identical architecture.
 
 | Model | Role | What happened to it |
 |---|---|---|
@@ -91,14 +100,21 @@ The pipeline performs experiments on three models sharing identical architecture
 | `deep-ignorance-e2e-strong-filter` | **Filtered** (gold standard) | Trained from scratch with hazardous data *removed before training* |
 | `deep-ignorance-unfiltered-XXXXXX` | **Unlearned** (intervention) | Same as Base, but post-hoc unlearned |
 
-Every diagnostic runs **twice** — once for each comparison — always using the Base model as the reference:
+By default, every diagnostic runs for two comparisons, always using the Base model as the reference:
 
 ```
-Comparison 1:  Base → Filtered     (What does genuine ignorance look like?)
-Comparison 2:  Base → Unlearned    (What does post-hoc unlearning look like?)
+Comparison 1:  Base → Filtered     (What does genuine ignorance look like?)   [always on]
+Comparison 2:  Base → Unlearned    (What does post-hoc unlearning look like?) [always on]
 ```
 
 By contrasting these two comparisons, you can distinguish *deep representational change* (filtering) from *shallow parameter patching* (unlearning).
+
+Additional comparisons are **opt-in** to avoid unnecessary model loads on routine runs:
+
+| Flag | Comparisons enabled | When to use |
+|---|---|---|
+| `ENABLE_PRETRAIN_COMPARISON=1` | COMP3: Base → Pretraining checkpoint | Studying training-stage effects |
+| `ENABLE_CB_COMPARISONS=1` | COMP4: Base→CB-only, COMP5: CB-only→Unlearned, COMP6: Unlearned→Filtered | Studying the CB→CB-LAT ablation chain |
 
 ---
 

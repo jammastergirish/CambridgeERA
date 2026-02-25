@@ -33,6 +33,13 @@ UNLEARNED="${UNLEARNED:-EleutherAI/deep-ignorance-unfiltered-cb-lat}"
 CB_ONLY="EleutherAI/deep-ignorance-unfiltered-cb"
 PRETRAIN="EleutherAI/deep-ignorance-pretraining-stage-unfiltered"
 
+# Opt-in flags for extra comparisons (set to 1 to enable).
+# By default only COMP1 (Base→Filtered) and COMP2 (Base→Unlearned) run.
+# COMP3: Base→Pretraining checkpoint
+# COMP4: Base→CB-only, COMP5: CB-only→Unlearned, COMP6: Unlearned→Filtered
+ENABLE_PRETRAIN_COMPARISON="${ENABLE_PRETRAIN_COMPARISON:-0}"
+ENABLE_CB_COMPARISONS="${ENABLE_CB_COMPARISONS:-0}"
+
 # Comparison names (derived from model IDs: / → _)
 COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-strong-filter"
 COMP2="EleutherAI_deep-ignorance-unfiltered__to__${UNLEARNED//\//_}"
@@ -69,14 +76,22 @@ echo "=========================================="
 echo "      MODEL DIFFS ANALYSIS PIPELINE"
 echo "=========================================="
 echo ""
-echo "Base model: $BASE"
-echo "Comparison 1: Base -> $FILTERED"
-echo "Comparison 2: Base -> $UNLEARNED"
-echo "Comparison 3: Base -> $PRETRAIN"
-echo "Comparison 4: Base -> $CB_ONLY"
-echo "Comparison 5: $CB_ONLY -> $UNLEARNED"
-echo "Comparison 6: $UNLEARNED -> $FILTERED"
-echo "Output root: $OUTROOT"
+echo "Base model:    $BASE"
+echo "Comparison 1:  Base → $FILTERED"
+echo "Comparison 2:  Base → $UNLEARNED"
+if [[ "$ENABLE_PRETRAIN_COMPARISON" == "1" ]]; then
+  echo "Comparison 3:  Base → $PRETRAIN  [opt-in]"
+else
+  echo "Comparison 3:  (disabled — set ENABLE_PRETRAIN_COMPARISON=1 to enable)"
+fi
+if [[ "$ENABLE_CB_COMPARISONS" == "1" ]]; then
+  echo "Comparison 4:  Base → $CB_ONLY  [opt-in]"
+  echo "Comparison 5:  $CB_ONLY → $UNLEARNED  [opt-in]"
+  echo "Comparison 6:  $UNLEARNED → $FILTERED  [opt-in]"
+else
+  echo "Comparisons 4–6: (disabled — set ENABLE_CB_COMPARISONS=1 to enable)"
+fi
+echo "Output root:   $OUTROOT"
 echo ""
 
 # ============================================
@@ -164,68 +179,78 @@ else
     --title "$BASE → $UNLEARNED"
 fi
 
-echo ""
-echo "Comparison 3: Base → Pretraining"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP3}/weight_comparison" "per_matrix.csv"; then
-  echo "  ✓ Already complete — skipping"
+if [[ "$ENABLE_PRETRAIN_COMPARISON" == "1" ]]; then
+  echo ""
+  echo "Comparison 3: Base → Pretraining"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${COMP3}/weight_comparison" "per_matrix.csv"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/collect_weight_comparison.py \
+      --model-a "$BASE" \
+      --model-b "$PRETRAIN" \
+      --device "$PARAM_DEVICE" \
+      --dtype "$PARAM_DTYPE" \
+      --outdir "${OUTROOT}/${COMP3}/weight_comparison" \
+      --plot-outdir "${OUTROOT}/${COMP3}/param_plots" \
+      --title "$BASE → $PRETRAIN"
+  fi
 else
-  uv run experiment/collect_weight_comparison.py \
-    --model-a "$BASE" \
-    --model-b "$PRETRAIN" \
-    --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP3}/weight_comparison" \
-    --plot-outdir "${OUTROOT}/${COMP3}/param_plots" \
-    --title "$BASE → $PRETRAIN"
+  echo ""
+  echo "Comparison 3: Base → Pretraining (skipped — set ENABLE_PRETRAIN_COMPARISON=1 to enable)"
 fi
 
-echo ""
-echo "Comparison 4: Base → CB-only"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP4}/weight_comparison" "per_matrix.csv"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/collect_weight_comparison.py \
-    --model-a "$BASE" \
-    --model-b "$CB_ONLY" \
-    --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP4}/weight_comparison" \
-    --plot-outdir "${OUTROOT}/${COMP4}/param_plots" \
-    --title "$BASE → $CB_ONLY"
-fi
+if [[ "$ENABLE_CB_COMPARISONS" == "1" ]]; then
+  echo ""
+  echo "Comparison 4: Base → CB-only"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${COMP4}/weight_comparison" "per_matrix.csv"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/collect_weight_comparison.py \
+      --model-a "$BASE" \
+      --model-b "$CB_ONLY" \
+      --device "$PARAM_DEVICE" \
+      --dtype "$PARAM_DTYPE" \
+      --outdir "${OUTROOT}/${COMP4}/weight_comparison" \
+      --plot-outdir "${OUTROOT}/${COMP4}/param_plots" \
+      --title "$BASE → $CB_ONLY"
+  fi
 
-echo ""
-echo "Comparison 5: CB-only → CB+LAT"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP5}/weight_comparison" "per_matrix.csv"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/collect_weight_comparison.py \
-    --model-a "$CB_ONLY" \
-    --model-b "$UNLEARNED" \
-    --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP5}/weight_comparison" \
-    --plot-outdir "${OUTROOT}/${COMP5}/param_plots" \
-    --title "$CB_ONLY → $UNLEARNED"
-fi
+  echo ""
+  echo "Comparison 5: CB-only → CB+LAT"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${COMP5}/weight_comparison" "per_matrix.csv"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/collect_weight_comparison.py \
+      --model-a "$CB_ONLY" \
+      --model-b "$UNLEARNED" \
+      --device "$PARAM_DEVICE" \
+      --dtype "$PARAM_DTYPE" \
+      --outdir "${OUTROOT}/${COMP5}/weight_comparison" \
+      --plot-outdir "${OUTROOT}/${COMP5}/param_plots" \
+      --title "$CB_ONLY → $UNLEARNED"
+  fi
 
-echo ""
-echo "Comparison 6: CB+LAT → Filtered"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP6}/weight_comparison" "per_matrix.csv"; then
-  echo "  ✓ Already complete — skipping"
+  echo ""
+  echo "Comparison 6: CB+LAT → Filtered"
+  echo "----------------------------------------"
+  if step_complete "${OUTROOT}/${COMP6}/weight_comparison" "per_matrix.csv"; then
+    echo "  ✓ Already complete — skipping"
+  else
+    uv run experiment/collect_weight_comparison.py \
+      --model-a "$UNLEARNED" \
+      --model-b "$FILTERED" \
+      --device "$PARAM_DEVICE" \
+      --dtype "$PARAM_DTYPE" \
+      --outdir "${OUTROOT}/${COMP6}/weight_comparison" \
+      --plot-outdir "${OUTROOT}/${COMP6}/param_plots" \
+      --title "$UNLEARNED → $FILTERED"
+  fi
 else
-  uv run experiment/collect_weight_comparison.py \
-    --model-a "$UNLEARNED" \
-    --model-b "$FILTERED" \
-    --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP6}/weight_comparison" \
-    --plot-outdir "${OUTROOT}/${COMP6}/param_plots" \
-    --title "$UNLEARNED → $FILTERED"
+  echo ""
+  echo "Comparisons 4–6: CB-only chain (skipped — set ENABLE_CB_COMPARISONS=1 to enable)"
 fi
 
 # ============================================
