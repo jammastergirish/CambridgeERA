@@ -101,9 +101,11 @@ try:
     vram_gb = int(r.stdout.strip().split("\n")[0]) / 1024
 
     # Training VRAM = params + gradients + Adam m/v states + activations ≈ 4.5× model size
-    # (much higher than inference which is ~1.25×)
+    # (much higher than inference which is ~1.25×).
+    # Use 6× to be conservative and account for adversarial training methods (cb_lat, lat)
+    # that carry perturbation tensors alongside standard params+gradients+optimizer states.
     import math
-    gpus_needed = max(1, math.ceil(model_gb * 4.5 / vram_gb))
+    gpus_needed = max(1, math.ceil(model_gb * 6.0 / vram_gb))
     print(gpus_needed)
 
 except Exception as e:

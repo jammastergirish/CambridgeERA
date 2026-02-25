@@ -85,12 +85,26 @@ def get_final_layer_norm(model):
     return None
 
 
+def get_lm_head(model):
+    """Return the unembedding head, handling architecture naming differences.
+
+    GPT-NeoX uses `embed_out`; GPT-2/LLaMA-style models use `lm_head`.
+    """
+    return getattr(model, "lm_head", None) or getattr(model, "embed_out", None)
+
+
 def logit_lens_project(hidden_states: torch.Tensor, model) -> torch.Tensor:
     """Project hidden states to vocab logits using the model's own head."""
     final_norm = get_final_layer_norm(model)
     if final_norm is not None:
         hidden_states = final_norm(hidden_states)
-    return model.lm_head(hidden_states)
+    lm_head = get_lm_head(model)
+    if lm_head is None:
+        raise AttributeError(
+            f"Could not find an unembedding head on {type(model).__name__}. "
+            "Expected 'lm_head' or 'embed_out'."
+        )
+    return lm_head(hidden_states)
 
 
 def load_wmdp_bio(max_samples: Optional[int] = None) -> List[Dict]:
