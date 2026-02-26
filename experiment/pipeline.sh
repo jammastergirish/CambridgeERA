@@ -41,6 +41,8 @@ ENABLE_PRETRAIN_COMPARISON="${ENABLE_PRETRAIN_COMPARISON:-0}"
 ENABLE_CB_COMPARISONS="${ENABLE_CB_COMPARISONS:-0}"
 # Tuned lens is slow (~1hr per model). Logit lens runs by default; set to 1 to also run tuned lens.
 ENABLE_TUNED_LENS="${ENABLE_TUNED_LENS:-0}"
+# Multiple seeds for statistical robustness (space-separated list)
+SEEDS="${SEEDS:-42 123 456}"
 
 # Comparison names (derived from model IDs: / → _)
 COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-strong-filter"
@@ -74,6 +76,37 @@ step_complete() {
   [[ -f "${dir}/${sentinel}" ]]
 }
 
+# ---- Multi-seed experiment runner ----
+# Usage: run_multiseed_experiment <base_outdir> <sentinel_file> <script> [args...]
+run_multiseed_experiment() {
+  local base_outdir="$1" sentinel="$2" script="$3"
+  shift 3
+  local extra_args=("$@")
+
+  if step_complete "$base_outdir" "$sentinel"; then
+    echo "  ✓ Already complete — skipping"
+    return
+  fi
+
+  # Run experiment for each seed
+  local seed_dirs=()
+  for seed in $SEEDS; do
+    local seed_outdir="${base_outdir}/seed_${seed}"
+    mkdir -p "$seed_outdir"
+
+    echo "    Running with seed $seed..."
+    uv run "$script" "${extra_args[@]}" --seed "$seed" --outdir "$seed_outdir"
+    seed_dirs+=("$seed_outdir")
+  done
+
+  # Aggregate results across seeds
+  echo "    Aggregating results across seeds..."
+  uv run experiment/aggregate_multiseed_results.py \
+    --seed-dirs "${seed_dirs[@]}" \
+    --output-dir "$base_outdir" \
+    --sentinel-file "$sentinel"
+}
+
 echo "=========================================="
 echo "      MODEL DIFFS ANALYSIS PIPELINE"
 echo "=========================================="
@@ -94,6 +127,7 @@ else
   echo "Comparisons 4–6: (disabled — set ENABLE_CB_COMPARISONS=1 to enable)"
 fi
 echo "Output root:   $OUTROOT"
+echo "Seeds:         $SEEDS  (for statistical robustness)"
 echo ""
 
 
@@ -238,34 +272,28 @@ else
   echo ""
   echo "Comparison 1: Base → Filtered"
   echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${COMP1}/activation_comparison" "activation_comparison.csv"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/collect_activation_comparison.py \
-      --model-a "$BASE" \
-      --model-b "$FILTERED" \
-      --forget-text "$FORGET" \
-      --retain-text "$RETAIN" \
-      --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --title "E2E Strong Filter: Activation Norms"
-  fi
+  run_multiseed_experiment "${OUTROOT}/${COMP1}/activation_comparison" "activation_comparison.csv" \
+    "experiment/collect_activation_comparison.py" \
+    --model-a "$BASE" \
+    --model-b "$FILTERED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE" \
+    --title "E2E Strong Filter: Activation Norms"
 
   echo ""
   echo "Comparison 2: Base → Unlearned"
   echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${COMP2}/activation_comparison" "activation_comparison.csv"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/collect_activation_comparison.py \
-      --model-a "$BASE" \
-      --model-b "$UNLEARNED" \
-      --forget-text "$FORGET" \
-      --retain-text "$RETAIN" \
-      --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --title "${UNLEARNED##*/}: Activation Norms"
-  fi
+  run_multiseed_experiment "${OUTROOT}/${COMP2}/activation_comparison" "activation_comparison.csv" \
+    "experiment/collect_activation_comparison.py" \
+    --model-a "$BASE" \
+    --model-b "$UNLEARNED" \
+    --forget-text "$FORGET" \
+    --retain-text "$RETAIN" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE" \
+    --title "${UNLEARNED##*/}: Activation Norms"
 fi
 
 # ============================================
@@ -327,44 +355,32 @@ for LENS in $LENS_MODES; do
   echo ""
   echo "Model: $BASE"
   echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens" "summary.json"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/layerwise_wmdp_accuracy.py \
-      --model "$BASE" \
-      --lens "$LENS" \
-      --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens"
-  fi
+  run_multiseed_experiment "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens" "summary.json" \
+    "experiment/layerwise_wmdp_accuracy.py" \
+    --model "$BASE" \
+    --lens "$LENS" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
 
   echo ""
   echo "Model: $FILTERED"
   echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens" "summary.json"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/layerwise_wmdp_accuracy.py \
-      --model "$FILTERED" \
-      --lens "$LENS" \
-      --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens"
-  fi
+  run_multiseed_experiment "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens" "summary.json" \
+    "experiment/layerwise_wmdp_accuracy.py" \
+    --model "$FILTERED" \
+    --lens "$LENS" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
 
   echo ""
   echo "Model: $UNLEARNED"
   echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens" "summary.json"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/layerwise_wmdp_accuracy.py \
-      --model "$UNLEARNED" \
-      --lens "$LENS" \
-      --device "$ACTIVATION_DEVICE" \
-      --dtype "$ACTIVATION_DTYPE" \
-      --outdir "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens"
-  fi
+  run_multiseed_experiment "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens" "summary.json" \
+    "experiment/layerwise_wmdp_accuracy.py" \
+    --model "$UNLEARNED" \
+    --lens "$LENS" \
+    --device "$ACTIVATION_DEVICE" \
+    --dtype "$ACTIVATION_DTYPE"
 done
 
 # ============================================
@@ -378,25 +394,19 @@ echo "Note: This is computationally intensive (SVD on 50 weight matrices)"
 
 echo ""
 echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/null_space_analysis" "null_space_visualization.png"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/null_space_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --num-samples 50
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP1}/null_space_analysis" "null_space_visualization.png" \
+  "experiment/null_space_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --num-samples 50
 
 echo ""
 echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/null_space_analysis" "null_space_visualization.png"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/null_space_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --num-samples 50
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP2}/null_space_analysis" "null_space_visualization.png" \
+  "experiment/null_space_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --num-samples 50
 
 # ============================================
 # STEP 8: Activation Separation Analysis
@@ -409,31 +419,25 @@ echo "Analyzing how well forget/retain activations are separated..."
 
 echo ""
 echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/activation_separation" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/activation_separation_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP1}/activation_separation" "summary.json" \
+  "experiment/activation_separation_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
 
 echo ""
 echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/activation_separation" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/activation_separation_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP2}/activation_separation" "summary.json" \
+  "experiment/activation_separation_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
 
 # ============================================
 # STEP 9: Activation Covariance Analysis
@@ -446,31 +450,25 @@ echo "Analyzing covariance spectrum changes..."
 
 echo ""
 echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/activation_covariance" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/activation_covariance_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP1}/activation_covariance" "summary.json" \
+  "experiment/activation_covariance_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
 
 echo ""
 echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/activation_covariance" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/activation_covariance_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP2}/activation_covariance" "summary.json" \
+  "experiment/activation_covariance_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
 
 # ============================================
 # STEP 10: MLP Nullspace Alignment
@@ -516,31 +514,25 @@ echo "Analyzing how activations project onto update directions..."
 
 echo ""
 echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/row_space_projection" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/row_space_projection_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP1}/row_space_projection" "summary.json" \
+  "experiment/row_space_projection_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
 
 echo ""
 echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/row_space_projection" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/row_space_projection_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP2}/row_space_projection" "summary.json" \
+  "experiment/row_space_projection_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
 
 # ============================================
 # STEP 12: Local Lipschitzness Analysis
@@ -553,31 +545,25 @@ echo "Analyzing local smoothness changes..."
 
 echo ""
 echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/lipschitzness_analysis" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/local_lipschitzness_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP1}/lipschitzness_analysis" "summary.json" \
+  "experiment/local_lipschitzness_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
 
 echo ""
 echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/lipschitzness_analysis" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/local_lipschitzness_analysis.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-fi
+run_multiseed_experiment "${OUTROOT}/${COMP2}/lipschitzness_analysis" "summary.json" \
+  "experiment/local_lipschitzness_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --forget-text "$FORGET" \
+  --retain-text "$RETAIN" \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
 
 # ============================================
 # COMPLETION
@@ -592,21 +578,29 @@ echo ""
 echo "  <comparison>/"
 echo "    weight_comparison/      per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv"
 echo "    param_plots/            Layer locality, stable rank, spectral norm PNGs"
-echo "    activation_comparison/ activation_comparison.csv"
-echo "    activation_plots/      Activation norms, diffs PNGs"
-echo "    mlp_attn_analysis/     summary CSV + plots"
-echo "    null_space_analysis/   null_space_results.csv + plots"
-echo "    activation_separation/ separation metrics + plots"
-echo "    activation_covariance/ covariance spectra + plots"
+echo "    activation_comparison/  activation_comparison.csv + _std columns (multi-seed aggregated)"
+echo "    activation_plots/       Activation norms, diffs PNGs"
+echo "    mlp_attn_analysis/      summary CSV + plots"
+echo "    null_space_analysis/    null_space_results.csv + plots (multi-seed aggregated)"
+echo "    activation_separation/  separation metrics + plots (multi-seed aggregated)"
+echo "    activation_covariance/  covariance spectra + plots (multi-seed aggregated)"
 echo "    mlp_nullspace_alignment/ alignment metrics + plots"
-echo "    row_space_projection/  projection metrics + plots"
-echo "    lipschitzness_analysis/  Lipschitz estimates + plots"
+echo "    row_space_projection/   projection metrics + plots (multi-seed aggregated)"
+echo "    lipschitzness_analysis/ Lipschitz estimates + plots (multi-seed aggregated)"
+echo "        └── seed_*/         Individual seed results (for debugging)"
 echo ""
 echo "  <model>/"
-echo "    evals/                 summary.json (MMLU, WMDP, HellaSwag, TruthfulQA)"
-echo "    linear_probes/         probe_results.csv, summary.json + plot"
-echo "    wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot"
-echo "    wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot"
+echo "    evals/                  summary.json (MMLU, WMDP, HellaSwag, TruthfulQA)"
+echo "    linear_probes/          probe_results.csv, summary.json + plot"
+echo "    wmdp_logit_lens/        wmdp_lens_results.csv, summary.json + _std fields (multi-seed)"
+echo "    wmdp_tuned_lens/        wmdp_lens_results.csv, summary.json + _std fields (multi-seed)"
+echo "        └── seed_*/         Individual seed results"
+echo ""
+echo "Statistical Robustness:"
+echo "  • Multi-seed experiments (${SEEDS}) provide error bars for stochastic analyses"
+echo "  • Results include mean ± std across seeds in CSV/JSON files"
+echo "  • Individual seed results preserved under seed_*/ subdirectories"
 echo ""
 echo "Tip: rerun with --force to regenerate all results."
+echo "Tip: set SEEDS=\"42 123 456 789 999\" for more robust statistics."
 echo ""

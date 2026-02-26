@@ -95,6 +95,40 @@ ENABLE_PRETRAIN_COMPARISON=1 ENABLE_CB_COMPARISONS=1 ENABLE_TUNED_LENS=1 ./exper
 
 Already-completed steps are automatically skipped (pass `--force` to rerun).
 
+### Statistical Robustness & Error Bars
+
+The pipeline now includes **multi-seed support** for statistical robustness on stochastic experiments. By default, analyses that depend on random sampling (Steps 3, 5, 7–12) run with 3 seeds and automatically compute error bars:
+
+```bash
+# Default: 3 seeds for robust statistics
+./experiment/pipeline.sh
+
+# Custom seeds for more robust estimates
+SEEDS="42 123 456 789 999" ./experiment/pipeline.sh
+
+# Single seed (legacy behavior)
+SEEDS="42" ./experiment/pipeline.sh
+```
+
+**What gets multi-seed treatment:**
+- **WMDP accuracy** (Step 5): Train/test splits and probe training
+- **Activation analyses** (Steps 3, 8, 9, 11, 12): Text sampling variability
+- **Null space analysis** (Step 7): Weight matrix sampling robustness
+
+**Results structure:**
+```
+outputs/
+  comparison/
+    activation_separation/
+      summary.json              # mean ± std aggregated across seeds
+      separation_metrics.csv    # includes _std columns
+      seed_42/                  # individual seed results (for debugging)
+      seed_123/
+      seed_456/
+```
+
+Parameter comparison (Step 1) remains deterministic and doesn't use multiple seeds since it computes exact differences between model weights.
+
 ---
 
 ### Experimental Pipeline
