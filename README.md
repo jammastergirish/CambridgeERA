@@ -70,11 +70,15 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 ## Experiment
 
 ```bash
-# Run pipeline for the default unlearned model (CB-LAT)
-./experiment/pipeline.sh
-
 # Run pipeline for a specific unlearned model
 UNLEARNED=girishgupta/EleutherAI_deep-ignorance-unfiltered__ga ./experiment/pipeline.sh
+```
+
+You may also want to:
+
+```bash
+# Run pipeline for the default unlearned model (CB-LAT)
+./experiment/pipeline.sh
 
 # Include the pretraining-checkpoint comparison (COMP3)
 ENABLE_PRETRAIN_COMPARISON=1 ./experiment/pipeline.sh
