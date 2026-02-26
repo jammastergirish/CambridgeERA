@@ -399,7 +399,7 @@ However, more likely, you are going to want to sweep through various hyperparame
 You can then [run the following](#evaluating-unlearned-models) which will create `best_unlearning_models.md` to help you work out which unlearned model is best (high MMLU, low WMDP).
 
 ```bash
-uv run python unlearn/analysis/analyze_runs.py
+uv run unlearn/analysis/analyze_runs.py
 ```
 
 Once you've found that model, push it to HuggingFace:
