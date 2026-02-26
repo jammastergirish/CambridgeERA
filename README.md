@@ -370,25 +370,31 @@ outputs/
 
 ## Unlearning
 
+To create an unlearned model, you would use 
+
 ```bash
-# Run a comprehensive hyperparameter sweep across all methods (96 models evaluated)
-# This uses NO_SAVE=1 by default so the 14GB+ checkpoints aren't saved to disk.
-./unlearn/sweep_unlearn.sh
-
-# Run the same sweep in parallel across multiple GPUs (see Multi-GPU below)
-./unlearn/parallel_sweep.sh ./unlearn/sweep_unlearn.sh
-
-# Create all 12 unlearned models with default hyperparameters
-./unlearn/create_all_unlearning_models.sh
-
 # Train a single method with defaults
 ./unlearn/run_unlearn.sh cb_lat
 # -> unlearned_models/EleutherAI_deep-ignorance-unfiltered__cb_lat__ep1_lr1e-05_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7/
 
-
 # Override hyperparameters (automatically encoded into folder name)
 EPOCHS=2 LR=5e-6 ./unlearn/run_unlearn.sh cb_lat
 # -> unlearned_models/EleutherAI_deep-ignorance-unfiltered__cb_lat__ep2_lr5e-06_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7/
+
+# Create all 12 unlearned models with default hyperparameters
+./unlearn/create_all_unlearning_models.sh
+```
+
+However, more likely, you are going to want to sweep through various hyperparameters. This is done by wrapping around the `run_unlearn.sh` script. For example:
+
+```bash
+# Run the same sweep in parallel across multiple GPUs (see Multi-GPU below)
+./unlearn/parallel_sweep.sh ./unlearn/sweep_unlearn.sh
+
+# Run a comprehensive hyperparameter sweep across all methods (96 models evaluated)
+# This uses NO_SAVE=1 by default so the 14GB+ checkpoints aren't saved to disk.
+./unlearn/sweep_unlearn.sh
+```
 
 # Push a finalised model to HuggingFace (skip re-running evals, just train and upload)
 PUSH_TO_HUB=1 NO_EVAL=1 EPOCHS=3 LR=5e-05 BATCH_SIZE=8 RETAIN_WEIGHT=1.0 BETA=0.1 \
