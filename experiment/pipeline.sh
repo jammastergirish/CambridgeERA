@@ -566,6 +566,91 @@ run_multiseed_experiment "${OUTROOT}/${COMP2}/lipschitzness_analysis" "summary.j
   --dtype "$ACTIVATION_DTYPE"
 
 # ============================================
+# STEP 13: Gradient Dynamics Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 13: Gradient Dynamics Analysis"
+echo "=========================================="
+echo "Analyzing gradient flow patterns during simulated unlearning..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+run_multiseed_experiment "${OUTROOT}/${COMP1}/gradient_dynamics" "gradient_analysis_summary.json" \
+  "experiment/gradient_dynamics_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$FILTERED" \
+  --method "ga" \
+  --num-steps 100 \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
+
+echo ""
+echo "Analyzing Comparison 2..."
+run_multiseed_experiment "${OUTROOT}/${COMP2}/gradient_dynamics" "gradient_analysis_summary.json" \
+  "experiment/gradient_dynamics_analysis.py" \
+  --model-a "$BASE" \
+  --model-b "$UNLEARNED" \
+  --method "ga" \
+  --num-steps 100 \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
+
+# ============================================
+# STEP 14: Distance from Initialization Analysis
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 14: Distance from Initialization"
+echo "=========================================="
+echo "Measuring parameter drift from pretrained initialization..."
+
+echo ""
+echo "Analyzing Comparison 1..."
+if step_complete "${OUTROOT}/${COMP1}/distance_from_init" "distance_summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/distance_from_init_analysis.py \
+    --init-model "$BASE" \
+    --target-model "$FILTERED" \
+    --outdir "${OUTROOT}/${COMP1}/distance_from_init" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE"
+fi
+
+echo ""
+echo "Analyzing Comparison 2..."
+if step_complete "${OUTROOT}/${COMP2}/distance_from_init" "distance_summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  uv run experiment/distance_from_init_analysis.py \
+    --init-model "$BASE" \
+    --target-model "$UNLEARNED" \
+    --outdir "${OUTROOT}/${COMP2}/distance_from_init" \
+    --device "$PARAM_DEVICE" \
+    --dtype "$PARAM_DTYPE"
+fi
+
+# ============================================
+# STEP 15: Input Distribution Sensitivity
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 15: Input Distribution Sensitivity"
+echo "=========================================="
+echo "Testing robustness across different data distributions..."
+
+echo ""
+echo "Analyzing Comparison 2 (Base vs Unlearned)..."
+run_multiseed_experiment "${OUTROOT}/${COMP2}/distribution_sensitivity" "distribution_analysis_summary.json" \
+  "experiment/input_distribution_sensitivity.py" \
+  --base-model "$BASE" \
+  --unlearned-model "$UNLEARNED" \
+  --n-samples 300 \
+  --device "$ACTIVATION_DEVICE" \
+  --dtype "$ACTIVATION_DTYPE"
+
+# ============================================
 # COMPLETION
 # ============================================
 echo ""
@@ -587,6 +672,9 @@ echo "    activation_covariance/  covariance spectra + plots (multi-seed aggrega
 echo "    mlp_nullspace_alignment/ alignment metrics + plots"
 echo "    row_space_projection/   projection metrics + plots (multi-seed aggregated)"
 echo "    lipschitzness_analysis/ Lipschitz estimates + plots (multi-seed aggregated)"
+echo "    gradient_dynamics/      gradient flow patterns + plots"
+echo "    distance_from_init/     parameter drift metrics + plots"
+echo "    distribution_sensitivity/ robustness across data distributions + plots"
 echo "        └── seed_*/         Individual seed results (for debugging)"
 echo ""
 echo "  <model>/"

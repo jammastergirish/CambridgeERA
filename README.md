@@ -356,6 +356,56 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 ---
 
+#### Step 13: Gradient Dynamics Analysis (`experiment/gradient_dynamics_analysis.py`)
+
+**Question:** *Are gradients stable during unlearning training?*
+
+Inspired by subliminal learning research, this tracks per-batch gradient norms across layers during simulated unlearning to reveal optimization stability patterns. Computes gradients for different unlearning methods without actually updating weights.
+
+| Metric | What it captures |
+|---|---|
+| **Per-layer gradient norms** | L2 norm of gradients for each component (qkv, proj, mlp_expand, mlp_contract) |
+| **Total gradient norm** | Overall gradient magnitude across all parameters |
+| **Gradient stability** | Coefficient of variation (std/mean) of gradient norms over training steps |
+| **Exploding/vanishing detection** | Count of steps with extremely large (>10) or small (<1e-6) gradient norms |
+
+**Why this matters:** Different unlearning methods and hyperparameters show characteristic gradient signatures. Robust methods (CB-LAT, filtering) produce controlled, stable gradients while brittle methods (simple GA) show large, variable, potentially unstable patterns. This provides an early warning system for optimization instability that may indicate brittleness under adversarial fine-tuning.
+
+---
+
+#### Step 14: Distance from Initialization Analysis (`experiment/distance_from_init_analysis.py`)
+
+**Question:** *How far did the model move from its pretrained initialization?*
+
+Measures parameter drift from the original pretrained weights using multiple distance metrics. Unlike Step 1's model-to-model comparison, this tracks drift from the shared starting point to identify "Goldilocks zones" for parameter updates.
+
+| Metric | What it captures |
+|---|---|
+| **Total L2 distance** | $\sqrt{\sum_{\theta} \|\theta_{\text{final}} - \theta_{\text{init}}\|^2}$ across all parameters |
+| **Per-component distances** | Distance broken down by attention vs MLP components and layers |
+| **Cosine similarity preservation** | How much each parameter matrix preserved its original direction |
+| **Relative displacement** | Distance normalized by original parameter norms |
+
+**Why this matters:** Based on subliminal learning findings, there may be optimal distances from initialization that balance effective unlearning with tamper-resistance. Models that move too little may not effectively unlearn; models that move too far may become unstable or easier to reverse via fine-tuning attacks. This analysis quantifies the "alignment basin" concept for unlearning.
+
+---
+
+#### Step 15: Input Distribution Sensitivity Analysis (`experiment/input_distribution_sensitivity.py`)
+
+**Question:** *Does unlearning effectiveness vary across different data distributions?*
+
+Tests robustness by evaluating unlearning performance across multiple forget/retain data distributions, including synthetic variants and adversarial modifications.
+
+| Distribution Type | Purpose |
+|---|---|
+| **Forget variants** | Random tokens, shuffled WMDP, Gaussian embeddings, adversarial prompts |
+| **Retain variants** | Original WikiText, domain shifts, length changes, paraphrasing |
+| **Effectiveness metrics** | Perplexity ratios, unlearning success rates across combinations |
+
+**Why this matters:** Many unlearning methods may work on clean synthetic benchmarks but fail when deployed on real-world data with different distributional properties. This analysis exposes brittleness and identifies methods that are robust across diverse input types — critical for practical deployment.
+
+---
+
 ### The Big Picture
 
 The diagnostics answer an escalating series of questions:
@@ -369,6 +419,9 @@ The diagnostics answer an escalating series of questions:
 | **Function** | Do activations actually change on target text? | 8–9 |
 | **Precision** | Is the change *targeted* at forget-domain inputs? | 11 |
 | **Stability** | Is the new behavior robust or fragile? | 12 |
+| **Training Dynamics** | Are gradients stable during unlearning? | 13 |
+| **Parameter Drift** | How far did the model move from initialization? | 14 |
+| **Input Robustness** | Does effectiveness vary across data distributions? | 15 |
 
 The thesis prediction is that unlearning methods (CB-LAT) will show: small magnitude, attention-localized, low-rank, nullspace-aligned, minimal activation change, low selectivity, and increased roughness — the full mechanistic signature of a brittle intervention. While filtering will show the opposite across every dimension.
 
@@ -380,25 +433,101 @@ All results are saved under a single root (default `outputs/`):
 
 ```
 outputs/
-  <comparison>/                        # Steps 1–4, 7–12: per model-pair
+  <comparison>/                        # Steps 1–4, 7–15: per model-pair
     weight_comparison/     per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv
     param_plots/           Layer locality, stable rank, rank comparison PNGs
-    activation_comparison/ activation_comparison.csv
+    activation_comparison/ activation_comparison.csv + _std columns (multi-seed aggregated)
     activation_plots/      Activation norms, activation diffs PNGs
     mlp_attn_analysis/     summary CSV + plots
-    null_space_analysis/   null_space_results.csv + plots
-    activation_separation/ separation metrics + plots
-    activation_covariance/ covariance spectra + plots
+    null_space_analysis/   null_space_results.csv + plots (multi-seed aggregated)
+    activation_separation/ separation metrics + plots (multi-seed aggregated)
+    activation_covariance/ covariance spectra + plots (multi-seed aggregated)
     mlp_nullspace/         alignment metrics + plots
-    row_space_projection/  projection metrics + plots
-    lipschitzness/         Lipschitz estimates + plots
+    row_space_projection/  projection metrics + plots (multi-seed aggregated)
+    lipschitzness/         Lipschitz estimates + plots (multi-seed aggregated)
+    gradient_dynamics/     gradient flow patterns + plots (multi-seed aggregated)
+    distance_from_init/    parameter drift metrics + plots
+    distribution_sensitivity/ robustness across data distributions + plots (multi-seed aggregated)
+        └── seed_*/        Individual seed results (for debugging)
 
   <model>/                             # Step 5: per individual model
-    wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot
-    wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot
+    wmdp_logit_lens/       wmdp_lens_results.csv, summary.json + plot + _std fields (multi-seed)
+    wmdp_tuned_lens/       wmdp_lens_results.csv, summary.json + plot + _std fields (multi-seed)
+        └── seed_*/        Individual seed results
 ```
 
 > **Tip:** The pipeline automatically skips steps whose output already exists. Use `./experiment/pipeline.sh --force` to regenerate everything.
+
+---
+
+### Meta-Analysis Tools (Beyond Pipeline Steps 1-15)
+
+The main pipeline (Steps 1-15) analyzes **individual model comparisons** (Base→Filtered, Base→Unlearned). Beyond this, the repository includes **meta-analysis tools** that analyze **collections of experimental results** from hyperparameter sweeps:
+
+#### Factor Decomposition Analysis (`experiment/factor_decomposition_analysis.py`)
+
+**Question:** *Which experimental factors actually drive unlearning effectiveness?*
+
+Decomposes variance in unlearning outcomes (WMDP accuracy, MMLU retention) into quantified contributions from different experimental factors using statistical methods (linear regression, random forests, ANOVA).
+
+```bash
+# Analyze which factors drive unlearning success
+uv run experiment/factor_decomposition_analysis.py \
+  --results-csv unlearn/analysis/sweep_results.csv \
+  --target-cols wmdp_accuracy mmlu_accuracy \
+  --outdir factor_analysis_results
+
+# Example output: Method explains 45% of variance, LR explains 23%, architecture explains 15%
+```
+
+**Why this matters:** Inspired by subliminal learning findings that animal identity explained 68.1% of variance while geometric factors explained 0%, this analysis replaces qualitative intuitions with quantified factor importance. It reveals which aspects of unlearning methods actually matter vs. which are irrelevant, enabling researchers to focus effort productively.
+
+#### Goldilocks Curve Analysis (`experiment/goldilocks_curve_analysis.py`)
+
+**Question:** *What are the optimal hyperparameter values and trade-offs?*
+
+Creates systematic visualizations of hyperparameter-performance relationships to identify optimal "Goldilocks zones" for unlearning effectiveness.
+
+```bash
+# Find optimal hyperparameter values and visualize trade-offs
+uv run experiment/goldilocks_curve_analysis.py \
+  --results-csv sweep_results.csv \
+  --hyperparameter-cols learning_rate epochs batch_size \
+  --target-cols wmdp_accuracy mmlu_accuracy \
+  --outdir goldilocks_analysis
+
+# Generates 1D curves, 2D Pareto frontiers, 3D surface plots
+```
+
+**Why this matters:** Inspired by subliminal learning's inverted-U curves showing peak performance at specific distances from initialization, this replaces trial-and-error hyperparameter selection with systematic visualization of trade-off spaces. Reveals optimal learning rates, identifies WMDP vs MMLU Pareto frontiers, and guides principled hyperparameter choices.
+
+#### Convenient Analysis Runner (`experiment/run_post_analysis.py`)
+
+Auto-detects experimental factors from result CSVs and runs both analyses:
+
+```bash
+# Run both analyses with auto-detection
+uv run experiment/run_post_analysis.py \
+  --mode both \
+  --results-csv sweep_results.csv \
+  --outdir post_analysis_results
+
+# Or run individual analyses
+uv run experiment/run_post_analysis.py --mode factor --results-csv results.csv
+uv run experiment/run_post_analysis.py --mode goldilocks --results-csv results.csv
+```
+
+**Key distinction from Pipeline Steps 1-15:**
+- **Pipeline Steps**: Analyze individual model pairs → "How did this specific unlearning method change the model?"
+- **Meta-analysis tools**: Analyze sweep results across many methods/hyperparameters → "What patterns explain which methods work best?"
+
+**Usage workflow:**
+1. Complete hyperparameter sweeps using `./unlearn/sweep_unlearn.sh`
+2. Run `uv run unlearn/analysis/analyze_runs.py` to collect sweep results into CSV
+3. Apply meta-analysis to understand patterns across all experiments
+4. Use insights to design better methods and focused follow-up experiments
+
+**Why not Steps 16-17?** These tools require data from **multiple pipeline runs** with different hyperparameters, not data from a single pipeline run. They're **meta-experimental** — they analyze the experiments themselves to extract higher-level insights about what makes unlearning methods effective.
 
 ---
 
