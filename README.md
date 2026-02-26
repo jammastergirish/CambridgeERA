@@ -396,7 +396,15 @@ However, more likely, you are going to want to sweep through various hyperparame
 ./unlearn/sweep_unlearn.sh
 ```
 
-# Push a finalised model to HuggingFace (skip re-running evals, just train and upload)
+You can then run the following which will create `best_unlearning_models.md` to help you work out which unlearned model is best (high MMLU, low WMDP).
+
+```bash
+uv run python unlearn/analysis/analyze_runs.py
+```
+
+Once you've found that model, push it to HuggingFace:
+
+```bash
 PUSH_TO_HUB=1 NO_EVAL=1 EPOCHS=3 LR=5e-05 BATCH_SIZE=8 RETAIN_WEIGHT=1.0 BETA=0.1 \
     ./unlearn/run_unlearn.sh npo
 ```
