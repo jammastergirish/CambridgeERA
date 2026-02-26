@@ -396,7 +396,7 @@ However, more likely, you are going to want to sweep through various hyperparame
 ./unlearn/sweep_unlearn.sh
 ```
 
-You can then run the following which will create `best_unlearning_models.md` to help you work out which unlearned model is best (high MMLU, low WMDP).
+You can then [run the following](#evaluating-unlearned-models) which will create `best_unlearning_models.md` to help you work out which unlearned model is best (high MMLU, low WMDP).
 
 ```bash
 uv run python unlearn/analysis/analyze_runs.py
