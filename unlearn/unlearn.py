@@ -3,7 +3,7 @@
 # dependencies = [
 #     "torch",
 #     "transformers",
-#     "accelerate",
+#     "accelerate>=0.27",
 #     "tqdm",
 #     "wandb",
 # ]
@@ -40,7 +40,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 
 # ---------------------------------------------------------------------------
 # Reuse device / dtype helpers from utils.py if available, else inline
@@ -1286,131 +1286,95 @@ def main():
 
         return
 
-    # ---- Optimizer & LR Scheduler ----
-    # AdamW is the standard choice for fine-tuning transformers.
-    # CosineAnnealingLR decays the learning rate from `lr` to ~0 over training.
-    optimizer = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad], lr=args.lr
+    # ---- Train via HF Trainer (mixed-precision bf16) ----
+    # The Trainer uses mixed precision when bf16=True:
+    #   - Forward pass: bf16 (fast)
+    #   - Master weight copy + Adam m/v states: fp32 (precise)
+    # This is the key improvement over our old custom loop, which put
+    # everything in bf16 (including Adam buffers), losing gradient precision.
+    #
+    # The Trainer also handles: grad accumulation, grad clipping,
+    # cosine LR scheduler, WandB step logging, and multi-GPU via Accelerate.
+    print(f"\n[unlearn] Starting training via HF Trainer: {args.epochs} epoch(s), {n_steps} steps/epoch")
+    print(f"[unlearn] Mixed-precision bf16: ON (fp32 master weights + fp32 Adam states)\n")
+
+    # trainer.py lives alongside unlearn.py in the unlearn/ directory.
+    # Since unlearn.py is run as a uv --script (not an installed package),
+    # we add its own directory to sys.path so `import trainer` resolves.
+    _unlearn_dir = os.path.dirname(os.path.abspath(__file__))
+    if _unlearn_dir not in sys.path:
+        sys.path.insert(0, _unlearn_dir)
+    from trainer import UnlearningTrainer, UnlearningDataset, UnlearningCollator
+
+    # Determine whether we can actually use bf16
+    # (bf16 requires CUDA; fall back to fp32 on CPU/MPS)
+    use_bf16 = (pt_dtype == torch.bfloat16) and torch.cuda.is_available()
+    use_fp16 = False
+    if pt_dtype == torch.bfloat16 and not torch.cuda.is_available():
+        print("[unlearn] WARNING: bf16 requested but CUDA not available — running in fp32")
+
+    training_args = TrainingArguments(
+        output_dir=args.outdir,
+        num_train_epochs=args.epochs,
+        # batch_size=1 here because make_batches() already built the real batches;
+        # each dataset item IS a full batch of size args.batch_size.
+        per_device_train_batch_size=1,
+        learning_rate=args.lr,
+        lr_scheduler_type="cosine",
+        max_grad_norm=args.grad_clip if args.grad_clip > 0 else 0.0,
+        gradient_accumulation_steps=args.grad_accum_steps,
+        bf16=use_bf16,
+        fp16=use_fp16,
+        logging_strategy="steps",
+        logging_steps=1,
+        # WandB is reported via our existing init_wandb() call above;
+        # set report_to="none" so the Trainer doesn't try to re-init it,
+        # but we override log() below to forward step metrics ourselves.
+        report_to="none",
+        save_strategy="no",   # we do our own save after training
+        eval_strategy="no",
+        dataloader_num_workers=0,
+        remove_unused_columns=False,  # our batch dicts have non-standard keys
+        seed=args.seed,
+        disable_tqdm=False,
     )
 
-    total_steps = n_steps * args.epochs
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+    dataset = UnlearningDataset(forget_batches, retain_batches)
+    trainer = UnlearningTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset,
+        data_collator=UnlearningCollator(),
+        unlearn_args=args,
+        ref_model=ref_model,
+        random_targets=random_targets,
+        retain_act_cache=retain_act_cache,
+        layer_ids=layer_ids,
+    )
 
-    # ---- Training ----
-    print(f"\n[unlearn] Starting training: {args.epochs} epoch(s), {n_steps} steps/epoch\n")
-    global_step = 0
+    # Wire up pretrained_params for wt_dist_reg (set before train() is called)
+    if args.method == "wt_dist_reg":
+        trainer.set_pretrained_params(pretrained_params)
 
-    for epoch in range(args.epochs):
-        epoch_loss = 0.0
-        pbar = tqdm(range(n_steps), desc=f"Epoch {epoch+1}/{args.epochs}", unit="step")
+    trainer.train()
 
-        for step_idx in pbar:
-            fb = forget_batches[step_idx]  # current forget mini-batch
-            rb = retain_batches[step_idx]  # current retain mini-batch
+    # Forward the Trainer's logged metrics to WandB manually
+    # (since we used report_to="none" to let our init_wandb() own the run)
+    try:
+        import wandb
+        if wandb.run is not None and trainer.state.log_history:
+            for log_entry in trainer.state.log_history:
+                step = log_entry.get("step", None)
+                metrics = {f"train/{k}": v for k, v in log_entry.items()
+                           if k not in ("step", "epoch", "total_flos")}
+                if metrics and step is not None:
+                    wandb.log(metrics, step=step)
+    except Exception:
+        pass
 
-            # Zero grad at accumulation boundaries (or every step if no accumulation)
-            if args.grad_accum_steps > 1:
-                if step_idx % args.grad_accum_steps == 0:
-                    optimizer.zero_grad()
-            else:
-                optimizer.zero_grad()
-
-            # ---- Dispatch to the selected unlearning method ----
-            # Each method returns a single scalar loss.  The loss encodes
-            # the unlearning objective (e.g., "increase forget NLL while
-            # decreasing retain NLL").  The optimizer then updates the
-            # model weights to minimise this loss.
-            if args.method == "ga_simple":
-                loss = ga_simple_loss(model, fb)
-            elif args.method == "ga":
-                loss = ga_loss(model, fb, rb, args.retain_weight)
-            elif args.method == "grad_diff":
-                loss = grad_diff_loss(model, fb, rb, args.forget_weight)
-            elif args.method == "dpo":
-                loss = dpo_loss(model, ref_model, fb, rb, args.beta)
-            elif args.method == "npo":
-                loss = npo_loss(model, ref_model, fb, rb, args.beta, args.retain_weight)
-            elif args.method == "simnpo":
-                loss = simnpo_loss(model, fb, rb, args.beta, args.retain_weight)
-            elif args.method == "rmu":
-                loss = rmu_loss(
-                    model, fb, rb, layer_ids,
-                    random_targets, retain_act_cache[step_idx % len(retain_act_cache)],
-                    args.steering_coeff, args.alpha,
-                )
-            elif args.method == "cb":
-                loss = cb_loss(
-                    model, fb, rb, layer_ids,
-                    random_targets, retain_act_cache[step_idx % len(retain_act_cache)],
-                    args.steering_coeff, args.alpha,
-                )
-            elif args.method == "lat":
-                loss = lat_loss(
-                    model, fb, rb, layer_ids,
-                    args.lat_eps, args.lat_steps, args.retain_weight,
-                )
-            elif args.method == "cb_lat":
-                loss = cb_lat_loss(
-                    model, fb, rb, layer_ids,
-                    random_targets, retain_act_cache[step_idx % len(retain_act_cache)],
-                    args.steering_coeff, args.alpha,
-                    args.lat_eps, args.lat_steps,
-                )
-            elif args.method == "wt_dist":
-                loss = wt_dist_loss(model, rb)
-            elif args.method == "wt_dist_reg":
-                loss = wt_dist_reg_loss(
-                    model, rb, pretrained_params, args.wt_reg_lambda,
-                )
-            else:
-                raise ValueError(f"Unknown method: {args.method}")
-
-            # Handle gradient accumulation if enabled
-            if args.grad_accum_steps > 1:
-                # Scale loss for gradient accumulation
-                loss = loss / args.grad_accum_steps
-                loss.backward()
-
-                # Step optimizer only at accumulation boundaries or last step
-                if (step_idx + 1) % args.grad_accum_steps == 0 or step_idx == n_steps - 1:
-                    if args.grad_clip > 0:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip)
-                    optimizer.step()
-                    scheduler.step()
-
-                epoch_loss += loss.item() * args.grad_accum_steps  # Unscale for logging
-            else:
-                # Standard training without accumulation
-                loss.backward()
-                if args.grad_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip)
-                optimizer.step()
-                scheduler.step()
-
-                epoch_loss += loss.item()
-            global_step += 1
-            avg = epoch_loss / (step_idx + 1)
-            # Display unscaled loss for consistency
-            display_loss = loss.item() * args.grad_accum_steps if args.grad_accum_steps > 1 else loss.item()
-            pbar.set_postfix(loss=f"{display_loss:.4f}", avg=f"{avg:.4f}", lr=f"{scheduler.get_last_lr()[0]:.2e}")
-            try:
-                import wandb
-                if wandb.run is not None:
-                    wandb.log({"train/loss": display_loss, "train/avg_loss": avg,
-                               "train/lr": scheduler.get_last_lr()[0], "global_step": global_step})
-            except Exception:
-                pass
-
-            # Periodic validation
-            if args.eval_interval > 0 and global_step % args.eval_interval == 0:
-                run_validation(model, eval_forget_batches, eval_retain_batches, epoch, global_step)
-
-        avg_epoch = epoch_loss / max(n_steps, 1)
-        print(f"  → epoch {epoch+1} done.  avg_loss={avg_epoch:.4f}\n")
-
-    # ---- Evaluation ----
+    # ---- Post-training NLL evaluation on held-out split ----
     if eval_forget_batches and eval_retain_batches:
-        print("[unlearn] Running evaluation on held-out split...")
+        print("[unlearn] Running NLL evaluation on held-out split...")
         model.eval()
         with torch.no_grad():
             forget_nll = sum(nll_loss(model, b).item() for b in eval_forget_batches) / len(eval_forget_batches)
