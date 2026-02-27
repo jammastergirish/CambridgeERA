@@ -21,6 +21,7 @@ Supported methods:
   rmu        — Representation Misdirection for Unlearning
   cb         — Circuit Breakers (representation rerouting via cosine similarity)
   lat        — Latent Adversarial Training (adversarial perturbations in hidden states)
+  tar        — Task Arithmetic Removal (subtract forget fine-tuning direction)
   wt_dist    — Weight Distortion (Gaussian noise + retain fine-tuning)
   wt_dist_reg — Weight Distance Regularization (maximize L2 distance from pretrained)
 
@@ -799,6 +800,82 @@ def wt_dist_reg_loss(
     return retain_nll - reg_lambda * l2_dist
 
 
+# ---- Task Arithmetic Removal (TAR) --------------------------------------
+# TAR uses task arithmetic: θ_unlearned = θ_base - α(θ_forget_ft - θ_base)
+# where θ_forget_ft is obtained by fine-tuning the base model on forget data.
+# This is a one-time operation, not iterative training.
+
+def apply_tar(model, forget_batches, alpha, lr, epochs, device):
+    """
+    Apply Task Arithmetic Removal to the model.
+
+    Steps:
+    1. Cache the original model weights (θ_base)
+    2. Fine-tune on forget data to get θ_forget_ft
+    3. Compute task vector: τ = θ_forget_ft - θ_base
+    4. Apply: θ_unlearned = θ_base - α * τ
+
+    Args:
+        model: The base model to modify in-place
+        forget_batches: Batches of forget data for fine-tuning
+        alpha: Scaling factor for task vector subtraction
+        lr: Learning rate for forget fine-tuning
+        epochs: Number of epochs for forget fine-tuning
+        device: Device for computation
+    """
+    print(f"[TAR] Starting Task Arithmetic Removal (alpha={alpha})")
+
+    # Step 1: Cache original weights
+    print("[TAR] Caching original model weights...")
+    original_weights = {}
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            original_weights[name] = param.data.clone()
+
+    # Step 2: Fine-tune on forget data
+    print(f"[TAR] Fine-tuning on forget data ({epochs} epochs, lr={lr})...")
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad], lr=lr
+    )
+
+    n_steps = len(forget_batches)
+    total_steps = n_steps * epochs
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+
+    model.train()
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        pbar = tqdm(forget_batches, desc=f"TAR forget-FT epoch {epoch+1}/{epochs}")
+        for batch in pbar:
+            optimizer.zero_grad()
+            loss = nll_loss(model, batch)
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            epoch_loss += loss.item()
+            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+
+        avg_loss = epoch_loss / len(forget_batches)
+        print(f"[TAR] Epoch {epoch+1}/{epochs} avg loss: {avg_loss:.4f}")
+
+    # Step 3: Compute task vector (τ = θ_forget_ft - θ_base)
+    print("[TAR] Computing task vector...")
+    task_vectors = {}
+    for name, param in model.named_parameters():
+        if param.requires_grad and name in original_weights:
+            task_vectors[name] = param.data - original_weights[name]
+
+    # Step 4: Apply TAR update (θ_unlearned = θ_base - α * τ)
+    print(f"[TAR] Applying task arithmetic (alpha={alpha})...")
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if param.requires_grad and name in task_vectors:
+                param.data = original_weights[name] - alpha * task_vectors[name]
+
+    print("[TAR] Task Arithmetic Removal completed")
+
+
 # ===================================================================
 # Validation function
 # ===================================================================
@@ -854,6 +931,7 @@ METHOD_PARAMS: dict[str, list[str]] = {
     "cb":           ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id"],
     "lat":          ["epochs", "lr", "batch_size", "lat_eps", "lat_steps", "retain_weight", "layer_id"],
     "cb_lat":       ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "lat_eps", "lat_steps", "layer_id"],
+    "tar":          ["tar_alpha", "tar_lr", "tar_epochs"],
     "wt_dist":      ["epochs", "lr", "batch_size", "wt_noise_std"],
     "wt_dist_reg":  ["epochs", "lr", "batch_size", "wt_reg_lambda"],
 }
@@ -871,6 +949,9 @@ PARAM_ABBREV: dict[str, str] = {
     "layer_id": "ly",
     "lat_eps": "le",
     "lat_steps": "ls",
+    "tar_alpha": "ta",
+    "tar_lr": "tlr",
+    "tar_epochs": "tep",
     "wt_noise_std": "wn",
     "wt_reg_lambda": "wr",
 }
@@ -913,7 +994,7 @@ def main():
     parser.add_argument(
         "--method",
         required=True,
-        choices=["ga_simple", "ga", "grad_diff", "dpo", "npo", "simnpo", "rmu", "cb", "lat", "cb_lat", "wt_dist", "wt_dist_reg"],
+        choices=["ga_simple", "ga", "grad_diff", "dpo", "npo", "simnpo", "rmu", "cb", "lat", "cb_lat", "tar", "wt_dist", "wt_dist_reg"],
         help="Unlearning method",
     )
     parser.add_argument("--forget-data", default="data/forget.txt")
@@ -941,6 +1022,12 @@ def main():
                         help="Number of adversarial inner steps for LAT")
     parser.add_argument("--retain-weight", type=float, default=1.0,
                         help="Multiplier for retain loss in ga/npo/simnpo/lat (higher = more stable, less forgetting)")
+    parser.add_argument("--tar-alpha", type=float, default=1.0,
+                        help="Scaling factor for TAR task vector subtraction")
+    parser.add_argument("--tar-lr", type=float, default=1e-5,
+                        help="Learning rate for TAR forget fine-tuning phase")
+    parser.add_argument("--tar-epochs", type=int, default=1,
+                        help="Number of epochs for TAR forget fine-tuning phase")
     parser.add_argument("--wt-noise-std", type=float, default=0.02,
                         help="Std of Gaussian noise for Weight Distortion (wt_dist)")
     parser.add_argument("--wt-reg-lambda", type=float, default=0.1,
@@ -1168,6 +1255,36 @@ def main():
         for name, param in model.named_parameters():
             if param.requires_grad:
                 pretrained_params[name] = param.data.clone()
+
+    # ---- Task Arithmetic Removal (TAR) ----
+    # TAR is a one-time operation, not iterative training
+    if args.method == "tar":
+        apply_tar(model, forget_batches, args.tar_alpha, args.tar_lr, args.tar_epochs, device)
+
+        # After TAR is complete, we're done - no need for further training
+        print("[unlearn] TAR completed. Skipping iterative training phase.")
+
+        # Run final validation if eval data is available
+        if eval_forget_batches and eval_retain_batches:
+            final_metrics = run_validation(model, eval_forget_batches, eval_retain_batches, 0, 0)
+            print(f"[FINAL] TAR metrics: {final_metrics}")
+
+        # Save model and exit early
+        model_out_path = Path(args.outdir) / "pytorch_model.bin"
+        model_out_path.parent.mkdir(parents=True, exist_ok=True)
+        if not args.no_save:
+            model.save_pretrained(args.outdir)
+            tokenizer.save_pretrained(args.outdir)
+            print(f"[unlearn] TAR model saved to: {args.outdir}")
+
+        # Run evaluation if needed
+        if not args.no_eval:
+            print("[eval] Running final evaluation...")
+            import subprocess
+            eval_cmd = f"uv run unlearn/eval.py --model {args.outdir} --device {device} --dtype {args.dtype}"
+            subprocess.run(eval_cmd.split(), check=True)
+
+        return
 
     # ---- Optimizer & LR Scheduler ----
     # AdamW is the standard choice for fine-tuning transformers.

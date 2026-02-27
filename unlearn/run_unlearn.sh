@@ -11,18 +11,19 @@
 #
 # Available methods:
 #   ga_simple, ga, grad_diff, dpo, npo, simnpo, rmu, cb, lat, cb_lat,
-#   wt_dist, wt_dist_reg
+#   tar, wt_dist, wt_dist_reg
 #
 # Environment overrides:
 #   LR, EPOCHS, BATCH_SIZE, MAX_LENGTH, BETA, ALPHA, STEERING_COEFF,
 #   LAYER_ID, FORGET_WEIGHT, RETAIN_WEIGHT, LAT_EPS, LAT_STEPS,
-#   WT_NOISE_STD, WT_REG_LAMBDA, EVAL_SPLIT, PUSH_TO_HUB, NO_SAVE, NO_EVAL
+#   TAR_ALPHA, TAR_LR, TAR_EPOCHS, WT_NOISE_STD, WT_REG_LAMBDA,
+#   EVAL_SPLIT, PUSH_TO_HUB, NO_SAVE, NO_EVAL
 #
 # For parallel multi-GPU sweeps, use parallel_sweep.sh instead of calling
 # this script directly from a sweep loop.
 set -euo pipefail
 
-METHOD="${1:?Usage: $0 <ga_simple|ga|grad_diff|dpo|npo|simnpo|rmu|cb|lat|cb_lat|wt_dist|wt_dist_reg>}"
+METHOD="${1:?Usage: $0 <ga_simple|ga|grad_diff|dpo|npo|simnpo|rmu|cb|lat|cb_lat|tar|wt_dist|wt_dist_reg>}"
 BASE="${BASE:-EleutherAI/deep-ignorance-unfiltered}"
 DEVICE="${DEVICE:-auto}"
 DTYPE="${DTYPE:-auto}"
@@ -49,6 +50,9 @@ if uv run --script unlearn/unlearn.py \
   ${RETAIN_WEIGHT:+--retain-weight "$RETAIN_WEIGHT"} \
   ${LAT_EPS:+--lat-eps "$LAT_EPS"} \
   ${LAT_STEPS:+--lat-steps "$LAT_STEPS"} \
+  ${TAR_ALPHA:+--tar-alpha "$TAR_ALPHA"} \
+  ${TAR_LR:+--tar-lr "$TAR_LR"} \
+  ${TAR_EPOCHS:+--tar-epochs "$TAR_EPOCHS"} \
   ${WT_NOISE_STD:+--wt-noise-std "$WT_NOISE_STD"} \
   ${WT_REG_LAMBDA:+--wt-reg-lambda "$WT_REG_LAMBDA"} \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
@@ -80,6 +84,9 @@ uv run --script unlearn/unlearn.py \
   ${RETAIN_WEIGHT:+--retain-weight "$RETAIN_WEIGHT"} \
   ${LAT_EPS:+--lat-eps "$LAT_EPS"} \
   ${LAT_STEPS:+--lat-steps "$LAT_STEPS"} \
+  ${TAR_ALPHA:+--tar-alpha "$TAR_ALPHA"} \
+  ${TAR_LR:+--tar-lr "$TAR_LR"} \
+  ${TAR_EPOCHS:+--tar-epochs "$TAR_EPOCHS"} \
   ${WT_NOISE_STD:+--wt-noise-std "$WT_NOISE_STD"} \
   ${WT_REG_LAMBDA:+--wt-reg-lambda "$WT_REG_LAMBDA"} \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \

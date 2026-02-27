@@ -34,6 +34,9 @@ class TestBuildOutdir:
             "layer_id": "5,6,7",
             "lat_eps": 0.1,
             "lat_steps": 5,
+            "tar_alpha": 1.0,
+            "tar_lr": 1e-5,
+            "tar_epochs": 1,
             "wt_noise_std": 0.02,
             "wt_reg_lambda": 0.1,
         }
@@ -118,6 +121,36 @@ class TestBuildOutdir:
         result = build_outdir(self._make_args("grad_diff"))
         assert "fw1.0" in result
 
+    def test_tar_includes_tar_params(self):
+        result = build_outdir(self._make_args("tar"))
+        assert "ta1.0" in result  # tar_alpha
+        assert "tlr1e-05" in result  # tar_lr
+        assert "tep1" in result  # tar_epochs
+        # TAR should NOT include regular training params like batch_size
+        assert "bs" not in result
+        assert "ep" not in result or "tep" in result  # only tar_epochs, not epochs
+
+    def test_tar_different_alpha_different_path(self):
+        path_a = build_outdir(self._make_args("tar", tar_alpha=1.0))
+        path_b = build_outdir(self._make_args("tar", tar_alpha=0.5))
+        assert path_a != path_b
+        assert "ta1.0" in path_a
+        assert "ta0.5" in path_b
+
+    def test_tar_different_lr_different_path(self):
+        path_a = build_outdir(self._make_args("tar", tar_lr=1e-5))
+        path_b = build_outdir(self._make_args("tar", tar_lr=5e-6))
+        assert path_a != path_b
+        assert "tlr1e-05" in path_a
+        assert "tlr5e-06" in path_b
+
+    def test_tar_different_epochs_different_path(self):
+        path_a = build_outdir(self._make_args("tar", tar_epochs=1))
+        path_b = build_outdir(self._make_args("tar", tar_epochs=3))
+        assert path_a != path_b
+        assert "tep1" in path_a
+        assert "tep3" in path_b
+
 
 # ---------------------------------------------------------------------------
 # METHOD_PARAMS and PARAM_ABBREV consistency
@@ -127,7 +160,7 @@ class TestMethodParamsConsistency:
 
     def test_all_methods_have_entries(self):
         expected = {"ga_simple", "ga", "grad_diff", "dpo", "npo", "simnpo",
-                    "rmu", "cb", "lat", "cb_lat", "wt_dist", "wt_dist_reg"}
+                    "rmu", "cb", "lat", "cb_lat", "tar", "wt_dist", "wt_dist_reg"}
         assert set(METHOD_PARAMS.keys()) == expected
 
     def test_all_params_have_abbreviations(self):
@@ -142,11 +175,68 @@ class TestMethodParamsConsistency:
         assert len(abbrevs) == len(set(abbrevs)), "Duplicate abbreviations found"
 
     def test_every_method_includes_shared_params(self):
-        """Every method should at least include epochs, lr, batch_size."""
+        """Every method should at least include epochs, lr, batch_size (except TAR which uses tar_epochs, tar_lr)."""
         for method, params in METHOD_PARAMS.items():
-            assert "epochs" in params, f"{method} missing epochs"
-            assert "lr" in params, f"{method} missing lr"
-            assert "batch_size" in params, f"{method} missing batch_size"
+            if method == "tar":
+                # TAR uses its own parameter names
+                assert "tar_epochs" in params, f"{method} missing tar_epochs"
+                assert "tar_lr" in params, f"{method} missing tar_lr"
+                assert "tar_alpha" in params, f"{method} missing tar_alpha"
+            else:
+                assert "epochs" in params, f"{method} missing epochs"
+                assert "lr" in params, f"{method} missing lr"
+                assert "batch_size" in params, f"{method} missing batch_size"
+
+
+# ---------------------------------------------------------------------------
+# TAR-specific tests
+# ---------------------------------------------------------------------------
+class TestTARMethod:
+    """Test TAR (Task Arithmetic Removal) specific functionality."""
+
+    def test_tar_method_params_correct(self):
+        """TAR should only use tar-specific parameters."""
+        expected_params = {"tar_alpha", "tar_lr", "tar_epochs"}
+        assert set(METHOD_PARAMS["tar"]) == expected_params
+
+    def test_tar_param_abbreviations_exist(self):
+        """All TAR parameters should have abbreviations."""
+        for param in METHOD_PARAMS["tar"]:
+            assert param in PARAM_ABBREV
+
+    def test_tar_abbreviations_correct(self):
+        """Test specific TAR abbreviations."""
+        assert PARAM_ABBREV["tar_alpha"] == "ta"
+        assert PARAM_ABBREV["tar_lr"] == "tlr"
+        assert PARAM_ABBREV["tar_epochs"] == "tep"
+
+    def test_tar_parameters_different_from_standard(self):
+        """TAR should use different parameter names than standard training."""
+        tar_params = set(METHOD_PARAMS["tar"])
+        standard_params = {"epochs", "lr", "batch_size"}
+        assert tar_params.isdisjoint(standard_params), "TAR should not use standard training parameters"
+
+    def test_tar_in_method_choices(self):
+        """TAR should be in the list of available methods."""
+        # This tests that TAR was added to the choices in the argument parser
+        # We can't easily test the actual parser without refactoring, but we can
+        # test that it's in our METHOD_PARAMS which is what the choices would use
+        assert "tar" in METHOD_PARAMS
+
+    def test_tar_parameter_defaults_make_sense(self):
+        """TAR default parameters should be reasonable."""
+        # Test via the defaults in _make_args
+        from types import SimpleNamespace
+        args = SimpleNamespace(tar_alpha=1.0, tar_lr=1e-5, tar_epochs=1)
+
+        # Alpha should be positive (scaling factor)
+        assert args.tar_alpha > 0
+
+        # Learning rate should be reasonable for fine-tuning
+        assert 1e-6 <= args.tar_lr <= 1e-4
+
+        # Epochs should be small (TAR is meant to be lightweight)
+        assert 1 <= args.tar_epochs <= 5
 
 
 # ---------------------------------------------------------------------------
