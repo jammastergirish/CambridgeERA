@@ -537,6 +537,9 @@ See `uv run unlearn/unlearn.py --help` for full argument reference.
 > [!NOTE]
 > **PEFT / LoRA compatibility.** The current script does **full-parameter** fine-tuning (all weights receive gradients). However, every method is compatible with LoRA in principle — the optimizer trains whatever parameters have `requires_grad=True`, and all loss functions operate on **activations/logits**, not weight matrices directly. To use LoRA, wrap the model with a PEFT adapter before the training loop; only the adapter weights will be updated. The adversarial inner loop in LAT/CB-LAT perturbs hidden states (not weights), so it is unaffected. Note: `wt_dist` and `wt_dist_reg` operate directly on weight space, so they are **not** compatible with LoRA adaptors — they require full-parameter access by design.
 
+> [!NOTE]
+> **Mixed-precision bf16 (HF Trainer).** Training is handled by a subclassed `transformers.Trainer` (`unlearn/trainer.py`) rather than a raw PyTorch loop. When `--dtype bf16` is set on a CUDA device, the Trainer enables **mixed precision**: the forward pass runs in bf16 (fast), but the master weight copy and Adam `m`/`v` states are kept in fp32 (precise). This is strictly better than naïve "everything in bf16" — the fp32 Adam buffers preserve small gradient updates that would otherwise be rounded to zero in bf16. The Trainer also handles gradient accumulation, gradient clipping, cosine LR scheduling, and (optionally) multi-GPU training via Accelerate — all the same CLI flags apply, nothing in the sweep scripts changed.
+
 ---
 
 #### Algorithm Details
@@ -639,7 +642,7 @@ Where $\lambda$ is `--wt-reg-lambda` (default 0.1). The paper shows this produce
 
 #### Hyperparameter Defaults & Tuning Guide
 
-All methods use **full-parameter training** with AdamW + cosine annealing. Shared defaults:
+All methods use **full-parameter training** with AdamW + cosine annealing, managed by the HF Trainer (`unlearn/trainer.py`). Shared defaults:
 
 | Setting | Default | Flag |
 |---|---|---|
