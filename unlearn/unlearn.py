@@ -429,7 +429,7 @@ def rmu_loss(
         loss = loss + F.mse_loss(forget_acts[lid], target_f.expand_as(forget_acts[lid]))
 
         # Retain: MSE toward cached clean activations (from before training)
-        target_r = retain_targets[lid]
+        target_r = retain_targets[lid].to(retain_acts[lid].device)  # move cached activations to current device
         # Handle batch-size mismatch by truncating to the smaller batch
         bsz = min(retain_acts[lid].size(0), target_r.size(0))
         loss = loss + alpha * F.mse_loss(
@@ -485,7 +485,7 @@ def cb_loss(
         # Retain: keep activations pointing in the same direction as the
         # cached original activations.  (1 - cos_sim) = 0 when perfectly aligned.
         ra = retain_acts[lid]
-        tr = retain_targets[lid]
+        tr = retain_targets[lid].to(ra.device)  # move cached activations to current device
         bsz = min(ra.size(0), tr.size(0))
         ra_flat = ra[:bsz].flatten(0, 1)
         tr_flat = tr[:bsz].detach().flatten(0, 1)
@@ -741,7 +741,7 @@ def cb_lat_loss(
 
         # Retain: preserve original activation directions
         ra = retain_acts[lid]
-        tr = retain_targets[lid]
+        tr = retain_targets[lid].to(ra.device)  # move cached activations to current device
         bsz = min(ra.size(0), tr.size(0))
         retain_cos = F.cosine_similarity(
             ra[:bsz].flatten(0, 1), tr[:bsz].detach().flatten(0, 1), dim=-1)
@@ -1241,8 +1241,11 @@ def main():
         model.eval()
         with torch.no_grad():
             for rb in retain_batches[:n_steps]:
-                acts = get_layer_activations(model, rb, layer_ids)
-                retain_act_cache.append({lid: a.detach().to(pt_dtype) for lid, a in acts.items()})
+                # Move batch to device for activation computation
+                rb_device = {k: v.to(device) for k, v in rb.items()}
+                acts = get_layer_activations(model, rb_device, layer_ids)
+                # Cache activations on CPU to avoid GPU OOM
+                retain_act_cache.append({lid: a.detach().cpu().to(pt_dtype) for lid, a in acts.items()})
         model.train()
 
     # ---- Weight Distortion: add Gaussian noise to all parameters ----
