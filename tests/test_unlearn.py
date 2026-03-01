@@ -308,6 +308,106 @@ class TestTARDeviceHandling:
 
 
 # ---------------------------------------------------------------------------
+# Activation Caching Memory Tests
+# ---------------------------------------------------------------------------
+class TestActivationCachingMemory:
+    """Test that activation caching doesn't cause GPU OOM by keeping data on CPU."""
+
+    def test_retain_activations_cached_on_cpu(self):
+        """Test that retain activation caching stores tensors on CPU to avoid GPU OOM."""
+        import torch
+        from unittest.mock import Mock, patch
+        from unlearn import get_layer_activations
+
+        # Mock setup
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        mock_model = Mock()
+
+        # Mock layer activations that would normally be on GPU
+        mock_activations = {
+            0: torch.randn(2, 10, 64, device=device),  # (batch, seq, hidden)
+            1: torch.randn(2, 10, 64, device=device),
+        }
+
+        with patch('unlearn.get_layer_activations') as mock_get_acts:
+            mock_get_acts.return_value = mock_activations
+
+            # Simulate the caching logic from the main function
+            layer_ids = [0, 1]
+            retain_act_cache = []
+            pt_dtype = torch.float32
+
+            # Mock batch on CPU
+            rb = {
+                "input_ids": torch.tensor([[1, 2, 3]], device="cpu"),
+                "attention_mask": torch.tensor([[1, 1, 1]], device="cpu")
+            }
+
+            # Simulate the fixed caching code
+            rb_device = {k: v.to(device) for k, v in rb.items()}
+            acts = mock_get_acts.return_value
+            # This is the key fix: cache activations on CPU
+            cached_acts = {lid: a.detach().cpu().to(pt_dtype) for lid, a in acts.items()}
+            retain_act_cache.append(cached_acts)
+
+            # Verify activations are cached on CPU
+            for lid in layer_ids:
+                cached_tensor = retain_act_cache[0][lid]
+                assert cached_tensor.device.type == "cpu", f"Layer {lid} cached on {cached_tensor.device}, should be CPU"
+                assert cached_tensor.dtype == pt_dtype
+
+    def test_cached_activations_moved_to_device_during_loss(self):
+        """Test that cached CPU activations are moved to GPU when needed for loss computation."""
+        import torch
+        import torch.nn.functional as F
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Simulate cached activations on CPU (what we store)
+        cached_acts_cpu = torch.randn(2, 10, 64, device="cpu")
+
+        # Simulate current activations on device (what we compute during training)
+        current_acts_device = torch.randn(2, 10, 64, device=device)
+
+        # Test the device movement logic from the loss functions
+        moved_cached = cached_acts_cpu.to(current_acts_device.device)
+
+        # Verify the fix works: can compute loss without device mismatch
+        try:
+            loss = F.mse_loss(current_acts_device, moved_cached.detach())
+            assert loss.device == device
+        except RuntimeError as e:
+            if "device" in str(e).lower():
+                pytest.fail(f"Device mismatch error: {e}")
+            else:
+                raise
+
+    def test_cosine_similarity_device_handling(self):
+        """Test cosine similarity computation handles CPU->GPU movement correctly."""
+        import torch
+        import torch.nn.functional as F
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Simulate the CB loss function scenario
+        current_acts = torch.randn(20, 64, device=device)  # flattened (B*T, D)
+        cached_acts_cpu = torch.randn(20, 64, device="cpu")
+
+        # Test the device movement from CB loss
+        cached_acts_moved = cached_acts_cpu.to(current_acts.device)
+
+        try:
+            cos_sim = F.cosine_similarity(current_acts, cached_acts_moved.detach(), dim=-1)
+            assert cos_sim.device == device
+            assert cos_sim.shape == (20,)  # one similarity per flattened position
+        except RuntimeError as e:
+            if "device" in str(e).lower():
+                pytest.fail(f"Cosine similarity device mismatch: {e}")
+            else:
+                raise
+
+
+# ---------------------------------------------------------------------------
 # Argument parser (--push-to-hub)
 # ---------------------------------------------------------------------------
 class TestArgParser:

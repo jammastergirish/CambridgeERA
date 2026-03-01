@@ -429,7 +429,7 @@ def rmu_loss(
         loss = loss + F.mse_loss(forget_acts[lid], target_f.expand_as(forget_acts[lid]))
 
         # Retain: MSE toward cached clean activations (from before training)
-        target_r = retain_targets[lid]
+        target_r = retain_targets[lid].to(retain_acts[lid].device)  # move cached activations to current device
         # Handle batch-size mismatch by truncating to the smaller batch
         bsz = min(retain_acts[lid].size(0), target_r.size(0))
         loss = loss + alpha * F.mse_loss(
@@ -485,7 +485,7 @@ def cb_loss(
         # Retain: keep activations pointing in the same direction as the
         # cached original activations.  (1 - cos_sim) = 0 when perfectly aligned.
         ra = retain_acts[lid]
-        tr = retain_targets[lid]
+        tr = retain_targets[lid].to(ra.device)  # move cached activations to current device
         bsz = min(ra.size(0), tr.size(0))
         ra_flat = ra[:bsz].flatten(0, 1)
         tr_flat = tr[:bsz].detach().flatten(0, 1)
@@ -741,7 +741,7 @@ def cb_lat_loss(
 
         # Retain: preserve original activation directions
         ra = retain_acts[lid]
-        tr = retain_targets[lid]
+        tr = retain_targets[lid].to(ra.device)  # move cached activations to current device
         bsz = min(ra.size(0), tr.size(0))
         retain_cos = F.cosine_similarity(
             ra[:bsz].flatten(0, 1), tr[:bsz].detach().flatten(0, 1), dim=-1)
@@ -887,7 +887,7 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device):
 #   - Positive "gap" (forget_NLL - retain_NLL)
 # ===================================================================
 
-def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step, verbose=True):
+def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step, device, verbose=True):
     """Run validation on held-out data and return metrics.
 
     Returns a dict with forget_nll, retain_nll, and the gap between them.
@@ -898,8 +898,9 @@ def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step,
 
     model.eval()  # switch to eval mode (disables dropout, etc.)
     with torch.no_grad():
-        forget_nll = sum(nll_loss(model, b).item() for b in eval_forget_batches) / len(eval_forget_batches)
-        retain_nll = sum(nll_loss(model, b).item() for b in eval_retain_batches) / len(eval_retain_batches)
+        # Move eval batches to device when needed
+        forget_nll = sum(nll_loss(model, {k: v.to(device) for k, v in b.items()}).item() for b in eval_forget_batches) / len(eval_forget_batches)
+        retain_nll = sum(nll_loss(model, {k: v.to(device) for k, v in b.items()}).item() for b in eval_retain_batches) / len(eval_retain_batches)
     model.train()  # switch back to training mode
 
     gap = forget_nll - retain_nll
@@ -1186,15 +1187,17 @@ def main():
         eval_retain_texts = retain_texts[:n_r_eval]
         forget_texts = forget_texts[n_f_eval:]
         retain_texts = retain_texts[n_r_eval:]
-        eval_forget_items = tokenize_texts(eval_forget_texts, tokenizer, args.max_length, device)
-        eval_retain_items = tokenize_texts(eval_retain_texts, tokenizer, args.max_length, device)
+        # Keep eval data on CPU as well to avoid GPU OOM
+        eval_forget_items = tokenize_texts(eval_forget_texts, tokenizer, args.max_length, "cpu")
+        eval_retain_items = tokenize_texts(eval_retain_texts, tokenizer, args.max_length, "cpu")
         eval_forget_batches = make_batches(eval_forget_items, args.batch_size)
         eval_retain_batches = make_batches(eval_retain_items, args.batch_size)
         print(f"[unlearn]   eval split: {n_f_eval} forget, {n_r_eval} retain")
         print(f"[unlearn]   train: {len(forget_texts)} forget, {len(retain_texts)} retain")
 
-    forget_items = tokenize_texts(forget_texts, tokenizer, args.max_length, device)
-    retain_items = tokenize_texts(retain_texts, tokenizer, args.max_length, device)
+    # Keep tokenized data on CPU to avoid GPU OOM, move batches to device when needed
+    forget_items = tokenize_texts(forget_texts, tokenizer, args.max_length, "cpu")
+    retain_items = tokenize_texts(retain_texts, tokenizer, args.max_length, "cpu")
 
     forget_batches = make_batches(forget_items, args.batch_size)
     retain_batches = make_batches(retain_items, args.batch_size)
@@ -1238,8 +1241,11 @@ def main():
         model.eval()
         with torch.no_grad():
             for rb in retain_batches[:n_steps]:
-                acts = get_layer_activations(model, rb, layer_ids)
-                retain_act_cache.append({lid: a.detach().to(pt_dtype) for lid, a in acts.items()})
+                # Move batch to device for activation computation
+                rb_device = {k: v.to(device) for k, v in rb.items()}
+                acts = get_layer_activations(model, rb_device, layer_ids)
+                # Cache activations on CPU to avoid GPU OOM
+                retain_act_cache.append({lid: a.detach().cpu().to(pt_dtype) for lid, a in acts.items()})
         model.train()
 
     # ---- Weight Distortion: add Gaussian noise to all parameters ----
@@ -1267,7 +1273,7 @@ def main():
 
         # Run final validation if eval data is available
         if eval_forget_batches and eval_retain_batches:
-            final_metrics = run_validation(model, eval_forget_batches, eval_retain_batches, 0, 0)
+            final_metrics = run_validation(model, eval_forget_batches, eval_retain_batches, 0, 0, device)
             print(f"[FINAL] TAR metrics: {final_metrics}")
 
         # Save model and exit early
@@ -1378,8 +1384,9 @@ def main():
         print("[unlearn] Running NLL evaluation on held-out split...")
         model.eval()
         with torch.no_grad():
-            forget_nll = sum(nll_loss(model, b).item() for b in eval_forget_batches) / len(eval_forget_batches)
-            retain_nll = sum(nll_loss(model, b).item() for b in eval_retain_batches) / len(eval_retain_batches)
+            # Move eval batches to device when needed
+            forget_nll = sum(nll_loss(model, {k: v.to(device) for k, v in b.items()}).item() for b in eval_forget_batches) / len(eval_forget_batches)
+            retain_nll = sum(nll_loss(model, {k: v.to(device) for k, v in b.items()}).item() for b in eval_retain_batches) / len(eval_retain_batches)
         print(f"[unlearn] Eval  forget_NLL={forget_nll:.4f}  retain_NLL={retain_nll:.4f}")
         print(f"[unlearn] Eval  gap (forget - retain) = {forget_nll - retain_nll:.4f}")
         print(f"[unlearn]   → Good unlearning: high forget_NLL + low retain_NLL\n")
