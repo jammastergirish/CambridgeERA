@@ -12,7 +12,7 @@
 Multi-method LLM unlearning pipeline.
 
 Supported methods:
-  ga_simple   — Pure Gradient Ascent on forget set only (no retain loss)
+  ga_simple  — Pure Gradient Ascent on forget set only (no retain loss)
   ga         — Gradient Ascent on forget set + Gradient Descent on retain set
   grad_diff  — Gradient Difference (weighted forget ascent + retain descent)
   dpo        — Direct Preference Optimization (forget=rejected, retain=chosen)
