@@ -562,7 +562,7 @@ $$L = -\text{NLL}_{\text{forget}} + \text{NLL}_{\text{retain}}$$
 
 Similar to GA but explicitly weights the forget-ascent and retain-descent terms separately. The `--forget-weight` parameter controls the trade-off.
 
-$$L = \text{NLL}_{\text{retain}} - w \cdot \text{NLL}_{\text{forget}}$$
+$$L = - w \cdot \text{NLL}_{\text{forget}} + \text{NLL}_{\text{retain}}$$
 
 When $w = 1$, this is equivalent to GA. Higher $w$ makes the model unlearn more aggressively at the cost of retain performance.
 
