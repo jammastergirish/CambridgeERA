@@ -847,6 +847,7 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device):
         epoch_loss = 0.0
         pbar = tqdm(forget_batches, desc=f"TAR forget-FT epoch {epoch+1}/{epochs}")
         for batch in pbar:
+            batch = {k: v.to(device) for k, v in batch.items()} # Move batch to same device as model as we're not using HF Trainer
             optimizer.zero_grad()
             loss = nll_loss(model, batch)
             loss.backward()
