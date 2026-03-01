@@ -240,6 +240,74 @@ class TestTARMethod:
 
 
 # ---------------------------------------------------------------------------
+# TAR Device Handling Tests
+# ---------------------------------------------------------------------------
+class TestTARDeviceHandling:
+    """Test that TAR properly handles device placement for batches."""
+
+    def test_tar_moves_batch_to_device(self):
+        """Test that apply_tar moves batches to the correct device during training."""
+        import torch
+        from unittest.mock import Mock, patch, MagicMock
+        from unlearn import apply_tar
+
+        # Mock model and device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Create mock model
+        mock_model = Mock()
+        mock_model.parameters.return_value = [torch.tensor([1.0], device=device)]
+        mock_model.named_parameters.return_value = [("test_param", torch.nn.Parameter(torch.tensor([1.0], device=device)))]
+
+        # Create mock batch that's on wrong device (CPU when we want GPU, or vice versa)
+        wrong_device = torch.device("cpu") if device.type == "cuda" else torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        if wrong_device.type == "cuda" and not torch.cuda.is_available():
+            wrong_device = torch.device("cpu")  # fallback if CUDA not available
+
+        mock_batch = {
+            "input_ids": torch.tensor([[1, 2, 3]], device=wrong_device),
+            "attention_mask": torch.tensor([[1, 1, 1]], device=wrong_device)
+        }
+        forget_batches = [mock_batch]
+
+        # Mock the nll_loss function to verify device placement
+        with patch('unlearn.nll_loss') as mock_nll_loss, \
+             patch('unlearn.torch.optim.AdamW') as mock_optimizer_class, \
+             patch('unlearn.torch.optim.lr_scheduler.CosineAnnealingLR') as mock_scheduler_class:
+
+            # Set up mocks
+            mock_loss = torch.tensor(1.0, device=device)
+            mock_nll_loss.return_value = mock_loss
+
+            mock_optimizer = Mock()
+            mock_optimizer_class.return_value = mock_optimizer
+
+            mock_scheduler = Mock()
+            mock_scheduler_class.return_value = mock_scheduler
+
+            # Call apply_tar
+            apply_tar(
+                model=mock_model,
+                forget_batches=forget_batches,
+                alpha=1.0,
+                lr=1e-5,
+                epochs=1,
+                device=device
+            )
+
+            # Verify nll_loss was called
+            assert mock_nll_loss.called
+
+            # Get the batch that was passed to nll_loss
+            call_args = mock_nll_loss.call_args_list[0]  # First call
+            _, passed_batch = call_args[0]  # (model, batch)
+
+            # Verify the batch tensors were moved to the correct device
+            assert passed_batch["input_ids"].device == device
+            assert passed_batch["attention_mask"].device == device
+
+
+# ---------------------------------------------------------------------------
 # Argument parser (--push-to-hub)
 # ---------------------------------------------------------------------------
 class TestArgParser:
