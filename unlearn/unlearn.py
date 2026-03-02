@@ -825,12 +825,12 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device):
     """
     print(f"[TAR] Starting Task Arithmetic Removal (alpha={alpha})")
 
-    # Step 1: Cache original weights
+    # Step 1: Cache original weights (store on CPU to save GPU memory)
     print("[TAR] Caching original model weights...")
     original_weights = {}
     for name, param in model.named_parameters():
         if param.requires_grad:
-            original_weights[name] = param.data.clone()
+            original_weights[name] = param.data.clone().cpu()
 
     # Step 2: Fine-tune on forget data
     print(f"[TAR] Fine-tuning on forget data ({epochs} epochs, lr={lr})...")
@@ -865,14 +865,14 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device):
     task_vectors = {}
     for name, param in model.named_parameters():
         if param.requires_grad and name in original_weights:
-            task_vectors[name] = param.data - original_weights[name]
+            task_vectors[name] = param.data - original_weights[name].to(param.device)
 
     # Step 4: Apply TAR update (θ_unlearned = θ_base - α * τ)
     print(f"[TAR] Applying task arithmetic (alpha={alpha})...")
     with torch.no_grad():
         for name, param in model.named_parameters():
             if param.requires_grad and name in task_vectors:
-                param.data = original_weights[name] - alpha * task_vectors[name]
+                param.data = original_weights[name].to(param.device) - alpha * task_vectors[name]
 
     print("[TAR] Task Arithmetic Removal completed")
 
