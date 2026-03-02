@@ -2,11 +2,16 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #     "datasets",
+#     "python-dotenv",
 # ]
 # ///
 
 from datasets import concatenate_datasets, load_dataset
 import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 NUM_SAMPLES = 10000
@@ -22,7 +27,7 @@ def create_forget_set(outpath: str, num_samples: int = NUM_SAMPLES) -> int:
     Returns the number of samples written.
     """
     print("[create_datasets] Downloading WMDP-Bio forget corpus...")
-    ds = load_dataset("cais/wmdp-bio-forget-corpus", split="train")
+    ds = load_dataset("cais/wmdp-bio-forget-corpus", split="train", token=os.environ.get("HF_TOKEN"))
 
     texts = []
     for ex in ds:
