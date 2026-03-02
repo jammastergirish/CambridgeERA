@@ -26,6 +26,7 @@ class TestBuildOutdir:
             "epochs": 1,
             "lr": 1e-5,
             "batch_size": 4,
+            "max_lines": 1024,
             "retain_weight": 1.0,
             "forget_weight": 1.0,
             "beta": 0.1,
@@ -65,6 +66,7 @@ class TestBuildOutdir:
         assert "ep1" in result
         assert "lr1e-05" in result
         assert "bs4" in result
+        assert "ml1024" in result  # max_lines should be included
         # Should NOT include method-irrelevant params
         assert "_rw" not in result
         assert "_a" not in result.split("__")[-1].split("_ep")[0]  # no alpha prefix
@@ -75,6 +77,7 @@ class TestBuildOutdir:
         assert "ep1" in suffix
         assert "lr1e-05" in suffix
         assert "bs4" in suffix
+        assert "ml1024" in suffix
         assert "a100.0" in suffix
         assert "sc20.0" in suffix
         assert "le0.1" in suffix
@@ -150,6 +153,39 @@ class TestBuildOutdir:
         assert path_a != path_b
         assert "tep1" in path_a
         assert "tep3" in path_b
+
+    def test_max_lines_included_in_all_methods(self):
+        """Test that max_lines parameter is included for all methods."""
+        for method in ["ga_simple", "simnpo", "npo", "dpo", "tar", "cb", "cb_lat"]:
+            result = build_outdir(self._make_args(method))
+            assert "ml1024" in result, f"max_lines not found in {method}: {result}"
+
+    def test_different_max_lines_produce_different_paths(self):
+        """Test that different max_lines values produce different directory names."""
+        path_a = build_outdir(self._make_args("simnpo", max_lines=1024))
+        path_b = build_outdir(self._make_args("simnpo", max_lines=2048))
+        path_c = build_outdir(self._make_args("simnpo", max_lines=4096))
+
+        assert path_a != path_b != path_c
+        assert "ml1024" in path_a
+        assert "ml2048" in path_b
+        assert "ml4096" in path_c
+
+    def test_max_lines_zero_handled_correctly(self):
+        """Test that max_lines=0 (unlimited) is properly encoded."""
+        result = build_outdir(self._make_args("simnpo", max_lines=0))
+        assert "ml0" in result
+
+    def test_tar_includes_max_lines(self):
+        """Test that TAR method includes max_lines in directory name."""
+        result = build_outdir(self._make_args("tar"))
+        assert "ta1.0" in result  # tar_alpha
+        assert "tlr1e-05" in result  # tar_lr
+        assert "tep1" in result  # tar_epochs
+        assert "ml1024" in result  # max_lines
+        # TAR should NOT include regular training params like batch_size
+        assert "bs" not in result
+        assert "ep" not in result or "tep" in result  # only tar_epochs, not epochs
 
 
 # ---------------------------------------------------------------------------

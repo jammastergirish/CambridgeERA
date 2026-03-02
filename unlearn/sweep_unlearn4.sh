@@ -13,12 +13,16 @@
 #   - Reduced beta from 0.1 to 0.01 for SimNPO/NPO/DPO (sigmoid stability)
 #   - Lowered most learning rates: 5e-05→3e-05, 7e-05→5e-05, CB:5e-05→4e-05
 #
-# Goals (24 runs total - ADJUSTED FOR STABILITY):
-#   1) Extend SimNPO/NPO epoch sweep at lr3e-05 (ep4, ep5)         [4 runs]
-#   2) Probe intermediate LR 5e-05 for SimNPO and NPO              [6 runs]
-#   3) DPO at lr3e-05 with safer beta values (0.01, 0.1)          [6 runs]
-#   4) Retain-weight ablation (0.5, 0.1) for top methods            [4 runs]
-#   5) CB/CB_LAT at lr4e-05 with broad layers (WMDP vs collapse)   [4 runs]
+# Goals - SYSTEMATIC DATA SCALING INTEGRATED:
+# Each hyperparameter config is tested at multiple dataset sizes (1024, 2048, 4096)
+# to find the optimal data/compute trade-off, following supervisor's methodology:
+# "32 steps at batch size 32 = 1024, then double until results plateau"
+#
+# Core configs to test:
+#   1) SimNPO/NPO epoch sweep at lr3e-05 (ep4, ep5)
+#   2) SimNPO/NPO intermediate LR 5e-05
+#   3) DPO at lr3e-05 with safer beta values (0.01, 0.1)
+#   4) Best CB/CB_LAT config
 
 set -euo pipefail
 
@@ -27,11 +31,13 @@ cd "$(dirname "$0")/.."
 export BASE="${BASE:-EleutherAI/deep-ignorance-unfiltered}"
 export DEVICE="${DEVICE:-auto}"
 export DTYPE="${DTYPE:-auto}"
-export BATCH_SIZE=4
+export BATCH_SIZE=32    # Supervisor's recommendation for cleaner gradient signals
 export EVAL_SPLIT=0.1
 export MAX_LENGTH=512
 export NO_SAVE=1
 export GRAD_CLIP=0.5
+
+# Data scaling will be done per-config below (1024, 2048, 4096)
 
 LAYER_ID_BROAD="5,10,15,20,25,30"
 
@@ -42,72 +48,51 @@ echo "Model: $BASE"
 echo "=========================================================="
 
 # ---------------------------------------------------------------
-# 1. SimNPO: extend epoch sweep at SAFER lr3e-05 (reduced from 5e-05)
+# 1. SimNPO: best config with systematic data scaling
 # ---------------------------------------------------------------
-for ep in "4" "5"; do
-    echo -e "\n>>> [simnpo] LR=3e-05, EPOCHS=${ep}, RETAIN_WEIGHT=1.0, BETA=0.01 <<<"
-    EPOCHS=$ep LR=3e-05 BETA=0.01 RETAIN_WEIGHT=1.0 ./unlearn/run_unlearn.sh simnpo
-done
-
-# ---------------------------------------------------------------
-# 2. NPO: extend epoch sweep at SAFER lr3e-05 (reduced from 5e-05)
-# ---------------------------------------------------------------
-for ep in "4" "5"; do
-    echo -e "\n>>> [npo] LR=3e-05, EPOCHS=${ep}, RETAIN_WEIGHT=1.0, BETA=0.01 <<<"
-    EPOCHS=$ep LR=3e-05 BETA=0.01 RETAIN_WEIGHT=1.0 ./unlearn/run_unlearn.sh npo
-done
-
-# ---------------------------------------------------------------
-# 3. Probe intermediate LR 5e-05 — safer than original 7e-05
-#    May unlock better WMDP/MMLU Pareto point for both methods
-# ---------------------------------------------------------------
-for ep in "1" "2" "3"; do
-    echo -e "\n>>> [simnpo] LR=5e-05, EPOCHS=${ep}, BETA=0.01 <<<"
-    EPOCHS=$ep LR=5e-05 BETA=0.01 RETAIN_WEIGHT=1.0 ./unlearn/run_unlearn.sh simnpo
-
-    echo -e "\n>>> [npo] LR=5e-05, EPOCHS=${ep}, BETA=0.01 <<<"
-    EPOCHS=$ep LR=5e-05 BETA=0.01 RETAIN_WEIGHT=1.0 ./unlearn/run_unlearn.sh npo
-done
-
-# ---------------------------------------------------------------
-# 4. DPO at lr3e-05 — safer than original 5e-05
-#    Lower beta values for stability
-# ---------------------------------------------------------------
-for ep in "1" "2" "3"; do
-    for beta in "0.01" "0.1"; do
-        echo -e "\n>>> [dpo] LR=3e-05, EPOCHS=${ep}, BETA=${beta} <<<"
-        EPOCHS=$ep LR=3e-05 BETA=$beta ./unlearn/run_unlearn.sh dpo
+for max_lines in "1024" "2048" "4096"; do
+    for ep in "3" "4"; do  # Focus on most promising epochs
+        echo -e "\n>>> [simnpo] LR=3e-05, EPOCHS=${ep}, MAX_LINES=${max_lines}, BETA=0.01 <<<"
+        MAX_LINES=$max_lines EPOCHS=$ep LR=3e-05 BETA=0.01 RETAIN_WEIGHT=1.0 ./unlearn/run_unlearn.sh simnpo
     done
 done
 
 # ---------------------------------------------------------------
-# 5. Retain-weight ablation for top methods at lr3e-05 (safer)
-#    retain_weight=1.0 has been the only value tried; lower values
-#    allow more aggressive forgetting at some MMLU cost
+# 2. NPO: best config with systematic data scaling
 # ---------------------------------------------------------------
-for rw in "0.5" "0.1"; do
-    echo -e "\n>>> [simnpo] LR=3e-05, EPOCHS=3, RETAIN_WEIGHT=${rw}, BETA=0.01 <<<"
-    EPOCHS=3 LR=3e-05 BETA=0.01 RETAIN_WEIGHT=$rw ./unlearn/run_unlearn.sh simnpo
-
-    echo -e "\n>>> [npo] LR=3e-05, EPOCHS=3, RETAIN_WEIGHT=${rw}, BETA=0.01 <<<"
-    EPOCHS=3 LR=3e-05 BETA=0.01 RETAIN_WEIGHT=$rw ./unlearn/run_unlearn.sh npo
+for max_lines in "1024" "2048" "4096"; do
+    for ep in "3" "4"; do  # Focus on most promising epochs
+        echo -e "\n>>> [npo] LR=3e-05, EPOCHS=${ep}, MAX_LINES=${max_lines}, BETA=0.01 <<<"
+        MAX_LINES=$max_lines EPOCHS=$ep LR=3e-05 BETA=0.01 RETAIN_WEIGHT=1.0 ./unlearn/run_unlearn.sh npo
+    done
 done
 
 # ---------------------------------------------------------------
-# 6. CB / CB_LAT at lr4e-05 with broad layers (safer than 5e-05)
-#    Previous: lr3e-05 broad layers barely unlearns (Cat ~0.52).
-#    Hypothesis: lr4e-05 broad layers might move WMDP without collapse,
-#    as the stable operating regime is wider for circuit-breaking.
+# 3. Higher LR exploration at optimal dataset size only
+#    Test lr=5e-05 at the dataset size that performed best above
 # ---------------------------------------------------------------
-for ep in "1" "3"; do
-    echo -e "\n>>> [cb] LR=4e-05, EPOCHS=${ep}, LAYER_ID=${LAYER_ID_BROAD} <<<"
-    EPOCHS=$ep LR=4e-05 LAYER_ID=$LAYER_ID_BROAD ALPHA=100.0 STEERING_COEFF=20.0 \
-        ./unlearn/run_unlearn.sh cb
+for max_lines in "2048"; do  # Assume 2048 will be optimal, adjust based on results
+    echo -e "\n>>> [simnpo] LR=5e-05, EPOCHS=3, MAX_LINES=${max_lines}, BETA=0.01 <<<"
+    MAX_LINES=$max_lines EPOCHS=3 LR=5e-05 BETA=0.01 RETAIN_WEIGHT=1.0 ./unlearn/run_unlearn.sh simnpo
 
-    echo -e "\n>>> [cb_lat] LR=4e-05, EPOCHS=${ep}, LAYER_ID=${LAYER_ID_BROAD} <<<"
-    EPOCHS=$ep LR=4e-05 LAYER_ID=$LAYER_ID_BROAD ALPHA=100.0 STEERING_COEFF=20.0 \
-        ./unlearn/run_unlearn.sh cb_lat
+    echo -e "\n>>> [npo] LR=5e-05, EPOCHS=3, MAX_LINES=${max_lines}, BETA=0.01 <<<"
+    MAX_LINES=$max_lines EPOCHS=3 LR=5e-05 BETA=0.01 RETAIN_WEIGHT=1.0 ./unlearn/run_unlearn.sh npo
 done
+
+# ---------------------------------------------------------------
+# 4. DPO: test best beta at optimal dataset size
+# ---------------------------------------------------------------
+for max_lines in "2048"; do  # Use promising dataset size from above
+    echo -e "\n>>> [dpo] LR=3e-05, EPOCHS=3, MAX_LINES=${max_lines}, BETA=0.01 <<<"
+    MAX_LINES=$max_lines EPOCHS=3 LR=3e-05 BETA=0.01 ./unlearn/run_unlearn.sh dpo
+done
+
+echo -e "\n=========================================================="
+echo "Data scaling analysis complete!"
+echo "Check W&B to identify optimal dataset size, then run:"
+echo "  - Retain-weight ablation at optimal size"
+echo "  - CB/CB_LAT experiments at optimal size"
+echo "=========================================================="
 
 echo "=========================================================="
 echo "Sweep 4 completed successfully!"

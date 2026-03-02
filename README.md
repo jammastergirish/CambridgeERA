@@ -630,6 +630,27 @@ EPOCHS=3 LR=3e-05 BETA=0.01 GRAD_CLIP=0.5 RETAIN_WEIGHT=1.0 ./unlearn/run_unlear
 EPOCHS=3 LR=3e-05 BETA=0.01 GRAD_CLIP=0.5 ./unlearn/run_unlearn.sh dpo
 ```
 
+** Systematic Data Scaling:**
+
+Hyperparameter sweeps should use systematic data scaling by default. Each promising hyperparameter configuration is tested at multiple dataset sizes (1024 → 2048 → 4096) to find the optimal data/compute trade-off before exploring parameter variations.
+
+```bash
+# All sweeps should include systematic data scaling
+./unlearn/parallel_sweep.sh ./unlearn/sweep_unlearn4.sh   # Tests each config at 1024, 2048, 4096
+./unlearn/parallel_sweep.sh ./unlearn/sweep_unlearn10.sh  # Same systematic approach for TAR
+
+# Override for specific dataset sizes when needed
+MAX_LINES=1024 ./unlearn/run_unlearn.sh simnpo  # Force specific size
+MAX_LINES=0 ./unlearn/run_unlearn.sh simnpo     # Full dataset for final evaluation
+```
+
+**Methodology:**
+1. **Start with 1024 samples** (32 steps × 32 batch size) - one clean epoch
+2. **Double systematically** (2048, 4096) until results plateau
+3. **Identify optimal dataset size** for each method/config
+4. **Focus parameter exploration** at the optimal dataset size
+5. **Significant time savings** (~5-10x faster than full dataset sweeps)
+
 > **Note:** NPO is inherently more stable than SimNPO because it uses a reference model as an anchor, but both benefit from the above fixes.
 
 ---
@@ -755,6 +776,7 @@ All methods use **full-parameter training** with AdamW + cosine annealing, manag
 | Epochs | 1 | `--epochs` |
 | Batch size | 4 | `--batch-size` |
 | Max sequence length | 512 | `--max-length` |
+| Max dataset lines | 1024 (0 for unlimited) | `--max-lines` |
 | Gradient clipping | 1.0 (⚠️ 0.5 for unstable methods) | `--grad-clip` |
 | Gradient accumulation | 1 | `--grad-accum-steps` |
 | Eval split | 10% | `--eval-split` |

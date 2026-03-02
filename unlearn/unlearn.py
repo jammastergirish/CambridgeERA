@@ -991,19 +991,19 @@ def run_evaluation_benchmarks(outdir, device, dtype, no_eval=False):
 
 # Which parameters are relevant for each method
 METHOD_PARAMS: dict[str, list[str]] = {
-    "ga_simple":    ["epochs", "lr", "batch_size"],
-    "ga":           ["epochs", "lr", "batch_size", "retain_weight"],
-    "grad_diff":    ["epochs", "lr", "batch_size", "forget_weight"],
-    "dpo":          ["epochs", "lr", "batch_size", "beta"],
-    "npo":          ["epochs", "lr", "batch_size", "beta", "retain_weight"],
-    "simnpo":       ["epochs", "lr", "batch_size", "beta", "retain_weight"],
-    "rmu":          ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id"],
-    "cb":           ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id"],
-    "lat":          ["epochs", "lr", "batch_size", "lat_eps", "lat_steps", "retain_weight", "layer_id"],
-    "cb_lat":       ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "lat_eps", "lat_steps", "layer_id"],
-    "tar":          ["tar_alpha", "tar_lr", "tar_epochs"],
-    "wt_dist":      ["epochs", "lr", "batch_size", "wt_noise_std"],
-    "wt_dist_reg":  ["epochs", "lr", "batch_size", "wt_reg_lambda"],
+    "ga_simple":    ["epochs", "lr", "batch_size", "max_lines"],
+    "ga":           ["epochs", "lr", "batch_size", "retain_weight", "max_lines"],
+    "grad_diff":    ["epochs", "lr", "batch_size", "forget_weight", "max_lines"],
+    "dpo":          ["epochs", "lr", "batch_size", "beta", "max_lines"],
+    "npo":          ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_lines"],
+    "simnpo":       ["epochs", "lr", "batch_size", "beta", "retain_weight", "max_lines"],
+    "rmu":          ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_lines"],
+    "cb":           ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "layer_id", "max_lines"],
+    "lat":          ["epochs", "lr", "batch_size", "lat_eps", "lat_steps", "retain_weight", "layer_id", "max_lines"],
+    "cb_lat":       ["epochs", "lr", "batch_size", "alpha", "steering_coeff", "lat_eps", "lat_steps", "layer_id", "max_lines"],
+    "tar":          ["tar_alpha", "tar_lr", "tar_epochs", "max_lines"],
+    "wt_dist":      ["epochs", "lr", "batch_size", "wt_noise_std", "max_lines"],
+    "wt_dist_reg":  ["epochs", "lr", "batch_size", "wt_reg_lambda", "max_lines"],
 }
 
 # Short abbreviations for folder name suffixes
@@ -1011,6 +1011,7 @@ PARAM_ABBREV: dict[str, str] = {
     "epochs": "ep",
     "lr": "lr",
     "batch_size": "bs",
+    "max_lines": "ml",
     "retain_weight": "rw",
     "forget_weight": "fw",
     "beta": "b",
@@ -1069,6 +1070,8 @@ def main():
     )
     parser.add_argument("--forget-data", default="data/forget.txt")
     parser.add_argument("--retain-data", default="data/retain.txt")
+    parser.add_argument("--max-lines", type=int, default=1024,
+                        help="Maximum number of lines to load from each dataset (default: 1024 for fast sweeps, use 0 for unlimited)")
     # --outdir is auto-generated from the method and hyperparameters (see build_outdir)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="auto")
@@ -1234,8 +1237,9 @@ def main():
 
     # ---- Load and tokenize data ----
     print("[unlearn] Tokenizing data...")
-    forget_texts = load_lines(args.forget_data)
-    retain_texts = load_lines(args.retain_data)
+    max_lines = args.max_lines if args.max_lines > 0 else None
+    forget_texts = load_lines(args.forget_data, max_lines)
+    retain_texts = load_lines(args.retain_data, max_lines)
     print(f"[unlearn]   forget samples: {len(forget_texts)}")
     print(f"[unlearn]   retain samples: {len(retain_texts)}")
 

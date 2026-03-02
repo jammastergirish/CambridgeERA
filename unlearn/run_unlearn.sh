@@ -14,7 +14,7 @@
 #   tar, wt_dist, wt_dist_reg
 #
 # Environment overrides:
-#   LR, EPOCHS, BATCH_SIZE, MAX_LENGTH, BETA, ALPHA, STEERING_COEFF,
+#   LR, EPOCHS, BATCH_SIZE, MAX_LENGTH, MAX_LINES, BETA, ALPHA, STEERING_COEFF,
 #   LAYER_ID, FORGET_WEIGHT, RETAIN_WEIGHT, LAT_EPS, LAT_STEPS,
 #   TAR_ALPHA, TAR_LR, TAR_EPOCHS, WT_NOISE_STD, WT_REG_LAMBDA,
 #   GRAD_ACCUM_STEPS, GRAD_CLIP, EVAL_SPLIT, PUSH_TO_HUB, NO_SAVE, NO_EVAL
@@ -42,6 +42,7 @@ if uv run --script unlearn/unlearn.py \
   ${EPOCHS:+--epochs "$EPOCHS"} \
   ${BATCH_SIZE:+--batch-size "$BATCH_SIZE"} \
   ${MAX_LENGTH:+--max-length "$MAX_LENGTH"} \
+  ${MAX_LINES:+--max-lines "$MAX_LINES"} \
   ${BETA:+--beta "$BETA"} \
   ${ALPHA:+--alpha "$ALPHA"} \
   ${STEERING_COEFF:+--steering-coeff "$STEERING_COEFF"} \
@@ -78,6 +79,7 @@ uv run --script unlearn/unlearn.py \
   ${EPOCHS:+--epochs "$EPOCHS"} \
   ${BATCH_SIZE:+--batch-size "$BATCH_SIZE"} \
   ${MAX_LENGTH:+--max-length "$MAX_LENGTH"} \
+  ${MAX_LINES:+--max-lines "$MAX_LINES"} \
   ${BETA:+--beta "$BETA"} \
   ${ALPHA:+--alpha "$ALPHA"} \
   ${STEERING_COEFF:+--steering-coeff "$STEERING_COEFF"} \
