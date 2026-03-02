@@ -902,7 +902,7 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
     use_bf16 = (pt_dtype == torch.bfloat16) and torch.cuda.is_available()
     use_fp16 = False
 
-    # Setup training arguments
+    # Setup training arguments - match the main training loop's format
     training_args = TrainingArguments(
         output_dir=args.outdir if args else "/tmp/tar_training",
         num_train_epochs=epochs,
@@ -910,18 +910,19 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
         learning_rate=lr,
         warmup_ratio=0.0,  # TAR doesn't use warmup
         lr_scheduler_type="cosine",
-        gradient_checkpointing=False,  # TAR is typically quick, no need for gradient checkpointing
+        max_grad_norm=0.0,  # TAR typically doesn't need gradient clipping
         gradient_accumulation_steps=1,
         bf16=use_bf16,
         fp16=use_fp16,
+        logging_strategy="steps",
         logging_steps=10,
-        save_steps=999999,  # Don't save checkpoints for TAR
-        save_strategy="no",
-        evaluation_strategy="no",
+        save_strategy="no",  # Don't save checkpoints for TAR
+        eval_strategy="no",  # No evaluation during TAR training
         push_to_hub=False,
         report_to="none",  # TAR doesn't need wandb logging
+        dataloader_num_workers=0,
         remove_unused_columns=False,
-        label_names=["input_ids"],
+        disable_tqdm=False,
     )
 
     # For TAR, we need standard fine-tuning (not gradient ascent)
