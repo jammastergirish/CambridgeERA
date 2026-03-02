@@ -911,6 +911,70 @@ def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step,
     return {"forget_nll": forget_nll, "retain_nll": retain_nll, "gap": gap}
 
 
+def run_evaluation_benchmarks(outdir, device, dtype, no_eval=False):
+    """Run evaluation benchmarks on the unlearned model.
+
+    Args:
+        outdir: Path to the model directory
+        device: Device to run evaluation on
+        dtype: Data type for evaluation
+        no_eval: If True, skip evaluation
+
+    Returns:
+        True if evaluation succeeded, False otherwise
+    """
+    if no_eval:
+        print("[unlearn] Skipping eval benchmarks (--no-eval specified)")
+        return True
+
+    print("[unlearn] Running eval benchmarks ...")
+    eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiment", "eval.py")
+    eval_cmd = [
+        "uv", "run", "--script", eval_script,
+        "--model", outdir,
+        "--device", device,
+        "--dtype", dtype,
+    ]
+
+    try:
+        import subprocess
+        result = subprocess.run(eval_cmd, capture_output=False, text=True)
+        if result.returncode == 0:
+            print("[unlearn] Eval complete ✓")
+
+            # Log eval metrics to W&B
+            from utils import model_outdir
+            eval_summary_path = os.path.join(
+                model_outdir(outdir, suffix="evals"), "summary.json"
+            )
+            if os.path.exists(eval_summary_path):
+                import json
+                with open(eval_summary_path) as f:
+                    eval_data = json.load(f)
+                try:
+                    import wandb
+                    if wandb.run is not None:
+                        eval_results = eval_data.get("results", {})
+                        flat = {}
+                        for task, metrics in eval_results.items():
+                            for metric_key, value in metrics.items():
+                                if metric_key.endswith(",none") and not metric_key.startswith("alias"):
+                                    clean = metric_key.replace(",none", "")
+                                    flat[f"eval_bench/{task}/{clean}"] = value
+                        wandb.log(flat)
+                        wandb.summary.update(flat)
+                        print(f"[unlearn] Eval metrics logged to W&B ✓ ({len(flat)} metrics)")
+                except ImportError:
+                    pass
+            return True
+        else:
+            print(f"[unlearn] WARNING: eval returned exit code {result.returncode}")
+            return False
+    except Exception as e:
+        print(f"[unlearn] WARNING: eval failed: {e}")
+        return False
+
+
 # ===================================================================
 # Output directory auto-generation
 # ===================================================================
@@ -1285,11 +1349,7 @@ def main():
             print(f"[unlearn] TAR model saved to: {args.outdir}")
 
         # Run evaluation if needed
-        if not args.no_eval:
-            print("[eval] Running final evaluation...")
-            import subprocess
-            eval_cmd = f"uv run unlearn/eval.py --model {args.outdir} --device {device} --dtype {args.dtype}"
-            subprocess.run(eval_cmd.split(), check=True)
+        run_evaluation_benchmarks(args.outdir, device, args.dtype, args.no_eval)
 
         return
 
@@ -1416,49 +1476,7 @@ def main():
         print("[unlearn] Model saved ✓")
 
     # ---- Auto-evaluate the unlearned model ----
-    if args.no_eval:
-        print("[unlearn] Skipping eval benchmarks (--no-eval specified)")
-    else:
-        print("[unlearn] Running eval benchmarks ...")
-        eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiment", "eval.py")
-        eval_cmd = [
-            "uv", "run", "--script", eval_script,
-            "--model", args.outdir,
-            "--device", args.device,
-            "--dtype", args.dtype,
-        ]
-        try:
-            import subprocess
-            result = subprocess.run(eval_cmd, capture_output=False, text=True)
-            if result.returncode == 0:
-                print("[unlearn] Eval complete ✓")
-                # Log eval metrics to W&B
-                eval_summary_path = os.path.join(
-                    model_outdir(args.outdir, suffix="evals"), "summary.json"
-                )
-                if os.path.exists(eval_summary_path):
-                    import json
-                    with open(eval_summary_path) as f:
-                        eval_data = json.load(f)
-                    try:
-                        import wandb
-                        if wandb.run is not None:
-                            eval_results = eval_data.get("results", {})
-                            flat = {}
-                            for task, metrics in eval_results.items():
-                                for metric_key, value in metrics.items():
-                                    if metric_key.endswith(",none") and not metric_key.startswith("alias"):
-                                        clean = metric_key.replace(",none", "")
-                                        flat[f"eval_bench/{task}/{clean}"] = value
-                            wandb.log(flat)
-                            wandb.summary.update(flat)
-                            print(f"[unlearn] Eval metrics logged to W&B ✓ ({len(flat)} metrics)")
-                    except ImportError:
-                        pass
-            else:
-                print(f"[unlearn] WARNING: eval returned exit code {result.returncode}")
-        except Exception as e:
-            print(f"[unlearn] WARNING: eval failed: {e}")
+    run_evaluation_benchmarks(args.outdir, args.device, args.dtype, args.no_eval)
 
     # ---- Upload to HuggingFace (only if --push-to-hub) ----
     if args.push_to_hub:

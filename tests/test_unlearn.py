@@ -446,3 +446,99 @@ class TestArgParser:
         args = parser.parse_args(["--no-save"])
         assert args.no_save is True
 
+
+# ---------------------------------------------------------------------------
+# run_evaluation_benchmarks tests
+# ---------------------------------------------------------------------------
+class TestRunEvaluationBenchmarks:
+    """Test the shared evaluation function."""
+
+    def test_skips_eval_when_no_eval_true(self):
+        """Test that evaluation is skipped when no_eval=True."""
+        from unlearn import run_evaluation_benchmarks
+
+        # Should return True and skip evaluation
+        result = run_evaluation_benchmarks("/fake/path", "cpu", "float32", no_eval=True)
+        assert result is True
+
+    def test_constructs_correct_eval_script_path(self):
+        """Test that the evaluation script path is constructed correctly."""
+        from unlearn import run_evaluation_benchmarks
+        from unittest.mock import patch
+        import os
+
+        # Mock subprocess.run to avoid actually running the eval
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value.returncode = 0
+
+            run_evaluation_benchmarks("/fake/path", "cpu", "float32", no_eval=False)
+
+            # Check that subprocess.run was called with correct arguments
+            mock_run.assert_called_once()
+            args, kwargs = mock_run.call_args
+            eval_cmd = args[0]
+
+            # Should use experiment/eval.py, not unlearn/eval.py
+            assert any("experiment/eval.py" in str(arg) for arg in eval_cmd), f"eval_cmd: {eval_cmd}"
+            assert "unlearn/eval.py" not in str(eval_cmd)
+
+    def test_handles_subprocess_failure(self):
+        """Test that function handles subprocess failures gracefully."""
+        from unlearn import run_evaluation_benchmarks
+        from unittest.mock import patch
+
+        # Mock subprocess.run to return non-zero exit code
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value.returncode = 1
+
+            result = run_evaluation_benchmarks("/fake/path", "cpu", "float32", no_eval=False)
+            assert result is False
+
+    def test_handles_subprocess_exception(self):
+        """Test that function handles subprocess exceptions gracefully."""
+        from unlearn import run_evaluation_benchmarks
+        from unittest.mock import patch
+
+        # Mock subprocess.run to raise an exception
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = Exception("Subprocess failed")
+
+            result = run_evaluation_benchmarks("/fake/path", "cpu", "float32", no_eval=False)
+            assert result is False
+
+    def test_logs_wandb_metrics_when_available(self):
+        """Test that W&B metrics are logged when available."""
+        from unlearn import run_evaluation_benchmarks
+        from unittest.mock import patch, mock_open
+        import json
+
+        # Mock eval results
+        mock_eval_data = {
+            "results": {
+                "mmlu": {"acc,none": 0.85, "alias,acc": 0.85},
+                "wmdp_bio": {"acc,none": 0.23, "loss,none": 2.1}
+            }
+        }
+
+        with patch('subprocess.run') as mock_run, \
+             patch('os.path.exists', return_value=True), \
+             patch('builtins.open', mock_open(read_data=json.dumps(mock_eval_data))), \
+             patch('wandb.run') as mock_wandb_run, \
+             patch('wandb.log') as mock_wandb_log, \
+             patch('wandb.summary') as mock_wandb_summary:
+
+            mock_run.return_value.returncode = 0
+            mock_wandb_run.return_value = True  # Simulate active W&B run
+
+            result = run_evaluation_benchmarks("/fake/path", "cpu", "float32", no_eval=False)
+
+            assert result is True
+            # Should log metrics with eval_bench/ prefix and clean metric names
+            expected_metrics = {
+                "eval_bench/mmlu/acc": 0.85,
+                "eval_bench/wmdp_bio/acc": 0.23,
+                "eval_bench/wmdp_bio/loss": 2.1
+            }
+            mock_wandb_log.assert_called_once_with(expected_metrics)
+            mock_wandb_summary.update.assert_called_once_with(expected_metrics)
+
