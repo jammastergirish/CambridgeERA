@@ -150,6 +150,19 @@ def nll_loss(model, batch: dict) -> torch.Tensor:
     labels = input_ids[:, 1:].contiguous()            # (B, T-1)
     mask = attention_mask[:, 1:].contiguous()          # (B, T-1)
 
+    # Check for vocabulary size mismatch before computing loss
+    vocab_size = logits.size(-1)
+    max_label = labels.max().item()
+    min_label = labels.min().item()
+
+    if max_label >= vocab_size or min_label < 0:
+        print(f"[ERROR] Vocabulary size mismatch detected:")
+        print(f"  Model vocab size: {vocab_size}")
+        print(f"  Label range: [{min_label}, {max_label}]")
+        print(f"  Invalid labels found - clipping to valid range [0, {vocab_size-1}]")
+        # Clip labels to valid vocabulary range
+        labels = torch.clamp(labels, 0, vocab_size - 1)
+
     # Per-token cross-entropy, then mask out padding and average over real tokens
     loss = F.cross_entropy(
         logits.view(-1, logits.size(-1)), labels.view(-1), reduction="none"
@@ -1406,6 +1419,7 @@ def main():
     # trainer.py lives alongside unlearn.py in the unlearn/ directory.
     # Since unlearn.py is run as a uv --script (not an installed package),
     # we add its own directory to sys.path so `import trainer` resolves.
+    import os  # Local import to avoid scope issues
     _unlearn_dir = os.path.dirname(os.path.abspath(__file__))
     if _unlearn_dir not in sys.path:
         sys.path.insert(0, _unlearn_dir)
