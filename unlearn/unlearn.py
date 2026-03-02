@@ -931,7 +931,8 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
 
     # Custom compute_loss for TAR - just standard NLL loss on forget data
     class TARTrainer(Trainer):
-        def compute_loss(self, model, inputs, return_outputs=False):
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            # Accept any extra kwargs that Trainer might pass (like num_items_in_batch)
             # UnlearningDataset returns (forget_batch, retain_batch) pairs
             # For TAR, we only use the forget batch
             if isinstance(inputs, tuple) or isinstance(inputs, list):
