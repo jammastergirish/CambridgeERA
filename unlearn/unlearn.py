@@ -889,10 +889,11 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
     from transformers import TrainingArguments
 
     # Prepare dataset - only forget data for TAR
+    # TAR only needs forget data, but UnlearningDataset expects pairs
+    # We'll duplicate forget data as "retain" to satisfy the interface
     dataset = UnlearningDataset(
-        method="tar",  # We'll handle this specially in the trainer
         forget_batches=forget_batches,
-        retain_batches=[],  # TAR doesn't use retain data
+        retain_batches=forget_batches,  # Dummy - TAR won't use this
     )
 
     # Determine if we can use bf16
@@ -927,11 +928,18 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=None, a
     # So we'll use the standard HF Trainer, not UnlearningTrainer
     from transformers import Trainer
 
-    # Custom compute_loss for TAR - just standard NLL loss
+    # Custom compute_loss for TAR - just standard NLL loss on forget data
     class TARTrainer(Trainer):
         def compute_loss(self, model, inputs, return_outputs=False):
+            # UnlearningDataset returns (forget_batch, retain_batch) pairs
+            # For TAR, we only use the forget batch
+            if isinstance(inputs, tuple) or isinstance(inputs, list):
+                forget_batch = inputs[0]  # Extract forget batch from pair
+            else:
+                forget_batch = inputs  # Fallback if structure is different
+
             # TAR does standard fine-tuning on forget data
-            loss = nll_loss(model, inputs)
+            loss = nll_loss(model, forget_batch)
             return (loss, None) if return_outputs else loss
 
     # Create trainer
