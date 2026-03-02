@@ -843,13 +843,13 @@ def wt_dist_reg_loss(
 # where θ_forget_ft is obtained by fine-tuning the base model on forget data.
 # This is a one-time operation, not iterative training.
 
-def apply_tar(model, forget_batches, alpha, lr, epochs, device):
+def apply_tar(model, forget_batches, alpha, lr, epochs, device, pt_dtype=torch.float32, args=None):
     """
-    Apply Task Arithmetic Removal to the model.
+    Apply Task Arithmetic Removal to the model using HF Trainer for robustness.
 
     Steps:
     1. Cache the original model weights (θ_base)
-    2. Fine-tune on forget data to get θ_forget_ft
+    2. Fine-tune on forget data to get θ_forget_ft using HF Trainer
     3. Compute task vector: τ = θ_forget_ft - θ_base
     4. Apply: θ_unlearned = θ_base - α * τ
 
@@ -860,6 +860,8 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device):
         lr: Learning rate for forget fine-tuning
         epochs: Number of epochs for forget fine-tuning
         device: Device for computation
+        pt_dtype: Data type for training (for mixed precision)
+        args: Full args object for output directory
     """
     print(f"[TAR] Starting Task Arithmetic Removal (alpha={alpha})")
 
@@ -874,54 +876,75 @@ def apply_tar(model, forget_batches, alpha, lr, epochs, device):
             cpu_tensor.copy_(param.data, non_blocking=True)
             original_weights[name] = cpu_tensor
 
-    # Step 2: Fine-tune on forget data
-    print(f"[TAR] Fine-tuning on forget data ({epochs} epochs, lr={lr})...")
-    optimizer = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad], lr=lr
+    # Step 2: Fine-tune on forget data using HF Trainer
+    print(f"[TAR] Fine-tuning on forget data ({epochs} epochs, lr={lr}) using HF Trainer...")
+
+    # Import trainer components
+    import sys
+    import os
+    _unlearn_dir = os.path.dirname(os.path.abspath(__file__))
+    if _unlearn_dir not in sys.path:
+        sys.path.insert(0, _unlearn_dir)
+    from trainer import UnlearningTrainer, UnlearningDataset, UnlearningCollator
+    from transformers import TrainingArguments
+
+    # Prepare dataset - only forget data for TAR
+    dataset = UnlearningDataset(
+        method="tar",  # We'll handle this specially in the trainer
+        forget_batches=forget_batches,
+        retain_batches=[],  # TAR doesn't use retain data
     )
 
-    n_steps = len(forget_batches)
-    total_steps = n_steps * epochs
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+    # Determine if we can use bf16
+    use_bf16 = (pt_dtype == torch.bfloat16) and torch.cuda.is_available()
+    use_fp16 = False
 
-    model.train()
-    for epoch in range(epochs):
-        epoch_loss = 0.0
-        pbar = tqdm(forget_batches, desc=f"TAR forget-FT epoch {epoch+1}/{epochs}")
-        for batch_idx, batch in enumerate(pbar):
-            # Validate data before moving to device
-            vocab_size = model.config.vocab_size
-            input_ids = batch["input_ids"]
-            max_id = input_ids.max().item()
-            min_id = input_ids.min().item()
+    # Setup training arguments
+    training_args = TrainingArguments(
+        output_dir=args.outdir if args else "/tmp/tar_training",
+        num_train_epochs=epochs,
+        per_device_train_batch_size=1,  # Batches are already prepared
+        learning_rate=lr,
+        warmup_ratio=0.0,  # TAR doesn't use warmup
+        lr_scheduler_type="cosine",
+        gradient_checkpointing=False,  # TAR is typically quick, no need for gradient checkpointing
+        gradient_accumulation_steps=1,
+        bf16=use_bf16,
+        fp16=use_fp16,
+        logging_steps=10,
+        save_steps=999999,  # Don't save checkpoints for TAR
+        save_strategy="no",
+        evaluation_strategy="no",
+        push_to_hub=False,
+        report_to="none",  # TAR doesn't need wandb logging
+        remove_unused_columns=False,
+        label_names=["input_ids"],
+    )
 
-            if max_id >= vocab_size or min_id < 0:
-                print(f"\n[TAR ERROR] Invalid tokens before device transfer in batch {batch_idx}:")
-                print(f"  Token range: [{min_id}, {max_id}], vocab_size={vocab_size}")
-                print(f"  Batch shape: {input_ids.shape}")
-                # Skip this batch to avoid CUDA errors
-                print("  Skipping batch to avoid CUDA crash")
-                continue
+    # For TAR, we need standard fine-tuning (not gradient ascent)
+    # So we'll use the standard HF Trainer, not UnlearningTrainer
+    from transformers import Trainer
 
-            batch = {k: v.to(device) for k, v in batch.items()} # Move batch to same device as model as we're not using HF Trainer
+    # Custom compute_loss for TAR - just standard NLL loss
+    class TARTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False):
+            # TAR does standard fine-tuning on forget data
+            loss = nll_loss(model, inputs)
+            return (loss, None) if return_outputs else loss
 
-            # Double-check after device transfer
-            if batch["input_ids"].max().item() >= vocab_size:
-                print(f"\n[TAR ERROR] Corruption after device transfer!")
-                print(f"  Max token ID after transfer: {batch['input_ids'].max().item()}")
-                continue
+    # Create trainer
+    trainer = TARTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset,
+        data_collator=UnlearningCollator(),
+    )
 
-            optimizer.zero_grad()
-            loss = nll_loss(model, batch)
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
+    # Train
+    print(f"[TAR] Starting fine-tuning with HF Trainer (mixed-precision bf16: {use_bf16})...")
+    trainer.train()
 
-            epoch_loss += loss.item()
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
-
-        avg_loss = epoch_loss / len(forget_batches)
-        print(f"[TAR] Epoch {epoch+1}/{epochs} avg loss: {avg_loss:.4f}")
+    print(f"[TAR] Fine-tuning complete")
 
     # Step 3: Compute task vector (τ = θ_forget_ft - θ_base)
     print("[TAR] Computing task vector...")
@@ -1397,7 +1420,7 @@ def main():
     # ---- Task Arithmetic Removal (TAR) ----
     # TAR is a one-time operation, not iterative training
     if args.method == "tar":
-        apply_tar(model, forget_batches, args.tar_alpha, args.tar_lr, args.tar_epochs, device)
+        apply_tar(model, forget_batches, args.tar_alpha, args.tar_lr, args.tar_epochs, device, pt_dtype, args)
 
         # After TAR is complete, we're done - no need for further training
         print("[unlearn] TAR completed. Skipping iterative training phase.")
