@@ -260,19 +260,50 @@ def nll_loss(model, batch: dict) -> torch.Tensor:
     return loss
 
 
-def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    """Compute per-token log-probabilities for the given labels.
+def log_probs_from_logits(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    chunk_size: int = 4,
+) -> torch.Tensor:
+    """Compute per-token log-probabilities without materialising the full vocab tensor.
+
+    Background
+    ----------
+    The naive implementation calls ``F.log_softmax(logits, dim=-1)`` which
+    produces an intermediate ``(B, T, vocab_size)`` tensor — the same peak-
+    memory spike that chunked_cross_entropy addresses for the NLL path.
+    We discard all but one value per (b, t) position immediately via
+    ``gather``, yet the full tensor must exist simultaneously on the GPU.
+
+    Fix
+    ---
+    Process ``chunk_size`` batch elements at a time: log_softmax over a
+    ``(chunk, T, vocab)`` slice, gather, discard, repeat.  The output is
+    bit-for-bit identical because log_softmax is independent per position.
 
     Args:
         logits: (B, T, vocab_size) — raw model output
         labels: (B, T) — ground-truth token indices
+        chunk_size: batch elements per chunk (default 4)
 
     Returns:
         (B, T) tensor where entry [b, t] = log P(labels[b,t] | context)
     """
-    log_p = F.log_softmax(logits, dim=-1)  # normalize logits → log-probs
-    # Gather only the log-prob of the correct token at each position
-    return torch.gather(log_p, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+    B = logits.size(0)
+    out_chunks = []
+    for start in range(0, B, chunk_size):
+        end = min(start + chunk_size, B)
+        logits_chunk = logits[start:end]                     # (chunk, T, V)
+        labels_chunk = labels[start:end]                     # (chunk, T)
+        # log_softmax over vocab — large but short-lived for this slice only
+        log_p_chunk = F.log_softmax(logits_chunk, dim=-1)
+        # Gather the log-prob of the correct token; drops the vocab dimension
+        gathered = torch.gather(
+            log_p_chunk, dim=-1, index=labels_chunk.unsqueeze(-1)
+        ).squeeze(-1)                                        # (chunk, T)
+        out_chunks.append(gathered)
+        del logits_chunk, log_p_chunk                        # free before next chunk
+    return torch.cat(out_chunks, dim=0)                      # (B, T)
 
 
 def avg_log_prob(

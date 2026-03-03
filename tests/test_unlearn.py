@@ -686,3 +686,59 @@ class TestChunkedCrossEntropy:
         chunked_loss = (chunked * mask.view(-1)).sum() / mask.sum().clamp(min=1)
 
         self.torch.testing.assert_close(chunked_loss, ref_loss, rtol=1e-5, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# log_probs_from_logits  (chunked)
+# ---------------------------------------------------------------------------
+class TestLogProbsFromLogits:
+    """Verify chunked log_probs_from_logits matches the naive implementation."""
+
+    def setup_method(self):
+        import torch
+        import torch.nn.functional as F
+        from unlearn import log_probs_from_logits
+        self.torch = torch
+        self.F = F
+        self.fn = log_probs_from_logits
+
+    def _naive(self, logits, labels):
+        log_p = self.F.log_softmax(logits, dim=-1)
+        return self.torch.gather(log_p, -1, labels.unsqueeze(-1)).squeeze(-1)
+
+    def _make(self, B=6, T=10, V=80, seed=0):
+        self.torch.manual_seed(seed)
+        logits = self.torch.randn(B, T, V)
+        labels = self.torch.randint(0, V, (B, T))
+        return logits, labels
+
+    def test_matches_naive_default_chunk(self):
+        logits, labels = self._make()
+        self.torch.testing.assert_close(
+            self.fn(logits, labels), self._naive(logits, labels), rtol=0, atol=0
+        )
+
+    def test_matches_naive_chunk_size_1(self):
+        logits, labels = self._make()
+        self.torch.testing.assert_close(
+            self.fn(logits, labels, chunk_size=1), self._naive(logits, labels), rtol=0, atol=0
+        )
+
+    def test_matches_naive_chunk_size_larger_than_batch(self):
+        logits, labels = self._make(B=3)
+        self.torch.testing.assert_close(
+            self.fn(logits, labels, chunk_size=100), self._naive(logits, labels), rtol=0, atol=0
+        )
+
+    def test_output_shape(self):
+        B, T, V = 5, 12, 64
+        logits, labels = self._make(B=B, T=T, V=V)
+        out = self.fn(logits, labels, chunk_size=2)
+        assert out.shape == (B, T), f"Expected ({B}, {T}), got {out.shape}"
+
+    def test_gradients_flow(self):
+        logits, labels = self._make(B=4)
+        logits = logits.requires_grad_(True)
+        self.fn(logits, labels, chunk_size=2).sum().backward()
+        assert logits.grad is not None
+        assert not self.torch.isnan(logits.grad).any()
