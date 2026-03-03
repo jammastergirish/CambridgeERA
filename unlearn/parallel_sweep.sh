@@ -63,6 +63,10 @@ fi
 if [[ -n "${GPUS_PER_JOB:-}" ]]; then
   GROUP_SIZE="$GPUS_PER_JOB"
   echo "[parallel_sweep] GPUS_PER_JOB=${GROUP_SIZE} (manual override)"
+elif [[ -n "${SKIP_PROBE:-}" ]]; then
+  # Quick override to use all GPUs for a single job when OOM issues occur
+  GROUP_SIZE="$NUM_GPUS"
+  echo "[parallel_sweep] SKIP_PROBE set - using all ${NUM_GPUS} GPUs for single job"
 else
   echo "[parallel_sweep] Probing VRAM requirements for ${BASE} (config-based, fast)..."
 
@@ -100,12 +104,13 @@ try:
         capture_output=True, text=True, check=True)
     vram_gb = int(r.stdout.strip().split("\n")[0]) / 1024
 
-    # Training VRAM = params + gradients + Adam m/v states + activations ≈ 4.5× model size
-    # (much higher than inference which is ~1.25×).
-    # Use 6× to be conservative and account for adversarial training methods (cb_lat, lat)
-    # that carry perturbation tensors alongside standard params+gradients+optimizer states.
+    # Training VRAM = params + gradients + Adam m/v states + activations
+    # Base multiplier: ~4× for params+grads+optimizer
+    # But batch_size=32 needs MUCH more for activations
+    # SimNPO/DPO methods also need reference model (2× params)
+    # Use 10× to be safe for batch_size=32 training
     import math
-    gpus_needed = max(1, math.ceil(model_gb * 6.0 / vram_gb))
+    gpus_needed = max(1, math.ceil(model_gb * 10.0 / vram_gb))
     print(gpus_needed)
 
 except Exception as e:
