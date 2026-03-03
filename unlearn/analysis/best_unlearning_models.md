@@ -1,12 +1,8 @@
 ## Baselines
 
-No baseline runs found.
-
-To generate baselines, run:
-```bash
-uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered \
-    --wandb-project cambridge_era --wandb-name EleutherAI/deep-ignorance-unfiltered
-```
+| Name | Score | MMLU | WMDP (Robust) | WMDP (Cloze) | WMDP (Categorized) |
+| --- | --- | --- | --- | --- | --- |
+| EleutherAI/deep-ignorance-unfiltered | 0.0190 | 0.4499 | 0.4309 | 0.3652 | 0.5263 |
 
 ## Best Models By Method
 

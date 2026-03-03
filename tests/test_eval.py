@@ -261,10 +261,10 @@ class TestArgParsing:
 
 
 # ---------------------------------------------------------------------------
-# Device resolution
+# Device resolution and Memory Management
 # ---------------------------------------------------------------------------
 class TestDeviceResolution:
-    """Test auto device resolution logic."""
+    """Test auto device resolution logic and memory management."""
 
     def test_explicit_device_is_passed_through(self, mock_lm_eval_results, tmp_path):
         outdir = str(tmp_path / "out")
@@ -274,7 +274,94 @@ class TestDeviceResolution:
                 with patch("sys.argv", ["eval.py", "--model", "m", "--outdir", outdir,
                                         "--device", "cpu"]):
                     eval_module.main()
-        assert mock_eval.call_args.kwargs["device"] == "cpu"
+        # With device_map='auto', device should be None (let device_map handle it)
+        assert mock_eval.call_args.kwargs["device"] is None
+
+    @patch("experiment.eval.torch.cuda.is_available")
+    @patch("experiment.eval.torch.cuda.empty_cache")
+    @patch("experiment.eval.torch.cuda.synchronize")
+    @patch("experiment.eval.pick_best_gpu")
+    def test_device_map_auto_is_default(self, mock_pick_gpu, mock_sync, mock_empty_cache, mock_cuda_available, mock_lm_eval_results, tmp_path):
+        """Test that device_map='auto' is always used by default."""
+        outdir = str(tmp_path / "out")
+        mock_cuda_available.return_value = True
+        mock_pick_gpu.return_value = 0
+
+        with patch.object(eval_module.lm_eval, "simple_evaluate",
+                          return_value=mock_lm_eval_results) as mock_eval:
+            with patch.object(eval_module, "TaskManager"):
+                with patch("sys.argv", ["eval.py", "--model", "test-model", "--outdir", outdir]):
+                    eval_module.main()
+
+        # Check that model_args includes device_map=auto
+        model_args = mock_eval.call_args.kwargs["model_args"]
+        assert "device_map=auto" in model_args
+        assert "low_cpu_mem_usage=True" in model_args
+        assert "offload_folder=/tmp/offload" in model_args
+
+    @patch("experiment.eval.torch.cuda.is_available")
+    @patch("experiment.eval.torch.cuda.empty_cache")
+    @patch("experiment.eval.torch.cuda.synchronize")
+    @patch("experiment.eval.pick_best_gpu")
+    @patch("os.environ", {})
+    def test_pick_best_gpu_sets_cuda_visible_devices(self, mock_pick_gpu, mock_sync, mock_empty_cache, mock_cuda_available, mock_lm_eval_results, tmp_path):
+        """Test that pick_best_gpu() is used to set CUDA_VISIBLE_DEVICES."""
+        outdir = str(tmp_path / "out")
+        mock_cuda_available.return_value = True
+        mock_pick_gpu.return_value = 2  # Simulate GPU 2 has most memory
+
+        # Patch os.environ within the test
+        with patch.dict("os.environ", {}, clear=False):
+            with patch.object(eval_module.lm_eval, "simple_evaluate",
+                              return_value=mock_lm_eval_results) as mock_eval:
+                with patch.object(eval_module, "TaskManager"):
+                    with patch("sys.argv", ["eval.py", "--model", "test-model", "--outdir", outdir]):
+                        eval_module.main()
+
+            # Check that CUDA_VISIBLE_DEVICES was set to best GPU
+            assert os.environ.get("CUDA_VISIBLE_DEVICES") == "2"
+            mock_pick_gpu.assert_called_once()
+
+    @patch("experiment.eval.torch.cuda.is_available")
+    @patch("experiment.eval.torch.cuda.empty_cache")
+    @patch("experiment.eval.torch.cuda.synchronize")
+    @patch("experiment.eval.gc.collect")
+    def test_memory_clearing(self, mock_gc, mock_sync, mock_empty_cache, mock_cuda_available, mock_lm_eval_results, tmp_path):
+        """Test that memory is cleared before and after evaluation."""
+        outdir = str(tmp_path / "out")
+        mock_cuda_available.return_value = True
+
+        with patch.object(eval_module.lm_eval, "simple_evaluate",
+                          return_value=mock_lm_eval_results) as mock_eval:
+            with patch.object(eval_module, "TaskManager"):
+                with patch("sys.argv", ["eval.py", "--model", "test-model", "--outdir", outdir]):
+                    with patch("experiment.eval.pick_best_gpu", return_value=0):
+                        eval_module.main()
+
+        # Check memory clearing was called
+        assert mock_gc.called
+        assert mock_empty_cache.called
+        assert mock_sync.called
+        # Should be called at least twice (before and after)
+        assert mock_gc.call_count >= 2
+
+    @patch("experiment.eval.torch.cuda.is_available")
+    def test_no_cuda_fallback(self, mock_cuda_available, mock_lm_eval_results, tmp_path):
+        """Test that eval works without CUDA (CPU only)."""
+        outdir = str(tmp_path / "out")
+        mock_cuda_available.return_value = False
+
+        with patch.object(eval_module.lm_eval, "simple_evaluate",
+                          return_value=mock_lm_eval_results) as mock_eval:
+            with patch.object(eval_module, "TaskManager"):
+                with patch("sys.argv", ["eval.py", "--model", "test-model", "--outdir", outdir]):
+                    eval_module.main()
+
+        # Should not crash and should still use device_map
+        model_args = mock_eval.call_args.kwargs["model_args"]
+        assert "device_map=auto" in model_args
+        # device should be None (let device_map handle it)
+        assert mock_eval.call_args.kwargs["device"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -350,10 +437,14 @@ class TestModelArgs:
                           return_value=mock_lm_eval_results) as mock_eval:
             with patch.object(eval_module, "TaskManager"):
                 with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir]):
-                    eval_module.main()
+                    with patch("experiment.eval.torch.cuda.is_available", return_value=False):
+                        eval_module.main()
         model_args = mock_eval.call_args.kwargs["model_args"]
-        assert model_args == "pretrained=org/test"
-        assert "dtype" not in model_args
+        # Now includes device_map and other defaults
+        assert "pretrained=org/test" in model_args
+        assert "device_map=auto" in model_args
+        assert "low_cpu_mem_usage=True" in model_args
+        # dtype is not added when auto
 
     def test_explicit_dtype_is_included(self, mock_lm_eval_results, tmp_path):
         outdir = str(tmp_path / "out")
@@ -362,9 +453,13 @@ class TestModelArgs:
             with patch.object(eval_module, "TaskManager"):
                 with patch("sys.argv", ["eval.py", "--model", "org/test", "--outdir", outdir,
                                         "--dtype", "float16"]):
-                    eval_module.main()
+                    with patch("experiment.eval.torch.cuda.is_available", return_value=False):
+                        eval_module.main()
         model_args = mock_eval.call_args.kwargs["model_args"]
-        assert model_args == "pretrained=org/test,dtype=float16"
+        # Now includes device_map and other defaults plus the explicit dtype
+        assert "pretrained=org/test" in model_args
+        assert "device_map=auto" in model_args
+        assert "dtype=float16" in model_args
 
 
 # ---------------------------------------------------------------------------
