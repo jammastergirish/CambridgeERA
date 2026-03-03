@@ -1010,6 +1010,44 @@ def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step,
     return {"forget_nll": forget_nll, "retain_nll": retain_nll, "gap": gap}
 
 
+# Minimum free GPU VRAM (in bytes) required to attempt CUDA eval.
+# If no GPU clears this bar we fall back to CPU.
+_MIN_FREE_VRAM_FOR_EVAL = 10 * 1024 ** 3  # 10 GiB
+
+
+def _pick_eval_device(requested_device: str) -> str:
+    """Return a safe device for eval.py.
+
+    If the caller asked for 'cpu' or a specific non-CUDA device, respect it.
+    Otherwise check how much free VRAM is available *right now* (after the
+    training model has been deleted and caches cleared).  If the best GPU
+    has less than _MIN_FREE_VRAM_FOR_EVAL bytes free, fall back to CPU to
+    avoid an immediate OOM during model reload inside eval.py.
+    """
+    if not torch.cuda.is_available() or requested_device == "cpu":
+        return requested_device
+
+    n = torch.cuda.device_count()
+    best_free = 0
+    for i in range(n):
+        try:
+            free, _ = torch.cuda.mem_get_info(i)
+            best_free = max(best_free, free)
+        except Exception:
+            pass
+
+    if best_free < _MIN_FREE_VRAM_FOR_EVAL:
+        free_gib = best_free / 1024 ** 3
+        print(
+            f"[unlearn] WARNING: Best GPU only has {free_gib:.1f} GiB free "
+            f"(need ≥ {_MIN_FREE_VRAM_FOR_EVAL / 1024**3:.0f} GiB). "
+            f"Falling back to --device cpu for eval."
+        )
+        return "cpu"
+
+    return requested_device
+
+
 def run_evaluation_benchmarks(outdir, device, dtype, no_eval=False):
     """Run evaluation benchmarks on the unlearned model.
 
@@ -1028,10 +1066,11 @@ def run_evaluation_benchmarks(outdir, device, dtype, no_eval=False):
 
     print("[unlearn] Running eval benchmarks ...")
     eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiment", "eval.py")
+    eval_device = _pick_eval_device(device)
     eval_cmd = [
         "uv", "run", "--script", eval_script,
         "--model", outdir,
-        "--device", device,
+        "--device", eval_device,
         "--dtype", dtype,
     ]
 
