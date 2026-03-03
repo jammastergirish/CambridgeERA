@@ -105,8 +105,11 @@ def tokenize_texts(
             # Clip invalid tokens to valid range
             enc["input_ids"] = torch.clamp(input_ids, 0, vocab_size - 1)
 
-        # Move tensors to the target device (GPU/MPS/CPU)
-        batches.append({k: v.to(device) for k, v in enc.items()})
+        # Keep tensors on the requested device (often CPU to save VRAM)
+        if device != "cpu":
+            batches.append({k: v.to(device) for k, v in enc.items()})
+        else:
+            batches.append(enc)  # Already on CPU from tokenizer
     return batches
 
 
@@ -213,6 +216,8 @@ def nll_loss(model, batch: dict) -> torch.Tensor:
     For unlearning, we either MINIMIZE it (on retain data) to preserve
     capability, or NEGATE it (on forget data) to degrade capability.
     """
+    # For distributed models, inputs need to be on the same device as the first layer
+    # HF models with device_map handle this automatically in their forward()
     input_ids = batch["input_ids"]          # (B, T)
     attention_mask = batch["attention_mask"]  # (B, T) — 1 for real tokens, 0 for padding
     outputs = model(input_ids=input_ids, attention_mask=attention_mask)
@@ -553,7 +558,10 @@ def rmu_loss(
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
-    loss = torch.tensor(0.0, device=next(model.parameters()).device, dtype=next(model.parameters()).dtype)
+    # For distributed models, use the device of the output (logits are always on the last device)
+    # For single-device models, this still works correctly
+    loss_device = forget_acts[layer_ids[0]].device
+    loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
 
     for lid in layer_ids:
         # Forget: MSE toward (steering_coeff * random_direction)
@@ -604,7 +612,9 @@ def cb_loss(
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
-    loss = torch.tensor(0.0, device=next(model.parameters()).device, dtype=next(model.parameters()).dtype)
+    # Use the device of the activations for the loss tensor
+    loss_device = forget_acts[layer_ids[0]].device
+    loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
 
     for lid in layer_ids:
         # Forget: flatten (B, T, D) → (B*T, D) so each token position gets
@@ -860,7 +870,9 @@ def cb_lat_loss(
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
     # CB loss computation: same as cb_loss() but using perturbed forget acts
-    loss = torch.tensor(0.0, device=device, dtype=next(model.parameters()).dtype)
+    # Use the device of the activations for the loss tensor
+    loss_device = forget_acts[layer_ids[0]].device
+    loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
     for lid in layer_ids:
         # Forget: push perturbed activations toward random noise direction
         fa = forget_acts[lid].flatten(0, 1)
@@ -1086,9 +1098,11 @@ def run_validation(model, eval_forget_batches, eval_retain_batches, epoch, step,
 
     model.eval()  # switch to eval mode (disables dropout, etc.)
     with torch.no_grad():
-        # Move eval batches to device when needed
-        forget_nll = sum(nll_loss(model, {k: v.to(device) for k, v in b.items()}).item() for b in eval_forget_batches) / len(eval_forget_batches)
-        retain_nll = sum(nll_loss(model, {k: v.to(device) for k, v in b.items()}).item() for b in eval_retain_batches) / len(eval_retain_batches)
+        # For distributed models, HF's forward() handles device placement automatically
+        # We just need to ensure inputs are on a CUDA device if model is on CUDA
+        eval_device = device if not hasattr(model, 'hf_device_map') else 'cuda' if torch.cuda.is_available() else 'cpu'
+        forget_nll = sum(nll_loss(model, {k: v.to(eval_device) for k, v in b.items()}).item() for b in eval_forget_batches) / len(eval_forget_batches)
+        retain_nll = sum(nll_loss(model, {k: v.to(eval_device) for k, v in b.items()}).item() for b in eval_retain_batches) / len(eval_retain_batches)
     model.train()  # switch back to training mode
 
     gap = forget_nll - retain_nll
@@ -1737,9 +1751,10 @@ def main():
         print("[unlearn] Running NLL evaluation on held-out split...")
         model.eval()
         with torch.no_grad():
-            # Move eval batches to device when needed
-            forget_nll = sum(nll_loss(model, {k: v.to(device) for k, v in b.items()}).item() for b in eval_forget_batches) / len(eval_forget_batches)
-            retain_nll = sum(nll_loss(model, {k: v.to(device) for k, v in b.items()}).item() for b in eval_retain_batches) / len(eval_retain_batches)
+            # For distributed models, HF's forward() handles device placement automatically
+            eval_device = device if not hasattr(model, 'hf_device_map') else 'cuda' if torch.cuda.is_available() else 'cpu'
+            forget_nll = sum(nll_loss(model, {k: v.to(eval_device) for k, v in b.items()}).item() for b in eval_forget_batches) / len(eval_forget_batches)
+            retain_nll = sum(nll_loss(model, {k: v.to(eval_device) for k, v in b.items()}).item() for b in eval_retain_batches) / len(eval_retain_batches)
         print(f"[unlearn] Eval  forget_NLL={forget_nll:.4f}  retain_NLL={retain_nll:.4f}")
         print(f"[unlearn] Eval  gap (forget - retain) = {forget_nll - retain_nll:.4f}")
         print(f"[unlearn]   → Good unlearning: high forget_NLL + low retain_NLL\n")
