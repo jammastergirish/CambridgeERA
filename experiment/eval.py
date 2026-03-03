@@ -13,6 +13,9 @@
 """
 Benchmark evaluation using EleutherAI's lm-evaluation-harness.
 
+Automatically uses device_map='auto' with CPU offloading to handle large models
+and prevent OOM errors. Selects the GPU with most free memory when available.
+
 Runs multiple benchmarks in a single pass (shared model load):
   Standard (built-in to lm-eval):
     - MMLU          general knowledge / capabilities
@@ -31,6 +34,7 @@ Output structure (e.g. --outdir outputs/model_name/evals):
     ...
 
 Usage:
+  # Standard usage (automatically handles memory management)
   uv run experiment/eval.py --model EleutherAI/deep-ignorance-unfiltered \
       --outdir outputs/base/evals
 
@@ -47,15 +51,17 @@ import argparse
 import json
 import os
 import sys
+import gc
 
 import lm_eval
 from lm_eval.tasks import TaskManager
+import torch
 
 # Add project root to path so we can import utils
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
 sys.path.insert(0, _PROJECT_ROOT)
-from utils import model_outdir
+from utils import model_outdir, pick_best_gpu
 
 
 DEFAULT_TASKS = [
@@ -93,34 +99,46 @@ def main():
     if args.outdir is None:
         args.outdir = model_outdir(args.model, suffix="evals")
 
-    # Build model_args string for lm-eval
+    # Build model_args string for lm-eval with memory-efficient defaults
     model_args = f"pretrained={args.model}"
+
+    # Always use device_map='auto' for automatic memory management
+    model_args += ",device_map=auto"
+
+    # Always set up CPU offloading to handle large models
+    offload_folder = "/tmp/offload"
+    model_args += f",offload_folder={offload_folder}"
+    os.makedirs(offload_folder, exist_ok=True)
+
+    # Always use low CPU memory usage for efficiency
+    model_args += ",low_cpu_mem_usage=True"
+
+    # Add dtype if specified
     if args.dtype != "auto":
         model_args += f",dtype={args.dtype}"
 
-    # Resolve device — use pick_best_gpu() so lm_eval lands on the freest GPU.
-    # lm_eval does its own internal from_pretrained and ignores device_map_kwargs,
-    # so we restrict it to one GPU via CUDA_VISIBLE_DEVICES instead of relying
-    # on PyTorch device placement after the fact.
-    import torch
-    from utils import pick_best_gpu
-    device = args.device
-    if device == "auto":
-        if torch.cuda.is_available():
-            best = pick_best_gpu()
-            # Restrict lm_eval's view to just this GPU; it will call it "cuda:0"
-            os.environ["CUDA_VISIBLE_DEVICES"] = str(best)
-            device = "cuda"
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
+    # Clear memory before starting evaluation
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+    # Use pick_best_gpu() to select the GPU with most free memory,
+    # then let device_map='auto' use it with CPU offloading as needed
+    if torch.cuda.is_available():
+        best_gpu = pick_best_gpu()
+        # Restrict to the best GPU for device_map to use primarily
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(best_gpu)
+        print(f"[eval] Selected GPU {best_gpu} (most free memory)")
+
+    # Since we're using device_map='auto', we don't specify a device to lm-eval
+    device = None  # Let device_map handle everything
 
     # Build task manager with custom task path so vendored YAMLs are discovered
     task_manager = TaskManager(include_path=args.include_path)
 
     print(f"[eval] Model:   {args.model}")
-    print(f"[eval] Device:  {device}")
+    print(f"[eval] Device:  auto (device_map with CPU offloading)")
     print(f"[eval] Tasks:   {', '.join(args.tasks)}")
     print(f"[eval] Custom:  {args.include_path}")
     if args.limit:
@@ -128,18 +146,31 @@ def main():
     print()
 
     # Run all tasks in one call (model loaded once, tasks evaluated sequentially)
-    results = lm_eval.simple_evaluate(
-        model="hf",
-        model_args=model_args,
-        tasks=args.tasks,
-        batch_size=args.batch_size,
-        device=device,
-        limit=args.limit,
-        random_seed=args.seed,
-        numpy_random_seed=args.seed,
-        torch_random_seed=args.seed,
-        task_manager=task_manager,
-    )
+    try:
+        results = lm_eval.simple_evaluate(
+            model="hf",
+            model_args=model_args,
+            tasks=args.tasks,
+            batch_size=args.batch_size,
+            device=device,
+            limit=args.limit,
+            random_seed=args.seed,
+            numpy_random_seed=args.seed,
+            torch_random_seed=args.seed,
+            task_manager=task_manager,
+        )
+    except torch.cuda.OutOfMemoryError as e:
+        print(f"\n[eval] ERROR: CUDA OOM despite device_map='auto'. Try:")
+        print(f"  1. Reduce batch size: --batch-size 1")
+        print(f"  2. Kill other GPU processes and retry")
+        print(f"  3. Increase system RAM for CPU offloading")
+        raise e
+    finally:
+        # Clear memory after evaluation
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
     # Print summary table
     print("\n" + "=" * 60)
