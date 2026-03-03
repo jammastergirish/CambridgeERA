@@ -46,7 +46,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 # Reuse device / dtype helpers from utils.py if available, else inline
 # ---------------------------------------------------------------------------
 try:
-    from utils import resolve_device, resolve_dtype, model_outdir
+    from utils import resolve_device, resolve_dtype, model_outdir, filter_gpus_by_free_vram
 except ImportError as e:
     raise ImportError(f"Could not import utils.py from project root: {e}") from e
 
@@ -1336,9 +1336,14 @@ def main():
 
     # ---- Load base model ----
     print(f"[unlearn] Loading base model: {args.model}")
-    
-    # If device is auto, let accelerate distribute it across all available GPUs
-    # Otherwise, load it to the CPU first and then manually .to(device) it
+
+    # If device is auto, let accelerate distribute it across available GPUs.
+    # First, restrict CUDA_VISIBLE_DEVICES to GPUs with enough free VRAM so
+    # that device_map='auto' never places layers on a near-full GPU.
+    if args.device == "auto" and torch.cuda.is_available():
+        usable = filter_gpus_by_free_vram(min_free_gib=10.0)
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in usable)
+        print(f"[unlearn] Restricting to GPUs with ≥10 GiB free: {usable}")
     device_map_kwargs = {"device_map": "auto"} if args.device == "auto" else {}
     
     model = AutoModelForCausalLM.from_pretrained(

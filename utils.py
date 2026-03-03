@@ -98,6 +98,42 @@ def pick_best_gpu() -> int:
     return best_idx
 
 
+def filter_gpus_by_free_vram(min_free_gib: float = 10.0) -> list[int]:
+    """Return GPU indices that have at least *min_free_gib* GiB of free VRAM.
+
+    When multiple processes are sharing a machine, some GPUs may be nearly
+    full.  Passing the returned list to CUDA_VISIBLE_DEVICES prevents
+    accelerate's device_map='auto' from placing model layers on those GPUs.
+
+    Falls back to [best_gpu_index] if no GPU meets the threshold, so that
+    training can still proceed (and surface a real OOM rather than silently
+    hang).
+    """
+    if not torch.cuda.is_available():
+        return []
+    min_free_bytes = int(min_free_gib * 1024 ** 3)
+    n = torch.cuda.device_count()
+    usable = []
+    for i in range(n):
+        try:
+            free, _ = torch.cuda.mem_get_info(i)
+            if free >= min_free_bytes:
+                usable.append(i)
+        except Exception:
+            pass
+    if not usable:
+        # No GPU has enough free memory — pick the best one and warn
+        best = pick_best_gpu()
+        free_bytes, _ = torch.cuda.mem_get_info(best)
+        free_gib = free_bytes / 1024 ** 3
+        print(
+            f"[device] WARNING: No GPU has ≥ {min_free_gib:.0f} GiB free. "
+            f"Best GPU {best} has {free_gib:.1f} GiB free. Using it anyway."
+        )
+        return [best]
+    return usable
+
+
 def resolve_device(device: str) -> str:
     """Resolve 'auto' device to the best available (cuda:N > mps > cpu).
 
