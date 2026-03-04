@@ -28,6 +28,7 @@ from utils import (
     write_csv,
     filter_gpus_by_free_vram,
     compute_training_max_memory,
+    ensure_datasets_exist,
 )
 
 
@@ -510,3 +511,183 @@ class TestInitWandb:
             with patch.dict("sys.modules", {"wandb": None}):
                 result = init_wandb("test_script", self._args())
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# ensure_datasets_exist
+# ---------------------------------------------------------------------------
+class TestEnsureDatasetsExist:
+    def test_datasets_already_exist(self, tmp_path, monkeypatch):
+        """Test when both dataset files already exist."""
+        # Create temporary data directory with both files
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        forget_file = data_dir / "forget.txt"
+        retain_file = data_dir / "retain.txt"
+        forget_file.write_text("forget sample\n")
+        retain_file.write_text("retain sample\n")
+
+        # Mock the path resolution in utils
+        import utils
+        original_dirname = os.path.dirname
+        original_abspath = os.path.abspath
+        monkeypatch.setattr(os.path, 'dirname', lambda x: str(tmp_path) if 'utils' in x else original_dirname(x))
+        monkeypatch.setattr(os.path, 'abspath', lambda x: str(tmp_path / 'utils.py') if 'utils' in x else original_abspath(x))
+
+        # Should not raise any errors and not create anything
+        utils.ensure_datasets_exist()
+
+        # Verify files still exist and weren't modified
+        assert forget_file.exists()
+        assert retain_file.exists()
+        assert forget_file.read_text() == "forget sample\n"
+        assert retain_file.read_text() == "retain sample\n"
+
+    def test_datasets_missing_with_create_script(self, tmp_path, monkeypatch, capsys):
+        """Test when dataset files are missing but create_datasets.py exists."""
+        import subprocess
+        import utils
+
+        # Setup temp directory structure
+        data_dir = tmp_path / "data"
+        create_script = tmp_path / "create_datasets.py"
+
+        # Create a mock create_datasets.py script
+        create_script.write_text("""
+import os
+os.makedirs('data', exist_ok=True)
+with open('data/forget.txt', 'w') as f:
+    f.write('generated forget')
+with open('data/retain.txt', 'w') as f:
+    f.write('generated retain')
+print("Datasets created!")
+""")
+
+        # Mock paths
+        original_dirname = os.path.dirname
+        original_abspath = os.path.abspath
+        monkeypatch.setattr(os.path, 'dirname', lambda x: str(tmp_path) if 'utils' in x else original_dirname(x))
+        monkeypatch.setattr(os.path, 'abspath', lambda x: str(tmp_path / 'utils.py') if 'utils' in x else original_abspath(x))
+
+        # Mock subprocess.run to simulate successful script execution
+        def mock_run(cmd, **kwargs):
+            # Actually run the script in the temp directory
+            import subprocess
+            result = subprocess.run(
+                ["python", str(create_script)],
+                cwd=str(tmp_path),
+                capture_output=True,
+                text=True
+            )
+            return result
+
+        monkeypatch.setattr(subprocess, 'run', mock_run)
+
+        # Run the function
+        utils.ensure_datasets_exist()
+
+        # Check output
+        captured = capsys.readouterr()
+        assert "Data files missing" in captured.out
+        assert "Datasets created successfully" in captured.out
+
+        # Verify files were created
+        assert (tmp_path / "data" / "forget.txt").exists()
+        assert (tmp_path / "data" / "retain.txt").exists()
+
+    def test_datasets_missing_no_create_script(self, tmp_path, monkeypatch, capsys):
+        """Test when dataset files are missing and create_datasets.py doesn't exist."""
+        import utils
+
+        # Mock paths - no create_datasets.py exists
+        original_dirname = os.path.dirname
+        original_abspath = os.path.abspath
+        monkeypatch.setattr(os.path, 'dirname', lambda x: str(tmp_path) if 'utils' in x else original_dirname(x))
+        monkeypatch.setattr(os.path, 'abspath', lambda x: str(tmp_path / 'utils.py') if 'utils' in x else original_abspath(x))
+
+        # Run the function
+        utils.ensure_datasets_exist()
+
+        # Check warning output
+        captured = capsys.readouterr()
+        assert "Warning: data files missing and create_datasets.py not found" in captured.out
+
+    def test_partial_datasets_exist(self, tmp_path, monkeypatch, capsys):
+        """Test when only one dataset file exists."""
+        import subprocess
+        import utils
+
+        # Create only forget.txt
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        forget_file = data_dir / "forget.txt"
+        forget_file.write_text("existing forget\n")
+
+        # Create mock create_datasets.py
+        create_script = tmp_path / "create_datasets.py"
+        create_script.write_text("""
+import os
+os.makedirs('data', exist_ok=True)
+# Only create retain.txt since forget.txt exists
+with open('data/retain.txt', 'w') as f:
+    f.write('generated retain')
+""")
+
+        # Mock paths
+        original_dirname = os.path.dirname
+        original_abspath = os.path.abspath
+        monkeypatch.setattr(os.path, 'dirname', lambda x: str(tmp_path) if 'utils' in x else original_dirname(x))
+        monkeypatch.setattr(os.path, 'abspath', lambda x: str(tmp_path / 'utils.py') if 'utils' in x else original_abspath(x))
+
+        # Mock subprocess
+        def mock_run(cmd, **kwargs):
+            import subprocess
+            return subprocess.run(
+                ["python", str(create_script)],
+                cwd=str(tmp_path),
+                capture_output=True,
+                text=True
+            )
+
+        monkeypatch.setattr(subprocess, 'run', mock_run)
+
+        # Run function - should create missing retain.txt
+        utils.ensure_datasets_exist()
+
+        # Check both files exist
+        assert (tmp_path / "data" / "forget.txt").exists()
+        assert (tmp_path / "data" / "retain.txt").exists()
+
+        # Check output indicates datasets were created
+        captured = capsys.readouterr()
+        assert "Data files missing" in captured.out
+
+    def test_create_script_fails(self, tmp_path, monkeypatch, capsys):
+        """Test when create_datasets.py exists but fails to run."""
+        import subprocess
+        import utils
+
+        # Create a failing create_datasets.py script
+        create_script = tmp_path / "create_datasets.py"
+        create_script.write_text("raise RuntimeError('Intentional failure')")
+
+        # Mock paths
+        original_dirname = os.path.dirname
+        original_abspath = os.path.abspath
+        monkeypatch.setattr(os.path, 'dirname', lambda x: str(tmp_path) if 'utils' in x else original_dirname(x))
+        monkeypatch.setattr(os.path, 'abspath', lambda x: str(tmp_path / 'utils.py') if 'utils' in x else original_abspath(x))
+
+        # Mock subprocess to return failure
+        def mock_run(cmd, **kwargs):
+            from subprocess import CompletedProcess
+            return CompletedProcess(cmd, 1, "", "RuntimeError: Intentional failure")
+
+        monkeypatch.setattr(subprocess, 'run', mock_run)
+
+        # Run function - should warn about failure
+        utils.ensure_datasets_exist()
+
+        # Check warning output
+        captured = capsys.readouterr()
+        assert "Warning: create_datasets.py failed" in captured.out
+        assert "RuntimeError" in captured.out
