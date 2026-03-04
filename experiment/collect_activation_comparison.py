@@ -340,6 +340,8 @@ def main():
     parser.add_argument("--plot-outdir", default=None,
                         help="Plot dir (default: auto-derived from model names)")
     parser.add_argument("--title", default=None, help="Title for generated plots")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed (accepted for pipeline compatibility).")
     parser.add_argument(
         "--cache-fp16",
         action="store_true",
