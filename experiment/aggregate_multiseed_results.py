@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# /// script
+# dependencies = [
+#   "pandas",
+#   "numpy",
+# ]
+# ///
 """
 Aggregate results from multiple seed runs to compute error bars.
 
