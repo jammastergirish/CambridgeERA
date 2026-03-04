@@ -6,7 +6,6 @@ cd "$(dirname "$0")/.."
 
 clear && printf '\e[3J'
 
-# Ensure datasets exist before starting (using the utils.py function)
 # Ensure datasets exist before starting
 if [[ ! -f "data/forget.txt" || ! -f "data/retain.txt" ]]; then
   echo "[pipeline] Data files missing — running create_datasets.py..."
