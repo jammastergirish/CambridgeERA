@@ -29,36 +29,21 @@ export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-pipeline_$(date +%s)}"
 # Configuration — single output root for all results
 OUTROOT="${OUTROOT:-outputs}"
 
-# Models (UNLEARNED can be overridden: UNLEARNED=user/model ./experiment/pipeline.sh)
-BASE="EleutherAI/deep-ignorance-unfiltered"
-FILTERED="EleutherAI/deep-ignorance-e2e-strong-filter"
-UNLEARNED="${UNLEARNED:-EleutherAI/deep-ignorance-unfiltered-cb-lat}"
-CB_ONLY="EleutherAI/deep-ignorance-unfiltered-cb"
-PRETRAIN="EleutherAI/deep-ignorance-pretraining-stage-unfiltered"
+# Models — set MODEL_A and MODEL_B to compare any two models.
+# Override via environment variables:
+#   MODEL_A=org/model-a MODEL_B=org/model-b ./experiment/pipeline.sh
+MODEL_A="${MODEL_A:-EleutherAI/deep-ignorance-unfiltered}"
+MODEL_B="${MODEL_B:-EleutherAI/deep-ignorance-e2e-strong-filter}"
 
-# Opt-in flags for extra comparisons (set to 1 to enable).
-# By default only COMP1 (Base→Filtered) and COMP2 (Base→Unlearned) run.
-# COMP3: Base→Pretraining checkpoint
-# COMP4: Base→CB-only, COMP5: CB-only→Unlearned, COMP6: Unlearned→Filtered
-ENABLE_PRETRAIN_COMPARISON="${ENABLE_PRETRAIN_COMPARISON:-0}"
-ENABLE_CB_COMPARISONS="${ENABLE_CB_COMPARISONS:-0}"
 # Tuned lens is slow (~1hr per model). Logit lens runs by default; set to 1 to also run tuned lens.
 ENABLE_TUNED_LENS="${ENABLE_TUNED_LENS:-0}"
 # Multiple seeds for statistical robustness (space-separated list)
 SEEDS="${SEEDS:-42 123 456}"
 
-# Comparison names (derived from model IDs: / → _)
-COMP1="EleutherAI_deep-ignorance-unfiltered__to__EleutherAI_deep-ignorance-e2e-strong-filter"
-COMP2="EleutherAI_deep-ignorance-unfiltered__to__${UNLEARNED//\//_}"
-COMP3="EleutherAI_deep-ignorance-unfiltered__to__${PRETRAIN//\//_}"
-COMP4="EleutherAI_deep-ignorance-unfiltered__to__${CB_ONLY//\//_}"
-COMP5="${CB_ONLY//\//_}__to__${UNLEARNED//\//_}"
-COMP6="${UNLEARNED//\//_}__to__EleutherAI_deep-ignorance-e2e-strong-filter"
-
-# Per-model folder names (for analyses that run once per model, not per comparison)
-MODEL_BASE="EleutherAI_deep-ignorance-unfiltered"
-MODEL_FILTERED="EleutherAI_deep-ignorance-e2e-strong-filter"
-MODEL_UNLEARNED="${UNLEARNED//\//_}"
+# Output directory names derived from model IDs (/ → _)
+MODEL_A_DIR="${MODEL_A//\//_}"
+MODEL_B_DIR="${MODEL_B//\//_}"
+COMP="${MODEL_A_DIR}__to__${MODEL_B_DIR}"
 
 # Device and dtype settings
 PARAM_DEVICE="${PARAM_DEVICE:-auto}"  # auto = cuda > mps > cpu
@@ -114,21 +99,8 @@ echo "=========================================="
 echo "      MODEL DIFFS ANALYSIS PIPELINE"
 echo "=========================================="
 echo ""
-echo "Base model:    $BASE"
-echo "Comparison 1:  Base → $FILTERED"
-echo "Comparison 2:  Base → $UNLEARNED"
-if [[ "$ENABLE_PRETRAIN_COMPARISON" == "1" ]]; then
-  echo "Comparison 3:  Base → $PRETRAIN  [opt-in]"
-else
-  echo "Comparison 3:  (disabled — set ENABLE_PRETRAIN_COMPARISON=1 to enable)"
-fi
-if [[ "$ENABLE_CB_COMPARISONS" == "1" ]]; then
-  echo "Comparison 4:  Base → $CB_ONLY  [opt-in]"
-  echo "Comparison 5:  $CB_ONLY → $UNLEARNED  [opt-in]"
-  echo "Comparison 6:  $UNLEARNED → $FILTERED  [opt-in]"
-else
-  echo "Comparisons 4–6: (disabled — set ENABLE_CB_COMPARISONS=1 to enable)"
-fi
+echo "Model A:  $MODEL_A"
+echo "Model B:  $MODEL_B"
 echo "Output root:   $OUTROOT"
 echo "Seeds:         $SEEDS  (for statistical robustness)"
 echo ""
@@ -143,37 +115,25 @@ echo ""
 # echo "(Results stored per-model, not per-comparison)"
 
 # echo ""
-# echo "Model: $BASE"
+# echo "Model A: $MODEL_A"
 # echo "----------------------------------------"
-# if step_complete "${OUTROOT}/${MODEL_BASE}/evals" "summary.json"; then
+# if step_complete "${OUTROOT}/${MODEL_A_DIR}/evals" "summary.json"; then
 #   echo "  ✓ Already complete — skipping"
 # else
 #   uv run experiment/eval.py \
-#     --model "$BASE" \
+#     --model "$MODEL_A" \
 #     --device "$ACTIVATION_DEVICE" \
 #     --dtype "$ACTIVATION_DTYPE"
 # fi
 
 # echo ""
-# echo "Model: $FILTERED"
+# echo "Model B: $MODEL_B"
 # echo "----------------------------------------"
-# if step_complete "${OUTROOT}/${MODEL_FILTERED}/evals" "summary.json"; then
+# if step_complete "${OUTROOT}/${MODEL_B_DIR}/evals" "summary.json"; then
 #   echo "  ✓ Already complete — skipping"
 # else
 #   uv run experiment/eval.py \
-#     --model "$FILTERED" \
-#     --device "$ACTIVATION_DEVICE" \
-#     --dtype "$ACTIVATION_DTYPE"
-# fi
-
-# echo ""
-# echo "Model: $UNLEARNED"
-# echo "----------------------------------------"
-# if step_complete "${OUTROOT}/${MODEL_UNLEARNED}/evals" "summary.json"; then
-#   echo "  ✓ Already complete — skipping"
-# else
-#   uv run experiment/eval.py \
-#     --model "$UNLEARNED" \
+#     --model "$MODEL_B" \
 #     --device "$ACTIVATION_DEVICE" \
 #     --dtype "$ACTIVATION_DTYPE"
 # fi
@@ -187,109 +147,19 @@ echo "=========================================="
 echo "Computing per-component metrics (Frobenius, spectral, stable rank, cosine sim, etc.)"
 
 echo ""
-echo "Comparison 1: Base → Filtered"
+echo "Comparing: $MODEL_A → $MODEL_B"
 echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP1}/weight_comparison" "per_matrix.csv"; then
+if step_complete "${OUTROOT}/${COMP}/weight_comparison" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/collect_weight_comparison.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
+    --model-a "$MODEL_A" \
+    --model-b "$MODEL_B" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP1}/weight_comparison" \
-    --plot-outdir "${OUTROOT}/${COMP1}/param_plots" \
-    --title "$BASE → $FILTERED"
-fi
-
-echo ""
-echo "Comparison 2: Base → Unlearned"
-echo "----------------------------------------"
-if step_complete "${OUTROOT}/${COMP2}/weight_comparison" "per_matrix.csv"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/collect_weight_comparison.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE" \
-    --outdir "${OUTROOT}/${COMP2}/weight_comparison" \
-    --plot-outdir "${OUTROOT}/${COMP2}/param_plots" \
-    --title "$BASE → $UNLEARNED"
-fi
-
-if [[ "$ENABLE_PRETRAIN_COMPARISON" == "1" ]]; then
-  echo ""
-  echo "Comparison 3: Base → Pretraining"
-  echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${COMP3}/weight_comparison" "per_matrix.csv"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/collect_weight_comparison.py \
-      --model-a "$BASE" \
-      --model-b "$PRETRAIN" \
-      --device "$PARAM_DEVICE" \
-      --dtype "$PARAM_DTYPE" \
-      --outdir "${OUTROOT}/${COMP3}/weight_comparison" \
-      --plot-outdir "${OUTROOT}/${COMP3}/param_plots" \
-      --title "$BASE → $PRETRAIN"
-  fi
-else
-  echo ""
-  echo "Comparison 3: Base → Pretraining (skipped — set ENABLE_PRETRAIN_COMPARISON=1 to enable)"
-fi
-
-if [[ "$ENABLE_CB_COMPARISONS" == "1" ]]; then
-  echo ""
-  echo "Comparison 4: Base → CB-only"
-  echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${COMP4}/weight_comparison" "per_matrix.csv"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/collect_weight_comparison.py \
-      --model-a "$BASE" \
-      --model-b "$CB_ONLY" \
-      --device "$PARAM_DEVICE" \
-      --dtype "$PARAM_DTYPE" \
-      --outdir "${OUTROOT}/${COMP4}/weight_comparison" \
-      --plot-outdir "${OUTROOT}/${COMP4}/param_plots" \
-      --title "$BASE → $CB_ONLY"
-  fi
-
-  echo ""
-  echo "Comparison 5: CB-only → CB+LAT"
-  echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${COMP5}/weight_comparison" "per_matrix.csv"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/collect_weight_comparison.py \
-      --model-a "$CB_ONLY" \
-      --model-b "$UNLEARNED" \
-      --device "$PARAM_DEVICE" \
-      --dtype "$PARAM_DTYPE" \
-      --outdir "${OUTROOT}/${COMP5}/weight_comparison" \
-      --plot-outdir "${OUTROOT}/${COMP5}/param_plots" \
-      --title "$CB_ONLY → $UNLEARNED"
-  fi
-
-  echo ""
-  echo "Comparison 6: CB+LAT → Filtered"
-  echo "----------------------------------------"
-  if step_complete "${OUTROOT}/${COMP6}/weight_comparison" "per_matrix.csv"; then
-    echo "  ✓ Already complete — skipping"
-  else
-    uv run experiment/collect_weight_comparison.py \
-      --model-a "$UNLEARNED" \
-      --model-b "$FILTERED" \
-      --device "$PARAM_DEVICE" \
-      --dtype "$PARAM_DTYPE" \
-      --outdir "${OUTROOT}/${COMP6}/weight_comparison" \
-      --plot-outdir "${OUTROOT}/${COMP6}/param_plots" \
-      --title "$UNLEARNED → $FILTERED"
-  fi
-else
-  echo ""
-  echo "Comparisons 4–6: CB-only chain (skipped — set ENABLE_CB_COMPARISONS=1 to enable)"
+    --outdir "${OUTROOT}/${COMP}/weight_comparison" \
+    --plot-outdir "${OUTROOT}/${COMP}/param_plots" \
+    --title "$MODEL_A → $MODEL_B"
 fi
 
 # # ============================================
@@ -317,30 +187,17 @@ if [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
   echo "Warning: Activation files missing; skipping activation analysis."
 else
   echo ""
-  echo "Comparison 1: Base → Filtered"
+  echo "Comparing: $MODEL_A → $MODEL_B"
   echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${COMP1}/activation_comparison" "activation_comparison.csv" \
+  run_multiseed_experiment "${OUTROOT}/${COMP}/activation_comparison" "activation_comparison.csv" \
     "experiment/collect_activation_comparison.py" \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
+    --model-a "$MODEL_A" \
+    --model-b "$MODEL_B" \
     --forget-text "$FORGET" \
     --retain-text "$RETAIN" \
     --device "$ACTIVATION_DEVICE" \
     --dtype "$ACTIVATION_DTYPE" \
-    --title "E2E Strong Filter: Activation Norms"
-
-  echo ""
-  echo "Comparison 2: Base → Unlearned"
-  echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${COMP2}/activation_comparison" "activation_comparison.csv" \
-    "experiment/collect_activation_comparison.py" \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
-    --forget-text "$FORGET" \
-    --retain-text "$RETAIN" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE" \
-    --title "${UNLEARNED##*/}: Activation Norms"
+    --title "${MODEL_B##*/}: Activation Norms"
 fi
 
 # ============================================
@@ -352,31 +209,19 @@ echo "STEP 4: MLP vs Attention Analysis"
 echo "=========================================="
 
 echo ""
-echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/mlp_attn_analysis" "mlp_attn_summary.csv"; then
+echo "Analyzing: $MODEL_A → $MODEL_B"
+if step_complete "${OUTROOT}/${COMP}/mlp_attn_analysis" "mlp_attn_summary.csv"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/analyze_mlp_vs_attn.py \
-    --per-layer-csv "${OUTROOT}/${COMP1}/weight_comparison/per_coarse_layer.csv" \
-    --per-matrix-csv "${OUTROOT}/${COMP1}/weight_comparison/per_matrix.csv" \
-    --outdir "${OUTROOT}/${COMP1}/mlp_attn_analysis" \
-    --title "E2E Strong Filter: MLP vs Attention"
-fi
-
-echo ""
-echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/mlp_attn_analysis" "mlp_attn_summary.csv"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/analyze_mlp_vs_attn.py \
-    --per-layer-csv "${OUTROOT}/${COMP2}/weight_comparison/per_coarse_layer.csv" \
-    --per-matrix-csv "${OUTROOT}/${COMP2}/weight_comparison/per_matrix.csv" \
-    --outdir "${OUTROOT}/${COMP2}/mlp_attn_analysis" \
-    --title "${UNLEARNED##*/}: MLP vs Attention"
+    --per-layer-csv "${OUTROOT}/${COMP}/weight_comparison/per_coarse_layer.csv" \
+    --per-matrix-csv "${OUTROOT}/${COMP}/weight_comparison/per_matrix.csv" \
+    --outdir "${OUTROOT}/${COMP}/mlp_attn_analysis" \
+    --title "${MODEL_B##*/}: MLP vs Attention"
 fi
 
 # ============================================
-# STEP 6: Layer-wise WMDP Accuracy (per-model)
+# STEP 5: Layer-wise WMDP Accuracy (per-model)
 # ============================================
 echo ""
 echo "=========================================="
@@ -400,31 +245,21 @@ for LENS in $LENS_MODES; do
   echo "--- Lens: ${LENS} ---"
 
   echo ""
-  echo "Model: $BASE"
+  echo "Model A: $MODEL_A"
   echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${MODEL_BASE}/wmdp_${LENS}_lens" "summary.json" \
+  run_multiseed_experiment "${OUTROOT}/${MODEL_A_DIR}/wmdp_${LENS}_lens" "summary.json" \
     "experiment/layerwise_wmdp_accuracy.py" \
-    --model "$BASE" \
+    --model "$MODEL_A" \
     --lens "$LENS" \
     --device "$ACTIVATION_DEVICE" \
     --dtype "$ACTIVATION_DTYPE"
 
   echo ""
-  echo "Model: $FILTERED"
+  echo "Model B: $MODEL_B"
   echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${MODEL_FILTERED}/wmdp_${LENS}_lens" "summary.json" \
+  run_multiseed_experiment "${OUTROOT}/${MODEL_B_DIR}/wmdp_${LENS}_lens" "summary.json" \
     "experiment/layerwise_wmdp_accuracy.py" \
-    --model "$FILTERED" \
-    --lens "$LENS" \
-    --device "$ACTIVATION_DEVICE" \
-    --dtype "$ACTIVATION_DTYPE"
-
-  echo ""
-  echo "Model: $UNLEARNED"
-  echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${MODEL_UNLEARNED}/wmdp_${LENS}_lens" "summary.json" \
-    "experiment/layerwise_wmdp_accuracy.py" \
-    --model "$UNLEARNED" \
+    --model "$MODEL_B" \
     --lens "$LENS" \
     --device "$ACTIVATION_DEVICE" \
     --dtype "$ACTIVATION_DTYPE"
@@ -440,19 +275,11 @@ echo "=========================================="
 echo "Note: This is computationally intensive (SVD on 50 weight matrices)"
 
 echo ""
-echo "Analyzing Comparison 1..."
-run_multiseed_experiment "${OUTROOT}/${COMP1}/null_space_analysis" "null_space_visualization.png" \
+echo "Analyzing: $MODEL_A → $MODEL_B"
+run_multiseed_experiment "${OUTROOT}/${COMP}/null_space_analysis" "null_space_visualization.png" \
   "experiment/null_space_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$FILTERED" \
-  --num-samples 50
-
-echo ""
-echo "Analyzing Comparison 2..."
-run_multiseed_experiment "${OUTROOT}/${COMP2}/null_space_analysis" "null_space_visualization.png" \
-  "experiment/null_space_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$UNLEARNED" \
+  --model-a "$MODEL_A" \
+  --model-b "$MODEL_B" \
   --num-samples 50
 
 # ============================================
@@ -465,22 +292,11 @@ echo "=========================================="
 echo "Analyzing how well forget/retain activations are separated..."
 
 echo ""
-echo "Analyzing Comparison 1..."
-run_multiseed_experiment "${OUTROOT}/${COMP1}/activation_separation" "summary.json" \
+echo "Analyzing: $MODEL_A → $MODEL_B"
+run_multiseed_experiment "${OUTROOT}/${COMP}/activation_separation" "summary.json" \
   "experiment/activation_separation_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$FILTERED" \
-  --forget-text "$FORGET" \
-  --retain-text "$RETAIN" \
-  --device "$ACTIVATION_DEVICE" \
-  --dtype "$ACTIVATION_DTYPE"
-
-echo ""
-echo "Analyzing Comparison 2..."
-run_multiseed_experiment "${OUTROOT}/${COMP2}/activation_separation" "summary.json" \
-  "experiment/activation_separation_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$UNLEARNED" \
+  --model-a "$MODEL_A" \
+  --model-b "$MODEL_B" \
   --forget-text "$FORGET" \
   --retain-text "$RETAIN" \
   --device "$ACTIVATION_DEVICE" \
@@ -496,22 +312,11 @@ echo "=========================================="
 echo "Analyzing covariance spectrum changes..."
 
 echo ""
-echo "Analyzing Comparison 1..."
-run_multiseed_experiment "${OUTROOT}/${COMP1}/activation_covariance" "summary.json" \
+echo "Analyzing: $MODEL_A → $MODEL_B"
+run_multiseed_experiment "${OUTROOT}/${COMP}/activation_covariance" "summary.json" \
   "experiment/activation_covariance_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$FILTERED" \
-  --forget-text "$FORGET" \
-  --retain-text "$RETAIN" \
-  --device "$ACTIVATION_DEVICE" \
-  --dtype "$ACTIVATION_DTYPE"
-
-echo ""
-echo "Analyzing Comparison 2..."
-run_multiseed_experiment "${OUTROOT}/${COMP2}/activation_covariance" "summary.json" \
-  "experiment/activation_covariance_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$UNLEARNED" \
+  --model-a "$MODEL_A" \
+  --model-b "$MODEL_B" \
   --forget-text "$FORGET" \
   --retain-text "$RETAIN" \
   --device "$ACTIVATION_DEVICE" \
@@ -527,25 +332,13 @@ echo "=========================================="
 echo "Analyzing if MLP updates align with nullspace..."
 
 echo ""
-echo "Analyzing Comparison 1..."
-if step_complete "${OUTROOT}/${COMP1}/mlp_nullspace_alignment" "summary.json"; then
+echo "Analyzing: $MODEL_A → $MODEL_B"
+if step_complete "${OUTROOT}/${COMP}/mlp_nullspace_alignment" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
   uv run experiment/mlp_nullspace_alignment.py \
-    --model-a "$BASE" \
-    --model-b "$FILTERED" \
-    --device "$PARAM_DEVICE" \
-    --dtype "$PARAM_DTYPE"
-fi
-
-echo ""
-echo "Analyzing Comparison 2..."
-if step_complete "${OUTROOT}/${COMP2}/mlp_nullspace_alignment" "summary.json"; then
-  echo "  ✓ Already complete — skipping"
-else
-  uv run experiment/mlp_nullspace_alignment.py \
-    --model-a "$BASE" \
-    --model-b "$UNLEARNED" \
+    --model-a "$MODEL_A" \
+    --model-b "$MODEL_B" \
     --device "$PARAM_DEVICE" \
     --dtype "$PARAM_DTYPE"
 fi
@@ -560,22 +353,11 @@ echo "=========================================="
 echo "Analyzing how activations project onto update directions..."
 
 echo ""
-echo "Analyzing Comparison 1..."
-run_multiseed_experiment "${OUTROOT}/${COMP1}/row_space_projection" "summary.json" \
+echo "Analyzing: $MODEL_A → $MODEL_B"
+run_multiseed_experiment "${OUTROOT}/${COMP}/row_space_projection" "summary.json" \
   "experiment/row_space_projection_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$FILTERED" \
-  --forget-text "$FORGET" \
-  --retain-text "$RETAIN" \
-  --device "$ACTIVATION_DEVICE" \
-  --dtype "$ACTIVATION_DTYPE"
-
-echo ""
-echo "Analyzing Comparison 2..."
-run_multiseed_experiment "${OUTROOT}/${COMP2}/row_space_projection" "summary.json" \
-  "experiment/row_space_projection_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$UNLEARNED" \
+  --model-a "$MODEL_A" \
+  --model-b "$MODEL_B" \
   --forget-text "$FORGET" \
   --retain-text "$RETAIN" \
   --device "$ACTIVATION_DEVICE" \
@@ -591,22 +373,11 @@ echo "=========================================="
 echo "Analyzing local smoothness changes..."
 
 echo ""
-echo "Analyzing Comparison 1..."
-run_multiseed_experiment "${OUTROOT}/${COMP1}/lipschitzness_analysis" "summary.json" \
+echo "Analyzing: $MODEL_A → $MODEL_B"
+run_multiseed_experiment "${OUTROOT}/${COMP}/lipschitzness_analysis" "summary.json" \
   "experiment/local_lipschitzness_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$FILTERED" \
-  --forget-text "$FORGET" \
-  --retain-text "$RETAIN" \
-  --device "$ACTIVATION_DEVICE" \
-  --dtype "$ACTIVATION_DTYPE"
-
-echo ""
-echo "Analyzing Comparison 2..."
-run_multiseed_experiment "${OUTROOT}/${COMP2}/lipschitzness_analysis" "summary.json" \
-  "experiment/local_lipschitzness_analysis.py" \
-  --model-a "$BASE" \
-  --model-b "$UNLEARNED" \
+  --model-a "$MODEL_A" \
+  --model-b "$MODEL_B" \
   --forget-text "$FORGET" \
   --retain-text "$RETAIN" \
   --device "$ACTIVATION_DEVICE" \
@@ -622,7 +393,7 @@ echo "=========================================="
 echo ""
 echo "All results saved under: ${OUTROOT}/"
 echo ""
-echo "  <comparison>/"
+echo "  ${COMP}/"
 echo "    weight_comparison/      per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv"
 echo "    param_plots/            Layer locality, stable rank, spectral norm PNGs"
 echo "    activation_comparison/  activation_comparison.csv + _std columns (multi-seed aggregated)"
@@ -638,7 +409,6 @@ echo "        └── seed_*/         Individual seed results (for debugging)"
 echo ""
 echo "  <model>/"
 echo "    evals/                  summary.json (MMLU, WMDP, HellaSwag, TruthfulQA)"
-echo "    linear_probes/          probe_results.csv, summary.json + plot"
 echo "    wmdp_logit_lens/        wmdp_lens_results.csv, summary.json + _std fields (multi-seed)"
 echo "    wmdp_tuned_lens/        wmdp_lens_results.csv, summary.json + _std fields (multi-seed)"
 echo "        └── seed_*/         Individual seed results"

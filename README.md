@@ -70,34 +70,23 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 ## Experiment
 
 ```bash
-# Run pipeline for a specific unlearned model
-UNLEARNED=girishgupta/EleutherAI_deep-ignorance-unfiltered__ga ./experiment/pipeline.sh
-```
-
-You may also want to:
-
-```bash
-# Run pipeline for the default unlearned model (CB-LAT)
+# Compare the two default models (unfiltered → e2e-strong-filter)
 ./experiment/pipeline.sh
 
-# Include the pretraining-checkpoint comparison (COMP3)
-ENABLE_PRETRAIN_COMPARISON=1 ./experiment/pipeline.sh
-
-# Include the full CB-only chain (COMP4: Base→CB, COMP5: CB→Unlearned, COMP6: Unlearned→Filtered)
-ENABLE_CB_COMPARISONS=1 ./experiment/pipeline.sh
+# Compare any two models
+MODEL_A=EleutherAI/deep-ignorance-e2e-strong-filter \
+MODEL_B=EleutherAI/deep-ignorance-e2e-strong-filter-adversarial \
+./experiment/pipeline.sh
 
 # Also run the tuned lens in Step 5 (slow — ~1hr per model; logit lens only by default)
 ENABLE_TUNED_LENS=1 ./experiment/pipeline.sh
-
-# Enable everything
-ENABLE_PRETRAIN_COMPARISON=1 ENABLE_CB_COMPARISONS=1 ENABLE_TUNED_LENS=1 ./experiment/pipeline.sh
 ```
 
 Already-completed steps are automatically skipped (pass `--force` to rerun).
 
 ### Statistical Robustness & Error Bars
 
-The pipeline now includes **multi-seed support** for statistical robustness on stochastic experiments. By default, analyses that depend on random sampling (Steps 3, 5, 7–12) run with 3 seeds and automatically compute error bars:
+The pipeline includes **multi-seed support** for stochastic experiments. By default, analyses that depend on random sampling (Steps 3, 5, 7–12) run with 3 seeds and automatically compute error bars:
 
 ```bash
 # Default: 3 seeds for robust statistics
@@ -106,7 +95,7 @@ The pipeline now includes **multi-seed support** for statistical robustness on s
 # Custom seeds for more robust estimates
 SEEDS="42 123 456 789 999" ./experiment/pipeline.sh
 
-# Single seed (legacy behavior)
+# Single seed (faster, less robust)
 SEEDS="42" ./experiment/pipeline.sh
 ```
 
@@ -133,29 +122,13 @@ Parameter comparison (Step 1) remains deterministic and doesn't use multiple see
 
 ### Experimental Pipeline
 
-The pipeline performs experiments on three models sharing identical architecture.
-
-| Model | Role | What happened to it |
-|---|---|---|
-| `deep-ignorance-unfiltered` | **Base** (control) | Trained on everything, including WMDP-Bio hazardous content |
-| `deep-ignorance-e2e-strong-filter` | **Filtered** (gold standard) | Trained from scratch with hazardous data *removed before training* |
-| `deep-ignorance-unfiltered-XXXXXX` | **Unlearned** (intervention) | Same as Base, but post-hoc unlearned |
-
-By default, every diagnostic runs for two comparisons, always using the Base model as the reference:
+The pipeline compares **any two models** (`MODEL_A` and `MODEL_B`) across a suite of parameter-space and activation-space diagnostics. Both models must share the same architecture.
 
 ```
-Comparison 1:  Base → Filtered     (What does genuine ignorance look like?)   [always on]
-Comparison 2:  Base → Unlearned    (What does post-hoc unlearning look like?) [always on]
+MODEL_A  →  MODEL_B
 ```
 
-By contrasting these two comparisons, you can distinguish *deep representational change* (filtering) from *shallow parameter patching* (unlearning).
-
-Additional comparisons are **opt-in** to avoid unnecessary model loads on routine runs:
-
-| Flag | Comparisons enabled | When to use |
-|---|---|---|
-| `ENABLE_PRETRAIN_COMPARISON=1` | COMP3: Base → Pretraining checkpoint | Studying training-stage effects |
-| `ENABLE_CB_COMPARISONS=1` | COMP4: Base→CB-only, COMP5: CB-only→Unlearned, COMP6: Unlearned→Filtered | Studying the CB→CB-LAT ablation chain |
+Outputs are saved under `outputs/<MODEL_A>__to__<MODEL_B>/`. To compare a different pair, just set `MODEL_A` and `MODEL_B` — no other changes needed.
 
 ---
 
