@@ -62,6 +62,15 @@ def main():
     for run in tqdm(runs, desc="Processing runs"):
         method = run.config.get("hyperparameters", {}).get("method", "unknown")
 
+        # If method is unknown, try to parse it from the run name
+        if method == "unknown":
+            import re
+            # Match patterns like "/simnpo__" or "_simnpo__" in the run name
+            pattern = r'[/_](tar|cb|rmu|npo|simnpo)__'
+            match = re.search(pattern, run.name)
+            if match:
+                method = match.group(1)
+
         mmlu   = run.summary.get("eval_bench/mmlu/acc",                     None)
         wmdp_1 = run.summary.get("eval_bench/wmdp_bio_robust/acc",          None)
         wmdp_2 = run.summary.get("eval_bench/wmdp_bio_cloze_verified/acc_norm", None)
