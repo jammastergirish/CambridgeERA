@@ -251,7 +251,8 @@ def run_sanity_checks(
 # Plotting
 # ---------------------------------------------------------------------------
 
-def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None):
+def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
+                           model_a: str = "", model_b: str = ""):
     """Generate per-component plots from per_matrix.csv."""
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -276,7 +277,8 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None):
         ax.set_ylabel(r"$\|\Delta W\|_F / \|W\|_F$")
         ax.set_title(f"{comp}")
         ax.grid(alpha=0.3)
-    fig.suptitle(title or "Layer locality — relative Frobenius norm", fontsize=14)
+    _subtitle = f"\n{model_a.split('/')[-1]} → {model_b.split('/')[-1]}" if model_a else ""
+    fig.suptitle((title or "Layer locality — relative Frobenius norm") + _subtitle, fontsize=14)
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "layer_locality.png"))
     plt.close(fig)
@@ -291,7 +293,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None):
         ax.set_ylabel(r"Stable rank of $\Delta W$")
         ax.set_title(f"{comp}")
         ax.grid(alpha=0.3)
-    fig.suptitle(title or "Edit dimensionality — stable rank", fontsize=14)
+    fig.suptitle((title or "Edit dimensionality — stable rank") + _subtitle, fontsize=14)
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "stable_rank.png"))
     plt.close(fig)
@@ -306,7 +308,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None):
         ax.set_ylabel(r"$\sigma_1(\Delta W) / \sigma_1(W)$")
         ax.set_title(f"{comp}")
         ax.grid(alpha=0.3)
-    fig.suptitle(title or "Spectral norm — worst-case amplification", fontsize=14)
+    fig.suptitle((title or "Spectral norm — worst-case amplification") + _subtitle, fontsize=14)
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, "spectral_norm.png"))
     plt.close(fig)
@@ -322,7 +324,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None):
             ax.set_ylabel(r"Empirical rank of $\Delta W$")
             ax.set_title(f"{comp}")
             ax.grid(alpha=0.3)
-        fig.suptitle(title or "Edit dimensionality — empirical rank", fontsize=14)
+        fig.suptitle((title or "Edit dimensionality — empirical rank") + _subtitle, fontsize=14)
         fig.tight_layout()
         fig.savefig(os.path.join(outdir, "empirical_rank.png"))
         plt.close(fig)
@@ -640,6 +642,8 @@ def main():
             per_matrix_csv,
             args.plot_outdir,
             args.title,
+            model_a=args.model_a,
+            model_b=args.model_b,
         )
         log_plots(args.plot_outdir, "weight_plots")
 

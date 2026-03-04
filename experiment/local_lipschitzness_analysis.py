@@ -262,13 +262,16 @@ def plot_lipschitzness_analysis(
     retain_variance_b: List[float],
     outdir: str,
     title: Optional[str] = None,
+    model_a: str = "Model A (Baseline)",
+    model_b: str = "Model B (Unlearned)",
 ) -> None:
     """Create the 2×3 panel of Lipschitzness analysis plots."""
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
 
     x_positions = np.array([0, 1, 3, 4])
     bar_colors = ["red", "blue", "darkred", "darkblue"]
-    bar_labels = ["Forget (A)", "Retain (A)", "Forget (B)", "Retain (B)"]
+    bar_labels = [f"Forget ({model_a.split('/')[-1]})", f"Retain ({model_a.split('/')[-1]})",
+                  f"Forget ({model_b.split('/')[-1]})", f"Retain ({model_b.split('/')[-1]})"]
 
     # (0,0) Lipschitz constants
     axis = axes[0, 0]
@@ -323,10 +326,10 @@ def plot_lipschitzness_analysis(
 
     # (1,1) Distribution comparison
     axis = axes[1, 1]
-    axis.hist(forget_lipschitz_a, bins=20, alpha=0.3, label="Forget (A)", color="red")
-    axis.hist(forget_lipschitz_b, bins=20, alpha=0.3, label="Forget (B)", color="darkred")
-    axis.hist(retain_lipschitz_a, bins=20, alpha=0.3, label="Retain (A)", color="blue")
-    axis.hist(retain_lipschitz_b, bins=20, alpha=0.3, label="Retain (B)", color="darkblue")
+    axis.hist(forget_lipschitz_a, bins=20, alpha=0.3, label=f"Forget ({model_a.split('/')[-1]})", color="red")
+    axis.hist(forget_lipschitz_b, bins=20, alpha=0.3, label=f"Forget ({model_b.split('/')[-1]})", color="darkred")
+    axis.hist(retain_lipschitz_a, bins=20, alpha=0.3, label=f"Retain ({model_a.split('/')[-1]})", color="blue")
+    axis.hist(retain_lipschitz_b, bins=20, alpha=0.3, label=f"Retain ({model_b.split('/')[-1]})", color="darkblue")
     axis.set_xlabel("Lipschitz Constant")
     axis.set_ylabel("Frequency")
     axis.set_title("Distribution of Local Lipschitz Constants")
@@ -350,10 +353,10 @@ def plot_lipschitzness_analysis(
 
     summary_text = (
         f"Lipschitzness Analysis Summary:\n\n"
-        f"Model A (Baseline):\n"
+        f"{model_a}:\n"
         f"- Forget Lipschitz: {np.mean(forget_lipschitz_a):.3f} ± {np.std(forget_lipschitz_a):.3f}\n"
         f"- Retain Lipschitz: {np.mean(retain_lipschitz_a):.3f} ± {np.std(retain_lipschitz_a):.3f}\n\n"
-        f"Model B (Unlearned):\n"
+        f"{model_b}:\n"
         f"- Forget Lipschitz: {np.mean(forget_lipschitz_b):.3f} ± {np.std(forget_lipschitz_b):.3f}\n"
         f"- Retain Lipschitz: {np.mean(retain_lipschitz_b):.3f} ± {np.std(retain_lipschitz_b):.3f}\n\n"
         f"Changes (B/A ratio):\n"
@@ -520,6 +523,8 @@ def main():
         forget_variance_b, retain_variance_b,
         args.outdir,
         title=args.title,
+        model_a=args.model_a,
+        model_b=args.model_b,
     )
 
     # Detailed arrays

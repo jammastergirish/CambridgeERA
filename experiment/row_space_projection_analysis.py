@@ -209,6 +209,8 @@ def plot_row_space_projections(
     per_weight_results: List[Dict],
     outdir: str,
     title: Optional[str] = None,
+    model_a: str = "Model A",
+    model_b: str = "Model B",
 ) -> None:
     """Create the 2×2 panel of row-space projection plots."""
     layers_plot = [r["layer"] for r in layer_results]
@@ -260,7 +262,7 @@ def plot_row_space_projections(
     forget_stronger_count = sum(1 for r in per_weight_results if r.get("forget_stronger", False))
 
     summary_text = (
-        f"Row Space Projection Summary:\n\n"
+        f"Row Space Projection Summary ({model_a.split('/')[-1]} → {model_b.split('/')[-1]}):\n\n"
         f"Average Projections:\n"
         f"- Forget: {avg_forget:.3f}\n"
         f"- Retain: {avg_retain:.3f}\n"
@@ -275,7 +277,7 @@ def plot_row_space_projections(
     )
     axis.text(0.1, 0.5, summary_text, fontsize=10, family="monospace", verticalalignment="center")
 
-    plt.suptitle(title or "Row Space Projection Analysis")
+    plt.suptitle(title or f"Row Space Projection Analysis\n{model_a.split('/')[-1]} → {model_b.split('/')[-1]}")
     plt.tight_layout()
     plt.savefig(os.path.join(outdir, "row_space_projections.png"), dpi=150)
     plt.close()
@@ -476,6 +478,7 @@ def main():
         # Plots
         plot_row_space_projections(
             layer_results, per_weight_results, args.outdir, title=args.title,
+            model_a=args.model_a, model_b=args.model_b,
         )
 
         # Summary JSON

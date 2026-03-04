@@ -197,6 +197,8 @@ def plot_covariance_analysis(
     results: List[Dict],
     outdir: str,
     title: Optional[str] = None,
+    model_a: str = "Model A",
+    model_b: str = "Model B",
 ) -> None:
     """Create the 3×3 panel of covariance spectrum plots."""
     layers_plot = [r["layer"] for r in results]
@@ -205,10 +207,10 @@ def plot_covariance_analysis(
 
     # (0,0) Effective rank comparison
     axis = axes[0, 0]
-    axis.plot(layers_plot, [r["forget_eff_rank_a"] for r in results], "o-", label="Forget (A)", color="red", alpha=0.5)
-    axis.plot(layers_plot, [r["forget_eff_rank_b"] for r in results], "s-", label="Forget (B)", color="darkred")
-    axis.plot(layers_plot, [r["retain_eff_rank_a"] for r in results], "o-", label="Retain (A)", color="blue", alpha=0.5)
-    axis.plot(layers_plot, [r["retain_eff_rank_b"] for r in results], "s-", label="Retain (B)", color="darkblue")
+    axis.plot(layers_plot, [r["forget_eff_rank_a"] for r in results], "o-", label=f"Forget ({model_a.split('/')[-1]})", color="red", alpha=0.5)
+    axis.plot(layers_plot, [r["forget_eff_rank_b"] for r in results], "s-", label=f"Forget ({model_b.split('/')[-1]})", color="darkred")
+    axis.plot(layers_plot, [r["retain_eff_rank_a"] for r in results], "o-", label=f"Retain ({model_a.split('/')[-1]})", color="blue", alpha=0.5)
+    axis.plot(layers_plot, [r["retain_eff_rank_b"] for r in results], "s-", label=f"Retain ({model_b.split('/')[-1]})", color="darkblue")
     axis.set_xlabel("Layer")
     axis.set_ylabel("Effective Rank")
     axis.set_title("Effective Rank (99% variance)")
@@ -443,7 +445,8 @@ def main():
     write_csv(os.path.join(args.outdir, "covariance_metrics.csv"), results, _COVARIANCE_FIELDNAMES)
 
     # Plots
-    plot_covariance_analysis(results, args.outdir, title=args.title)
+    plot_covariance_analysis(results, args.outdir, title=args.title,
+                             model_a=args.model_a, model_b=args.model_b)
 
     # Summary JSON
     avg_forget_wasserstein = float(np.mean([r["forget_wasserstein"] for r in results]))

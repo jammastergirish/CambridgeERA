@@ -187,6 +187,8 @@ def plot_separation_analysis(
     results_model_b: List[Dict],
     outdir: str,
     title: Optional[str] = None,
+    model_a: str = "Model A (baseline)",
+    model_b: str = "Model B (unlearned)",
 ) -> None:
     """Create the 2×3 panel of separation-metric plots."""
     layers = [row["layer"] for row in results_model_a]
@@ -195,8 +197,8 @@ def plot_separation_analysis(
 
     # (0,0) Cosine distance
     axis = axes[0, 0]
-    axis.plot(layers, [r["cosine_distance"] for r in results_model_a], "o-", label="Model A (baseline)")
-    axis.plot(layers, [r["cosine_distance"] for r in results_model_b], "s-", label="Model B (unlearned)")
+    axis.plot(layers, [r["cosine_distance"] for r in results_model_a], "o-", label=model_a)
+    axis.plot(layers, [r["cosine_distance"] for r in results_model_b], "s-", label=model_b)
     axis.set_xlabel("Layer")
     axis.set_ylabel("Cosine Distance")
     axis.set_title("Forget/Retain Centroid Separation (Cosine)")
@@ -205,8 +207,8 @@ def plot_separation_analysis(
 
     # (0,1) Linear discriminability AUC
     axis = axes[0, 1]
-    axis.plot(layers, [r["linear_discriminability_auc"] for r in results_model_a], "o-", label="Model A")
-    axis.plot(layers, [r["linear_discriminability_auc"] for r in results_model_b], "s-", label="Model B")
+    axis.plot(layers, [r["linear_discriminability_auc"] for r in results_model_a], "o-", label=model_a)
+    axis.plot(layers, [r["linear_discriminability_auc"] for r in results_model_b], "s-", label=model_b)
     axis.axhline(y=0.5, color="gray", linestyle="--", alpha=0.5)
     axis.set_xlabel("Layer")
     axis.set_ylabel("AUC Score")
@@ -216,8 +218,8 @@ def plot_separation_analysis(
 
     # (0,2) Variance ratio
     axis = axes[0, 2]
-    axis.plot(layers, [r["variance_ratio"] for r in results_model_a], "o-", label="Model A")
-    axis.plot(layers, [r["variance_ratio"] for r in results_model_b], "s-", label="Model B")
+    axis.plot(layers, [r["variance_ratio"] for r in results_model_a], "o-", label=model_a)
+    axis.plot(layers, [r["variance_ratio"] for r in results_model_b], "s-", label=model_b)
     axis.set_xlabel("Layer")
     axis.set_ylabel("Between / Within Variance Ratio")
     axis.set_title("Cluster Separation (Variance Ratio)")
@@ -240,13 +242,13 @@ def plot_separation_analysis(
     # (1,1) Centroid norms
     axis = axes[1, 1]
     axis.plot(layers, [r["forget_centroid_norm"] for r in results_model_a], "o-",
-              label="Forget (A)", color="red", alpha=0.5)
+              label=f"Forget ({model_a.split('/')[-1]})", color="red", alpha=0.5)
     axis.plot(layers, [r["retain_centroid_norm"] for r in results_model_a], "o-",
-              label="Retain (A)", color="blue", alpha=0.5)
+              label=f"Retain ({model_a.split('/')[-1]})", color="blue", alpha=0.5)
     axis.plot(layers, [r["forget_centroid_norm"] for r in results_model_b], "s-",
-              label="Forget (B)", color="darkred")
+              label=f"Forget ({model_b.split('/')[-1]})", color="darkred")
     axis.plot(layers, [r["retain_centroid_norm"] for r in results_model_b], "s-",
-              label="Retain (B)", color="darkblue")
+              label=f"Retain ({model_b.split('/')[-1]})", color="darkblue")
     axis.set_xlabel("Layer")
     axis.set_ylabel("Centroid L2 Norm")
     axis.set_title("Activation Magnitudes")
@@ -266,10 +268,10 @@ def plot_separation_analysis(
 
     summary_text = (
         f"Summary Statistics:\n\n"
-        f"Model A (Baseline):\n"
+        f"{model_a}:\n"
         f"- Avg Linear Discriminability: {avg_auc_a:.3f}\n"
         f"- Avg Cosine Distance: {np.mean([r['cosine_distance'] for r in results_model_a]):.3f}\n\n"
-        f"Model B (Unlearned):\n"
+        f"{model_b}:\n"
         f"- Avg Linear Discriminability: {avg_auc_b:.3f}\n"
         f"- Avg Cosine Distance: {np.mean([r['cosine_distance'] for r in results_model_b]):.3f}\n\n"
         f"Change (B − A):\n"
@@ -425,7 +427,8 @@ def main():
     )
 
     # Plots
-    plot_separation_analysis(results_model_a, results_model_b, args.outdir, title=args.title)
+    plot_separation_analysis(results_model_a, results_model_b, args.outdir, title=args.title,
+                              model_a=args.model_a, model_b=args.model_b)
 
     # JSON summary
     delta_cosine = [
