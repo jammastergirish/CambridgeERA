@@ -230,7 +230,7 @@ def main():
         try:
             import wandb
             run_name = args.wandb_name or args.model
-            wandb.init(project=args.wandb_project, name=run_name, config=vars(args))
+            wandb.init(project=args.wandb_project, name=run_name, config=vars(args), tags=["eval"])
             flat = {}
             for task_name, task_results in results["results"].items():
                 for metric_key, value in task_results.items():
