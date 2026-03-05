@@ -8,6 +8,16 @@
 #     "wandb",
 #     "muon-optimizer @ git+https://github.com/KellerJordan/Muon",
 # ]
+#
+# [tool.uv.sources]
+# torch = [
+#   { index = "pytorch-cu128" },
+# ]
+#
+# [[tool.uv.index]]
+# name = "pytorch-cu128"
+# url  = "https://download.pytorch.org/whl/cu128"
+# explicit = true
 # ///
 """
 Multi-method LLM unlearning pipeline.
