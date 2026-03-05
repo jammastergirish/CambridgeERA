@@ -455,6 +455,10 @@ To create an unlearned model, you would use
 EPOCHS=2 LR=5e-6 ./unlearn/run_unlearn.sh cb_lat
 # -> unlearned_models/EleutherAI_deep-ignorance-unfiltered__cb_lat__ep2_lr5e-06_bs4_a100.0_sc20.0_le0.1_ls5_ly5-6-7/
 
+# Use the Muon optimizer instead of AdamW (appended to folder/W&B run name)
+OPTIMIZER=muon EPOCHS=3 LR=3e-05 BATCH_SIZE=32 ./unlearn/run_unlearn.sh ga
+# -> unlearned_models/...ga__ep3_lr3e-05_bs32_rw1.0_ml2048_optmuon/
+
 # Create all 12 unlearned models with default hyperparameters
 ./unlearn/create_all_unlearning_models.sh
 ```
@@ -770,10 +774,11 @@ The `--tar-alpha` parameter controls the strength of the subtraction (default va
 
 #### Hyperparameter Defaults & Tuning Guide
 
-All methods use **full-parameter training** with AdamW + cosine annealing, managed by the HF Trainer (`unlearn/trainer.py`). Shared defaults:
+All methods use **full-parameter training** with a cosine-annealed optimizer, managed by the HF Trainer (`unlearn/trainer.py`). Shared defaults:
 
 | Setting | Default | Flag |
 |---|---|---|
+| Optimizer | AdamW (or Muon via `OPTIMIZER=muon`) | `--optimizer` |
 | Learning rate | 1e-5 | `--lr` |
 | Epochs | 1 | `--epochs` |
 | Batch size | 4 | `--batch-size` |
@@ -782,6 +787,8 @@ All methods use **full-parameter training** with AdamW + cosine annealing, manag
 | Gradient clipping | 1.0 (⚠️ 0.5 for unstable methods) | `--grad-clip` |
 | Gradient accumulation | 1 | `--grad-accum-steps` |
 | Eval split | 10% | `--eval-split` |
+
+**Muon optimizer.** Set `OPTIMIZER=muon` (or `--optimizer muon`) to use [MuonWithAuxAdam](https://github.com/KellerJordan/Muon) instead of AdamW. Muon applies Newton-Schulz-orthogonalised gradient updates to hidden 2D weight matrices (faster convergence) while keeping standard AdamW for embeddings, biases, norms, and `lm_head`. The optimizer suffix `_optmuon` is automatically appended to the folder name, W&B run name, and HuggingFace repo name, keeping Muon and AdamW runs cleanly separated.
 
 ##### Per-Method Defaults
 

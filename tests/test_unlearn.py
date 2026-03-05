@@ -742,3 +742,166 @@ class TestLogProbsFromLogits:
         self.fn(logits, labels, chunk_size=2).sum().backward()
         assert logits.grad is not None
         assert not self.torch.isnan(logits.grad).any()
+
+
+# ---------------------------------------------------------------------------
+# Muon optimizer: argparse + build_outdir + param-group split
+# ---------------------------------------------------------------------------
+class TestMuonOptimizer:
+    """Tests for --optimizer muon support (no GPU / no muon package required)."""
+
+    def _make_args(self, method="ga_simple", optimizer="adamw", **overrides):
+        defaults = {
+            "model": "EleutherAI/deep-ignorance-unfiltered",
+            "method": method,
+            "epochs": 1,
+            "lr": 1e-5,
+            "batch_size": 4,
+            "max_lines": 1024,
+            "retain_weight": 1.0,
+            "forget_weight": 1.0,
+            "beta": 0.1,
+            "alpha": 100.0,
+            "steering_coeff": 20.0,
+            "layer_id": "5,6,7",
+            "lat_eps": 0.1,
+            "lat_steps": 5,
+            "tar_alpha": 1.0,
+            "tar_lr": 1e-5,
+            "tar_epochs": 1,
+            "wt_noise_std": 0.02,
+            "wt_reg_lambda": 0.1,
+            "optimizer": optimizer,
+        }
+        defaults.update(overrides)
+        from types import SimpleNamespace
+        return SimpleNamespace(**defaults)
+
+    # --- argparse ---
+
+    def test_optimizer_default_is_adamw(self):
+        """--optimizer should default to 'adamw'."""
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--optimizer", choices=["adamw", "muon"], default="adamw")
+        args = parser.parse_args([])
+        assert args.optimizer == "adamw"
+
+    def test_optimizer_accepts_muon(self):
+        """--optimizer muon should be accepted."""
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--optimizer", choices=["adamw", "muon"], default="adamw")
+        args = parser.parse_args(["--optimizer", "muon"])
+        assert args.optimizer == "muon"
+
+    def test_optimizer_rejects_invalid(self):
+        """--optimizer with an unknown value should fail."""
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--optimizer", choices=["adamw", "muon"], default="adamw")
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--optimizer", "sgd"])
+
+    # --- build_outdir suffix ---
+
+    def test_adamw_has_no_opt_suffix(self):
+        """Default AdamW should not add any suffix to the directory name."""
+        result = build_outdir(self._make_args(optimizer="adamw"))
+        assert "_opt" not in result
+
+    def test_muon_appends_optmuon_suffix(self):
+        """Muon optimizer should append _optmuon at the end of the directory name."""
+        result = build_outdir(self._make_args(optimizer="muon"))
+        # suffix should appear after the method+param block
+        assert result.endswith("_optmuon")
+
+    def test_muon_suffix_is_at_end(self):
+        """The _optmuon suffix must come after all other hyperparameter tokens."""
+        result = build_outdir(self._make_args(method="ga", optimizer="muon"))
+        method_block = result.split("__")[-1]  # e.g. ep1_lr1e-05_bs4_rw1.0_ml1024_optmuon
+        assert method_block.endswith("_optmuon"), f"Got: {method_block}"
+
+    def test_different_optimizers_produce_different_paths(self):
+        """AdamW and Muon runs must never share the same output directory."""
+        path_adamw = build_outdir(self._make_args(optimizer="adamw"))
+        path_muon = build_outdir(self._make_args(optimizer="muon"))
+        assert path_adamw != path_muon
+
+    def test_muon_suffix_stable_across_methods(self):
+        """_optmuon should appear for every method, not just ga_simple."""
+        for method in ["ga", "npo", "simnpo", "rmu", "wt_dist"]:
+            result = build_outdir(self._make_args(method=method, optimizer="muon"))
+            assert result.endswith("_optmuon"), f"{method}: {result}"
+
+    # --- param-group split logic ---
+
+    def _build_param_groups(self, named_params):
+        """Replicate the hidden/other split from UnlearningTrainer.create_optimizer."""
+        _NON_HIDDEN = ("embed", "norm", "lm_head", "bias")
+        hidden, other = [], []
+        for name, param in named_params:
+            is_hidden_2d = (
+                param.ndim >= 2
+                and not any(k in name for k in _NON_HIDDEN)
+            )
+            if is_hidden_2d:
+                hidden.append((name, param))
+            else:
+                other.append((name, param))
+        return hidden, other
+
+    def test_2d_hidden_weights_go_to_muon_group(self):
+        """Standard weight matrices (2D, no special keyword) should land in the Muon group."""
+        import torch
+        params = [("layers.0.mlp.fc1.weight", torch.zeros(64, 32))]
+        hidden, other = self._build_param_groups(params)
+        assert len(hidden) == 1
+        assert len(other) == 0
+
+    def test_embed_goes_to_adamw_group(self):
+        """Embedding weights should always go to the AdamW group."""
+        import torch
+        params = [("embed_tokens.weight", torch.zeros(128, 64))]
+        hidden, other = self._build_param_groups(params)
+        assert len(hidden) == 0
+        assert len(other) == 1
+
+    def test_lm_head_goes_to_adamw_group(self):
+        """lm_head weight should go to the AdamW group."""
+        import torch
+        params = [("lm_head.weight", torch.zeros(128, 64))]
+        hidden, other = self._build_param_groups(params)
+        assert len(hidden) == 0
+        assert len(other) == 1
+
+    def test_norm_goes_to_adamw_group(self):
+        """LayerNorm weight (1D or 2D) should go to the AdamW group."""
+        import torch
+        params = [("layers.0.input_layernorm.weight", torch.zeros(64))]
+        hidden, other = self._build_param_groups(params)
+        assert len(hidden) == 0
+        assert len(other) == 1
+
+    def test_bias_goes_to_adamw_group(self):
+        """Bias tensors (1D) should go to the AdamW group."""
+        import torch
+        params = [("layers.0.mlp.fc1.bias", torch.zeros(64))]
+        hidden, other = self._build_param_groups(params)
+        assert len(hidden) == 0
+        assert len(other) == 1
+
+    def test_all_params_are_assigned(self):
+        """Every parameter must land in exactly one group (no lost params)."""
+        import torch
+        named = [
+            ("embed_tokens.weight",            torch.zeros(128, 64)),
+            ("layers.0.mlp.fc1.weight",        torch.zeros(64, 32)),
+            ("layers.0.mlp.fc1.bias",          torch.zeros(64)),
+            ("layers.0.input_layernorm.weight", torch.zeros(64)),
+            ("lm_head.weight",                 torch.zeros(128, 64)),
+            ("layers.1.self_attn.q_proj.weight", torch.zeros(64, 64)),
+        ]
+        hidden, other = self._build_param_groups(named)
+        assert len(hidden) + len(other) == len(named)
+

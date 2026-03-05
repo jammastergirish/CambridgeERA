@@ -17,7 +17,8 @@
 #   LR, EPOCHS, BATCH_SIZE, MAX_LENGTH, MAX_LINES, BETA, ALPHA, STEERING_COEFF,
 #   LAYER_ID, FORGET_WEIGHT, RETAIN_WEIGHT, LAT_EPS, LAT_STEPS,
 #   TAR_ALPHA, TAR_LR, TAR_EPOCHS, WT_NOISE_STD, WT_REG_LAMBDA,
-#   GRAD_ACCUM_STEPS, GRAD_CLIP, EVAL_SPLIT, PUSH_TO_HUB, NO_SAVE, NO_EVAL
+#   GRAD_ACCUM_STEPS, GRAD_CLIP, EVAL_SPLIT, PUSH_TO_HUB, NO_SAVE, NO_EVAL,
+#   OPTIMIZER (adamw|muon, default: adamw)
 #
 # For parallel multi-GPU sweeps, use parallel_sweep.sh instead of calling
 # this script directly from a sweep loop.
@@ -64,6 +65,7 @@ elif uv run --script unlearn/unlearn.py \
   ${GRAD_ACCUM_STEPS:+--grad-accum-steps "$GRAD_ACCUM_STEPS"} \
   ${GRAD_CLIP:+--grad-clip "$GRAD_CLIP"} \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
+  ${OPTIMIZER:+--optimizer "$OPTIMIZER"} \
   ${PUSH_TO_HUB:+--push-to-hub} \
   ${NO_SAVE:+--no-save} \
   ${NO_EVAL:+--no-eval} \
@@ -101,6 +103,7 @@ uv run --script unlearn/unlearn.py \
   ${GRAD_ACCUM_STEPS:+--grad-accum-steps "$GRAD_ACCUM_STEPS"} \
   ${GRAD_CLIP:+--grad-clip "$GRAD_CLIP"} \
   ${EVAL_SPLIT:+--eval-split "$EVAL_SPLIT"} \
+  ${OPTIMIZER:+--optimizer "$OPTIMIZER"} \
   ${PUSH_TO_HUB:+--push-to-hub} \
   ${NO_SAVE:+--no-save} \
   ${NO_EVAL:+--no-eval} \

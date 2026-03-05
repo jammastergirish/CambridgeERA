@@ -6,6 +6,7 @@
 #     "accelerate>=0.27",
 #     "tqdm",
 #     "wandb",
+#     "muon-optimizer @ git+https://github.com/KellerJordan/Muon",
 # ]
 # ///
 """
@@ -1283,7 +1284,15 @@ def build_outdir(args) -> str:
         parts.append(f"{abbrev}{value}")
 
     suffix = "_".join(parts)
+
+    # Append optimizer suffix when non-default, so the name is unique and
+    # visible in local folders, W&B run names, and HuggingFace repo names.
+    optimizer = getattr(args, "optimizer", "adamw")
+    if optimizer != "adamw":
+        suffix = f"{suffix}_opt{optimizer}"
+
     return model_outdir(args.model, root="unlearned_models", suffix=f"{method}__{suffix}")
+
 
 
 # ===================================================================
@@ -1351,6 +1360,13 @@ def main():
                         help="Regularizer weight for Weight Dist Reg (wt_dist_reg)")
     parser.add_argument("--eval-split", type=float, default=0.1,
                         help="Fraction of data to hold out for evaluation (0 to disable)")
+    parser.add_argument(
+        "--optimizer",
+        choices=["adamw", "muon"],
+        default="adamw",
+        help="Optimizer to use. 'adamw' (default) uses HF Trainer's built-in AdamW. "
+             "'muon' uses MuonWithAuxAdam: Muon for hidden 2D weights, AdamW for everything else.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--grad-clip", type=float, default=1.0,
                         help="Gradient clipping max norm (0 to disable)")
@@ -1423,6 +1439,7 @@ def main():
             "outdir": args.outdir,
             "max_length": args.max_length,
             "seed": args.seed,
+            "optimizer": args.optimizer,
             "grad_clip": args.grad_clip,
             "grad_accum_steps": args.grad_accum_steps,
             "eval_split": args.eval_split,
