@@ -270,7 +270,7 @@ def resolve_device(device: str) -> str:
 def resolve_dtype(dtype: str, device: str) -> torch.dtype:
     """Resolve 'auto' dtype based on device, or parse explicit dtype string."""
     if dtype == "auto":
-        if device == "cuda":
+        if device.startswith("cuda"):
             return torch.bfloat16
         if device == "mps":
             return torch.float16

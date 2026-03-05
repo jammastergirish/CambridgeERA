@@ -1526,6 +1526,15 @@ def main():
         model.to(device)
     model.train()
 
+    # Reconcile `device` with where the model actually ended up.
+    # device_map='auto' may fall back to CPU if CUDA is unavailable; using
+    # next(model.parameters()).device ensures random_targets, retain caches,
+    # and all subsequent tensor ops use the same device as the model.
+    model_device = next(model.parameters()).device
+    if str(model_device) != device:
+        print(f"[unlearn] Note: model loaded on {model_device} (requested {device}); using {model_device}.")
+        device = str(model_device)
+
     # Enable gradient checkpointing to save GPU memory at the cost of
     # recomputing activations during the backward pass.
     if hasattr(model, "gradient_checkpointing_enable"):
@@ -1616,8 +1625,13 @@ def main():
         # RMU/CB will push forget-set activations to align with these vectors.
         # Normalising ensures the direction is what matters, not magnitude.
         for lid in layer_ids:
-            random_targets[lid] = torch.randn(hidden_dim, device=device, dtype=pt_dtype)
-            random_targets[lid] = random_targets[lid] / random_targets[lid].norm()  # unit norm
+            # Create on CPU first, then move to the model's device.
+            # Some container setups (e.g. H200 with certain driver configs)
+            # fail on torch.randn(..., device='cuda:0') directly but succeed
+            # when transferring from CPU via .to(device) (cudaMemcpy path).
+            t = torch.randn(hidden_dim, dtype=pt_dtype)
+            t = t / t.norm()  # unit norm
+            random_targets[lid] = t.to(device)
 
         # Cache the retain-set activations from the ORIGINAL (pre-training)
         # model.  These become the targets that RMU/CB try to preserve.
