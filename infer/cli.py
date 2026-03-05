@@ -24,7 +24,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from utils import resolve_device, resolve_dtype
+    from utils import resolve_device, resolve_dtype, setup_tokenizer_padding
 except ImportError as e:
     raise ImportError(f"Could not import utils.py from project root: {e}") from e
 
@@ -37,8 +37,7 @@ def load_model(model_id: str, device: str = "auto", dtype: str = "auto"):
     print(f"[infer] device={device}  dtype={pt_dtype}")
     print(f"[infer] Loading model {model_id}...")
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    setup_tokenizer_padding(tokenizer)
 
     # On CUDA, use device_map="auto" so HuggingFace/accelerate spreads the model
     # across available GPUs, automatically placing layers on the GPU with the most

@@ -48,6 +48,7 @@ from utils import (
     log_plots,
     finish_wandb,
     SmartLoader,
+    setup_tokenizer_padding,
 )
 
 
@@ -335,8 +336,7 @@ def main():
     # Load tokenizers and models
     print(f"Loading Base Model: {args.model_a}...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_a)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    setup_tokenizer_padding(tokenizer)
 
     device_map_kwargs = {"device_map": "auto"} if device == "cuda" else {}
 

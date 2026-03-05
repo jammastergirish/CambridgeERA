@@ -94,6 +94,151 @@ def load_dotenv(path: str = None):
 load_dotenv()
 
 
+# --- Tokenizer utilities ---
+def setup_tokenizer_padding(tokenizer):
+    """Set up tokenizer padding token if not already configured.
+
+    Many models don't have a pad token defined by default. This function
+    ensures the tokenizer has a pad token, using the eos_token as fallback.
+
+    Args:
+        tokenizer: HuggingFace tokenizer instance
+
+    Returns:
+        tokenizer: The same tokenizer instance (modified in-place)
+    """
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+
+# --- Loss computation utilities ---
+def chunked_cross_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    chunk_size: int = 4,
+) -> torch.Tensor:
+    """Memory-efficient cross-entropy that never materialises the full token logit matrix.
+
+    Background
+    ----------
+    Standard ``F.cross_entropy(logits.view(-1, V), labels.view(-1))`` needs to
+    build an intermediate tensor of shape ``(B * T, vocab_size)`` on the *single
+    GPU* that holds the final layer — typically ~3 GiB for a 7B model at
+    batch=32, seq=512, vocab=50K.  This pushes an already-full A40 over the
+    edge.
+
+    The fix
+    -------
+    https://github.com/karpathy/nanochat/pull/128
+
+    Cross-entropy is **independent per token** — token ``i``'s loss depends
+    only on ``logits[i]`` and ``labels[i]``, never on any other position.  So
+    we can process ``chunk_size`` batch elements at a time, free each chunk
+    before moving to the next, and concatenate the per-token losses at the end.
+    Peak memory scales with ``chunk_size`` instead of ``B``, while the numbers
+    are **bit-for-bit identical** to computing everything at once.
+
+    Parameters
+    ----------
+    logits :
+        Shape ``(B, T, vocab_size)`` — raw model output *before* softmax.
+    labels :
+        Shape ``(B, T)`` — ground-truth next-token IDs.
+    chunk_size :
+        Number of batch elements to process per chunk.  Smaller → less peak
+        memory, slightly more kernel overhead.  Default of 4 keeps peak logit
+        allocation to ~0.4 GiB for the above example.
+
+    Returns
+    -------
+    Flat ``(B * T,)`` tensor of per-token cross-entropy values, in the same
+    order as ``logits.view(-1, V)`` / ``labels.view(-1)`` — a drop-in
+    replacement for ``F.cross_entropy(..., reduction="none")``.
+    """
+    import torch.nn.functional as F
+
+    B = logits.size(0)
+    chunks = []
+    for start in range(0, B, chunk_size):
+        end = min(start + chunk_size, B)
+        # logits_chunk: (chunk, T, V) — only a slice of the batch is live at once
+        logits_chunk = logits[start:end].reshape(-1, logits.size(-1))
+        labels_chunk = labels[start:end].reshape(-1)
+        # F.cross_entropy does: log_softmax(logits) then NLL — no full-batch
+        # allocation needed because we are already working on a small slice.
+        chunk_loss = F.cross_entropy(logits_chunk, labels_chunk, reduction="none")
+        chunks.append(chunk_loss)
+        # Explicitly delete the slice so the allocator can reuse the memory
+        # before the next iteration allocates a new one.
+        del logits_chunk, labels_chunk
+    return torch.cat(chunks)
+
+
+def nll_loss(model, batch: dict, chunk_size: int = 4) -> torch.Tensor:
+    """Standard next-token prediction (causal LM) loss.
+
+    This is the same cross-entropy loss used during normal pre-training.
+    For unlearning, we either MINIMIZE it (on retain data) to preserve
+    capability, or NEGATE it (on forget data) to degrade capability.
+
+    Args:
+        model: The language model to compute loss for
+        batch: Dictionary with 'input_ids' and 'attention_mask' tensors
+        chunk_size: Batch elements per chunk for memory-efficient computation
+
+    Returns:
+        Scalar loss tensor
+    """
+    # For distributed models, inputs need to be on the same device as the first layer
+    # HF models with device_map handle this automatically in their forward()
+    input_ids = batch["input_ids"]          # (B, T)
+    attention_mask = batch["attention_mask"]  # (B, T) — 1 for real tokens, 0 for padding
+    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+
+    # Shift logits and labels for next-token prediction:
+    #   logits[:, :-1] predicts token at position t+1
+    #   labels[:, 1:]  is the actual token at position t+1
+    logits = outputs.logits[:, :-1, :].contiguous()  # (B, T-1, vocab_size)
+    labels = input_ids[:, 1:].contiguous()            # (B, T-1)
+    mask = attention_mask[:, 1:].contiguous()          # (B, T-1)
+
+    # Check for vocabulary size mismatch before computing loss
+    vocab_size = logits.size(-1)
+    max_label = labels.max().item()
+    min_label = labels.min().item()
+
+    if max_label >= vocab_size or min_label < 0:
+        print(f"\n[ERROR] Vocabulary size mismatch detected in nll_loss:")
+        print(f"  Model vocab size: {vocab_size}")
+        print(f"  Label range: [{min_label}, {max_label}]")
+
+        # Find specific problematic tokens
+        invalid_mask = (labels >= vocab_size) | (labels < 0)
+        if invalid_mask.any():
+            invalid_tokens = labels[invalid_mask].unique().tolist()[:10]  # Show first 10 unique invalid tokens
+            print(f"  Invalid token IDs: {invalid_tokens}")
+            print(f"  Batch shape: input_ids={batch['input_ids'].shape}")
+
+            # This shouldn't happen if tokenization was done correctly
+            # Return a large loss that requires grad to avoid CUDA crash
+            print("  CRITICAL: Returning dummy loss to avoid CUDA crash")
+            dummy_loss = torch.tensor(1e10, device=logits.device, dtype=logits.dtype, requires_grad=True)
+            return dummy_loss
+
+        # This path shouldn't be reached if above check works
+        labels = torch.clamp(labels, 0, vocab_size - 1)
+
+    # Per-token cross-entropy, then mask out padding and average over real tokens.
+    # Using chunked_cross_entropy instead of F.cross_entropy to avoid
+    # materialising the full (B*T, vocab_size) tensor at once on the GPU that
+    # holds the lm_head — the peak allocation (~3 GiB at batch=32) would OOM
+    # on an A40 that already has model weights + optimizer states loaded.
+    loss = chunked_cross_entropy(logits, labels.view(logits.size(0), -1), chunk_size=chunk_size)
+    loss = (loss * mask.view(-1)).sum() / mask.sum().clamp(min=1)
+    return loss
+
+
 def compute_spectral_norm(A: torch.Tensor) -> float:
     """
     Compute spectral norm (largest singular value) using SVD.

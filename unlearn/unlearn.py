@@ -47,7 +47,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
 # Reuse device / dtype helpers from utils.py if available, else inline
 # ---------------------------------------------------------------------------
 try:
-    from utils import resolve_device, resolve_dtype, model_outdir, filter_gpus_by_free_vram, compute_training_max_memory
+    from utils import (
+        resolve_device, resolve_dtype, model_outdir,
+        filter_gpus_by_free_vram, compute_training_max_memory,
+        chunked_cross_entropy, nll_loss as utils_nll_loss, setup_tokenizer_padding
+    )
 except ImportError as e:
     raise ImportError(f"Could not import utils.py from project root: {e}") from e
 
@@ -150,120 +154,15 @@ def make_batches(items: list[dict], batch_size: int, drop_last: bool = True) -> 
 # ===================================================================
 
 
-def chunked_cross_entropy(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-    chunk_size: int = 4,
-) -> torch.Tensor:
-    """Memory-efficient cross-entropy that never materialises the full token logit matrix.
-
-    Background
-    ----------
-    Standard ``F.cross_entropy(logits.view(-1, V), labels.view(-1))`` needs to
-    build an intermediate tensor of shape ``(B * T, vocab_size)`` on the *single
-    GPU* that holds the final layer — typically ~3 GiB for a 7B model at
-    batch=32, seq=512, vocab=50K.  This pushes an already-full A40 over the
-    edge. 
-
-    The fix
-    -------
-    https://github.com/karpathy/nanochat/pull/128
-    
-    Cross-entropy is **independent per token** — token ``i``'s loss depends
-    only on ``logits[i]`` and ``labels[i]``, never on any other position.  So
-    we can process ``chunk_size`` batch elements at a time, free each chunk
-    before moving to the next, and concatenate the per-token losses at the end.
-    Peak memory scales with ``chunk_size`` instead of ``B``, while the numbers
-    are **bit-for-bit identical** to computing everything at once.
-
-    Parameters
-    ----------
-    logits :
-        Shape ``(B, T, vocab_size)`` — raw model output *before* softmax.
-    labels :
-        Shape ``(B, T)`` — ground-truth next-token IDs.
-    chunk_size :
-        Number of batch elements to process per chunk.  Smaller → less peak
-        memory, slightly more kernel overhead.  Default of 4 keeps peak logit
-        allocation to ~0.4 GiB for the above example.
-
-    Returns
-    -------
-    Flat ``(B * T,)`` tensor of per-token cross-entropy values, in the same
-    order as ``logits.view(-1, V)`` / ``labels.view(-1)`` — a drop-in
-    replacement for ``F.cross_entropy(..., reduction="none")``.
-    """
-    B = logits.size(0)
-    chunks = []
-    for start in range(0, B, chunk_size):
-        end = min(start + chunk_size, B)
-        # logits_chunk: (chunk, T, V) — only a slice of the batch is live at once
-        logits_chunk = logits[start:end].reshape(-1, logits.size(-1))
-        labels_chunk = labels[start:end].reshape(-1)
-        # F.cross_entropy does: log_softmax(logits) then NLL — no full-batch
-        # allocation needed because we are already working on a small slice.
-        chunk_loss = F.cross_entropy(logits_chunk, labels_chunk, reduction="none")
-        chunks.append(chunk_loss)
-        # Explicitly delete the slice so the allocator can reuse the memory
-        # before the next iteration allocates a new one.
-        del logits_chunk, labels_chunk
-    return torch.cat(chunks)
+# chunked_cross_entropy is now imported from utils
 
 
 def nll_loss(model, batch: dict) -> torch.Tensor:
     """Standard next-token prediction (causal LM) loss.
 
-    This is the same cross-entropy loss used during normal pre-training.
-    For unlearning, we either MINIMIZE it (on retain data) to preserve
-    capability, or NEGATE it (on forget data) to degrade capability.
+    Wrapper around the utils.nll_loss for backward compatibility.
     """
-    # For distributed models, inputs need to be on the same device as the first layer
-    # HF models with device_map handle this automatically in their forward()
-    input_ids = batch["input_ids"]          # (B, T)
-    attention_mask = batch["attention_mask"]  # (B, T) — 1 for real tokens, 0 for padding
-    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-
-    # Shift logits and labels for next-token prediction:
-    #   logits[:, :-1] predicts token at position t+1
-    #   labels[:, 1:]  is the actual token at position t+1
-    logits = outputs.logits[:, :-1, :].contiguous()  # (B, T-1, vocab_size)
-    labels = input_ids[:, 1:].contiguous()            # (B, T-1)
-    mask = attention_mask[:, 1:].contiguous()          # (B, T-1)
-
-    # Check for vocabulary size mismatch before computing loss
-    vocab_size = logits.size(-1)
-    max_label = labels.max().item()
-    min_label = labels.min().item()
-
-    if max_label >= vocab_size or min_label < 0:
-        print(f"\n[ERROR] Vocabulary size mismatch detected in nll_loss:")
-        print(f"  Model vocab size: {vocab_size}")
-        print(f"  Label range: [{min_label}, {max_label}]")
-
-        # Find specific problematic tokens
-        invalid_mask = (labels >= vocab_size) | (labels < 0)
-        if invalid_mask.any():
-            invalid_tokens = labels[invalid_mask].unique().tolist()[:10]  # Show first 10 unique invalid tokens
-            print(f"  Invalid token IDs: {invalid_tokens}")
-            print(f"  Batch shape: input_ids={batch['input_ids'].shape}")
-
-            # This shouldn't happen if tokenization was done correctly
-            # Return a large loss that requires grad to avoid CUDA crash
-            print("  CRITICAL: Returning dummy loss to avoid CUDA crash")
-            dummy_loss = torch.tensor(1e10, device=logits.device, dtype=logits.dtype, requires_grad=True)
-            return dummy_loss
-
-        # This path shouldn't be reached if above check works
-        labels = torch.clamp(labels, 0, vocab_size - 1)
-
-    # Per-token cross-entropy, then mask out padding and average over real tokens.
-    # Using chunked_cross_entropy instead of F.cross_entropy to avoid
-    # materialising the full (B*T, vocab_size) tensor at once on the GPU that
-    # holds the lm_head — the peak allocation (~3 GiB at batch=32) would OOM
-    # on an A40 that already has model weights + optimizer states loaded.
-    loss = chunked_cross_entropy(logits, labels.view(logits.size(0), -1))
-    loss = (loss * mask.view(-1)).sum() / mask.sum().clamp(min=1)
-    return loss
+    return utils_nll_loss(model, batch)
 
 
 def log_probs_from_logits(
@@ -1479,8 +1378,7 @@ def main():
     # ---- Load tokenizer ----
     print("[unlearn] Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    setup_tokenizer_padding(tokenizer)
 
     # ---- Load base model ----
     print(f"[unlearn] Loading base model: {args.model}")
@@ -1766,6 +1664,28 @@ def main():
     # Training metrics (train/loss, forget_loss, retain_loss, etc.) are now
     # forwarded to W&B in real-time via report_to="wandb" above.
 
+    # ---- Clean up training artifacts to free memory before evaluation ----
+    # This prevents OOM issues when evaluating large models
+    if 'ref_model' in locals() and ref_model is not None:
+        del ref_model
+    if 'random_targets' in locals() and random_targets is not None:
+        del random_targets
+    if 'retain_act_cache' in locals() and retain_act_cache is not None:
+        del retain_act_cache
+    if 'pretrained_params' in locals() and pretrained_params is not None:
+        del pretrained_params
+    if 'trainer' in locals():
+        del trainer
+    if 'dataset' in locals():
+        del dataset
+
+    # Force garbage collection and clear GPU cache
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
     # ---- Post-training NLL evaluation on held-out split ----
     if eval_forget_batches and eval_retain_batches:
         print("[unlearn] Running NLL evaluation on held-out split...")
@@ -1806,16 +1726,32 @@ def main():
     # ---- Auto-evaluate the unlearned model ----
     # Clear GPU memory before evaluation to avoid OOM
     print("[unlearn] Clearing GPU memory before evaluation...")
+
+    # Set PyTorch memory allocator to avoid fragmentation (do this early)
+    os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
+
+    # Clean up model and tokenizer
     if 'model' in locals():
         del model
     if 'tokenizer' in locals():
         del tokenizer
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()  # Wait for all GPU operations to complete
-    import gc; gc.collect()   # Python garbage collection
 
-    # Set PyTorch memory allocator to avoid fragmentation
-    os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
+    # Clean up batches to free additional memory
+    if 'forget_batches' in locals():
+        del forget_batches
+    if 'retain_batches' in locals():
+        del retain_batches
+    if 'eval_forget_batches' in locals():
+        del eval_forget_batches
+    if 'eval_retain_batches' in locals():
+        del eval_retain_batches
+
+    # Force garbage collection and clear GPU cache
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()  # Wait for all GPU operations to complete
 
     run_evaluation_benchmarks(args.outdir, args.device, args.dtype, args.no_eval)
 

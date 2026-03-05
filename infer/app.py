@@ -5,6 +5,10 @@ Streamlit app for HuggingFace model inference.
 import streamlit as st
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils import setup_tokenizer_padding
 
 
 @st.cache_resource
@@ -21,8 +25,7 @@ def load_model(model_id: str):
         dtype = torch.float32
 
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    setup_tokenizer_padding(tokenizer)
 
     print(f"Loading model {model_id}...")
     # Use device_map="auto" if a GPU is available, otherwise load to CPU

@@ -54,6 +54,7 @@ from utils import (
     log_csv_as_table,
     log_plots,
     finish_wandb,
+    setup_tokenizer_padding,
 )
 
 
@@ -402,8 +403,7 @@ def main():
     # Load model
     print(f"[wmdp_lens] Loading model: {args.model}")
     tokenizer = AutoTokenizer.from_pretrained(args.model)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    setup_tokenizer_padding(tokenizer)
 
     device_map_kwargs = {"device_map": "auto"} if device == "cuda" else {}
     model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=dtype, **device_map_kwargs)

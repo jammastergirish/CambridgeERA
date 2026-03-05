@@ -37,7 +37,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils import comparison_outdir, resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
+from utils import comparison_outdir, resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb, setup_tokenizer_padding
 
 
 def read_lines(path: str, max_samples: int) -> List[str]:
@@ -54,8 +54,7 @@ def _load_model(model_id: str, dtype: torch.dtype, device: str, method_name: str
     (some use ``dtype``, others require ``torch_dtype``).
     """
     tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    setup_tokenizer_padding(tokenizer)
     print(f"[{method_name}] Loading model: {model_id}...")
     device_map_kwargs = {"device_map": "auto"} if device == "cuda" else {}
     
