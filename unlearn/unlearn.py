@@ -1519,20 +1519,29 @@ def main():
                 print(f"[unlearn] Restricting to GPUs with ≥10 GiB free: {usable}")
 
 
-        # Scale activation buffer with batch size (larger batches need more headroom).
-        activation_buf_gib = max(8.0, args.batch_size * 0.4)
-        mm = compute_training_max_memory(
-            optimizer_state_multiplier=6.0,
-            activation_buffer_gib=activation_buf_gib,
-        )
-        device_map_kwargs = {"device_map": "auto", **({"max_memory": mm} if mm else {})}
+        if usable is not None:
+            # VRAM queryable: use device_map='auto' so accelerate can spread
+            # weights across GPUs and budget memory correctly.
+            activation_buf_gib = max(8.0, args.batch_size * 0.4)
+            mm = compute_training_max_memory(
+                optimizer_state_multiplier=6.0,
+                activation_buffer_gib=activation_buf_gib,
+            )
+            device_map_kwargs = {"device_map": "auto", **(({"max_memory": mm} if mm else {}))}
+        else:
+            # VRAM unqueryable (RunPod / MIG / exclusive-process quirks):
+            # accelerate's device_map='auto' also calls mem_get_info internally
+            # and silently falls back to CPU when it fails.  Skip it entirely;
+            # args.device != 'auto' path below will call model.to(device).
+            print("[unlearn] VRAM unqueryable - skipping device_map='auto', moving model to device manually.")
+            device_map_kwargs = {}
     else:
         device_map_kwargs = {}
     
     model = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=pt_dtype, trust_remote_code=True, **device_map_kwargs
     )
-    if args.device != "auto":
+    if args.device != "auto" or not device_map_kwargs:
         model.to(device)
     model.train()
 
