@@ -1171,12 +1171,18 @@ def run_evaluation_benchmarks(outdir, device, dtype, no_eval=False):
     print("[unlearn] Running eval benchmarks ...")
     eval_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "experiment", "eval.py")
     eval_device = _pick_eval_device(device)
+    # Use whichever W&B run name was assigned by init_wandb() so eval runs
+    # log under the same name as the training run.
+    import wandb as _wandb
+    _wandb_run_name = _wandb.run.name if _wandb.run is not None else None
     eval_cmd = [
         "uv", "run", "--script", eval_script,
         "--model", outdir,
         "--device", eval_device,
         "--dtype", dtype,
     ]
+    if _wandb_run_name:
+        eval_cmd += ["--wandb-run-name", _wandb_run_name]
 
     try:
         import subprocess

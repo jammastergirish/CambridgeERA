@@ -91,7 +91,7 @@ def main():
             # Sweep runs have method names like "/tar__", "/cb__", etc. in their name
             # Some runs may use underscore instead of slash (e.g., "_simnpo__")
             # Baselines are plain model runs without any method suffix
-            "IsBase":             not any(f"/{method}__" in run.name or f"_{method}__" in run.name for method in ["tar", "cb", "rmu", "npo", "simnpo"]),
+            "IsBase":             not any(f"/{method}__" in run.name or f"_{method}__" in run.name for method in ["tar", "cb", "rmu", "npo", "simnpo", "wt_dist"]),
         })
 
     if not data:
@@ -99,6 +99,36 @@ def main():
         return
 
     df = pd.DataFrame(data)
+
+    # ------------------------------------------------------------------
+    # Deduplicate runs that represent the same trained model.
+    #
+    # Two naming schemes exist across code versions:
+    #   Old  →  "unlearned_models_EleutherAI_deep-ignorance-unfiltered_npo__..."
+    #   New  →  "EleutherAI_deep-ignorance-unfiltered/npo__..."
+    #
+    # Runs from both eras may appear in the same project with identical
+    # metrics.  We detect them by rounding MMLU+WMDP to 4 dp (runs with
+    # exactly the same checkpoint produce bit-identical eval results), then
+    # keep whichever name contains a "/" (new-style) over the flat one.
+    # ------------------------------------------------------------------
+    def _name_style_rank(name: str) -> int:
+        """Return 0 for new-style (has '/'), 1 for old-style."""
+        return 0 if "/" in name else 1
+
+    df["_style"] = df["Name"].apply(_name_style_rank)
+    df["_fp"] = (
+        df["MMLU"].round(4).astype(str)
+        + "|" + df["WMDP (Robust)"].round(4).astype(str)
+        + "|" + df["WMDP (Cloze)"].round(4).astype(str)
+        + "|" + df["WMDP (Categorized)"].round(4).astype(str)
+        + "|" + df["Method"].astype(str)
+    )
+    df = (
+        df.sort_values("_style")          # new-style (0) first
+          .drop_duplicates(subset="_fp", keep="first")
+          .drop(columns=["_style", "_fp"])
+    )
 
     # Calculate a combined score
     # Goal: Maximize MMLU (retain) and Minimize WMDP_Robust (forget)

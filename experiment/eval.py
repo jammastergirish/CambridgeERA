@@ -95,6 +95,12 @@ def main():
                         help="Max samples per task (default: full benchmark)")
     parser.add_argument("--batch-size", default="auto", help="Batch size (default: auto)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--wandb-run-name", default=None,
+        help="W&B run name to log eval metrics under. When set by unlearn.py, "
+             "this matches the training run name so eval metrics appear on the "
+             "same W&B run instead of creating a separate one."
+    )
     args = parser.parse_args()
 
     # Auto-derive outdir from model name if not specified
@@ -232,7 +238,17 @@ def main():
     if _wandb_key:
         try:
             import wandb
-            run_name = args.model.replace("/", "_")
+            # Use the caller-supplied run name when available (unlearn.py passes its
+            # own W&B run name so eval metrics appear on the same run as training).
+            # Fall back to last-2-segments of the model path, which matches
+            # _derive_run_name() in utils.py and avoids the old flat-underscore names.
+            if args.wandb_run_name:
+                run_name = args.wandb_run_name
+            else:
+                parts = [p for p in args.model.replace("\\", "/").split("/") if p]
+                while parts and parts[0] in ("outputs", "unlearned_models", "plots"):
+                    parts = parts[1:]
+                run_name = "/".join(parts[-2:]) if len(parts) >= 2 else (parts[-1] if parts else args.model)
             wandb.init(project="cambridge_era", name=run_name, config=vars(args), tags=["eval"])
             flat = {}
             for task_name, task_results in results["results"].items():
@@ -243,7 +259,7 @@ def main():
             wandb.log(flat)
             wandb.summary.update(flat)
             wandb.finish()
-            print(f"[eval] ✓ Metrics logged to Weights & Biases (project: {args.wandb_project}, run: {run_name})")
+            print(f"[eval] ✓ Metrics logged to Weights & Biases (run: {run_name})")
         except Exception as e:
             print(f"[eval] WARNING: Failed to log to W&B: {e}")
 
