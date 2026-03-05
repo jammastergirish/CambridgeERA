@@ -1532,6 +1532,17 @@ def main():
     # and all subsequent tensor ops use the same device as the model.
     model_device = next(model.parameters()).device
     if str(model_device) != device:
+        if "cuda" in device and str(model_device) == "cpu":
+            sys.exit(
+                "[unlearn] FATAL: CUDA was requested but the model loaded on CPU.\n"
+                "  PyTorch cannot initialise a CUDA compute context on this machine.\n"
+                "  Common causes:\n"
+                "    - Docker container started without --gpus all / nvidia-docker\n"
+                "    - NVIDIA Container Runtime not installed\n"
+                "    - GPU in exclusive-process mode held by another process\n"
+                "  Verify with: python3 -c \"import torch; print(torch.tensor([1.]).cuda())\"\n"
+                "  Training a 7B model on CPU would take hours. Aborting."
+            )
         print(f"[unlearn] Note: model loaded on {model_device} (requested {device}); using {model_device}.")
         device = str(model_device)
 
