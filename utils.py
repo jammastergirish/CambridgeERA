@@ -154,14 +154,22 @@ def filter_gpus_by_free_vram(min_free_gib: float = 10.0) -> list[int]:
         except Exception:
             pass
     if not usable:
-        # No GPU has enough free memory — pick the best one and warn
+        # No GPU has enough free memory — pick the best one and warn.
+        # mem_get_info can raise on some systems (MIG mode, exclusive-process
+        # mode, driver quirks on H200, etc.) so wrap it defensively.
         best = pick_best_gpu()
-        free_bytes, _ = torch.cuda.mem_get_info(best)
-        free_gib = free_bytes / 1024 ** 3
-        print(
-            f"[device] WARNING: No GPU has ≥ {min_free_gib:.0f} GiB free. "
-            f"Best GPU {best} has {free_gib:.1f} GiB free. Using it anyway."
-        )
+        try:
+            free_bytes, _ = torch.cuda.mem_get_info(best)
+            free_gib = free_bytes / 1024 ** 3
+            print(
+                f"[device] WARNING: No GPU has ≥ {min_free_gib:.0f} GiB free. "
+                f"Best GPU {best} has {free_gib:.1f} GiB free. Using it anyway."
+            )
+        except Exception:
+            print(
+                f"[device] WARNING: No GPU has ≥ {min_free_gib:.0f} GiB free "
+                f"(could not query free VRAM). Using GPU {best} anyway."
+            )
         return [best]
     return usable
 
