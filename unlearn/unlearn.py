@@ -575,23 +575,24 @@ def rmu_loss(
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
 
     for lid in layer_ids:
+        # Cast activations to float32 for MSE: F.mse_loss is not auto-promoted
+        # by torch.cuda.amp.autocast, so bf16 intermediates cause backward() to
+        # fail with "Found dtype BFloat16 but expected Float".
+        fa = forget_acts[lid].float()
+        ra = retain_acts[lid].float()
+
         # Forget: MSE toward (steering_coeff * random_direction)
         # Expand the (D,) random vector to match (B, T, D) activation shape
-        target_f = random_targets[lid].unsqueeze(0).unsqueeze(0) * steering_coeff
-        loss = loss + F.mse_loss(forget_acts[lid], target_f.expand_as(forget_acts[lid]))
+        target_f = random_targets[lid].float().unsqueeze(0).unsqueeze(0) * steering_coeff
+        loss = loss + F.mse_loss(fa, target_f.expand_as(fa))
 
         # Retain: MSE toward cached clean activations (from before training)
-        target_r = retain_targets[lid].to(retain_acts[lid].device)  # move cached activations to current device
+        target_r = retain_targets[lid].to(ra.device).float()
         # Handle batch-size mismatch by truncating to the smaller batch
-        bsz = min(retain_acts[lid].size(0), target_r.size(0))
-        loss = loss + alpha * F.mse_loss(
-            retain_acts[lid][:bsz], target_r[:bsz].detach()
-        )
+        bsz = min(ra.size(0), target_r.size(0))
+        loss = loss + alpha * F.mse_loss(ra[:bsz], target_r[:bsz].detach())
 
-    # F.mse_loss is not auto-promoted to fp32 by torch.cuda.amp.autocast
-    # (unlike F.cross_entropy), so the loss stays bf16 and backward() fails.
-    # Cast to float32 to match the Trainer's mixed-precision expectations.
-    return loss.float()
+    return loss
 
 
 # ---- Circuit Breakers --------------------------------------------------
@@ -631,25 +632,25 @@ def cb_loss(
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
 
     for lid in layer_ids:
-        # Forget: flatten (B, T, D) → (B*T, D) so each token position gets
-        # its own cosine similarity measurement against the random target
-        fa = forget_acts[lid].flatten(0, 1)  # (B*T, D)
-        rt = random_targets[lid].unsqueeze(0).expand_as(fa) * steering_coeff
+        # Cast to float32: cosine_similarity is not auto-promoted by autocast,
+        # causing bf16 backward failures.
+        fa = forget_acts[lid].float().flatten(0, 1)  # (B*T, D)
+        rt = random_targets[lid].float().unsqueeze(0).expand_as(fa) * steering_coeff
         # We want fa to ALIGN with rt, so minimize negative cosine sim
         cos_sim = F.cosine_similarity(fa, rt, dim=-1)
         loss = loss - cos_sim.mean()  # negate: gradient descent on this = push TOWARD rt
 
         # Retain: keep activations pointing in the same direction as the
         # cached original activations.  (1 - cos_sim) = 0 when perfectly aligned.
-        ra = retain_acts[lid]
-        tr = retain_targets[lid].to(ra.device)  # move cached activations to current device
+        ra = retain_acts[lid].float()
+        tr = retain_targets[lid].to(ra.device).float()
         bsz = min(ra.size(0), tr.size(0))
         ra_flat = ra[:bsz].flatten(0, 1)
         tr_flat = tr[:bsz].detach().flatten(0, 1)
         retain_cos = F.cosine_similarity(ra_flat, tr_flat, dim=-1)
         loss = loss + alpha * (1.0 - retain_cos.mean())  # penalise directional drift
 
-    return loss.float()
+    return loss
 
 
 # ---- LAT ---------------------------------------------------------------
