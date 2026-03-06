@@ -588,7 +588,10 @@ def rmu_loss(
             retain_acts[lid][:bsz], target_r[:bsz].detach()
         )
 
-    return loss
+    # F.mse_loss is not auto-promoted to fp32 by torch.cuda.amp.autocast
+    # (unlike F.cross_entropy), so the loss stays bf16 and backward() fails.
+    # Cast to float32 to match the Trainer's mixed-precision expectations.
+    return loss.float()
 
 
 # ---- Circuit Breakers --------------------------------------------------
@@ -646,7 +649,7 @@ def cb_loss(
         retain_cos = F.cosine_similarity(ra_flat, tr_flat, dim=-1)
         loss = loss + alpha * (1.0 - retain_cos.mean())  # penalise directional drift
 
-    return loss
+    return loss.float()
 
 
 # ---- LAT ---------------------------------------------------------------
