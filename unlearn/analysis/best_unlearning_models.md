@@ -45,6 +45,9 @@
 | --- | --- | --- | --- | --- |
 | EleutherAI_deep-ignorance-unfiltered/rmu__ep3_lr3e-05_bs32_a100.0_sc20.0_ly5-6-7_ml2048 | -0.0378 | 0.2295 | 0.2673 | 0.2704 |
 | EleutherAI_deep-ignorance-unfiltered/rmu__ep3_lr3e-05_bs32_a50.0_sc20.0_ly5-6-7_ml2048 | -0.0378 | 0.2295 | 0.2673 | 0.2686 |
+| EleutherAI_deep-ignorance-unfiltered/rmu__ep2_lr1e-05_bs32_a100.0_sc20.0_ly5-6-7_ml2048 | N/A | 0.4511 | N/A | 0.3578 |
+| EleutherAI_deep-ignorance-unfiltered/rmu__ep1_lr1e-05_bs32_a100.0_sc20.0_ly5-6-7_ml2048 | N/A | 0.4504 | N/A | 0.3634 |
+| EleutherAI_deep-ignorance-unfiltered/rmu__ep2_lr1e-05_bs32_a100.0_sc40.0_ly5-6-7_ml2048 | N/A | 0.4501 | N/A | 0.3578 |
 
 ### simnpo
 
