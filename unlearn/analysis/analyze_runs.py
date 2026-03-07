@@ -10,7 +10,7 @@
 
 import wandb
 
-KNOWN_METHODS = ["tar", "cb", "rmu", "npo", "simnpo", "wt_dist", "ga", "grad_diff"]
+KNOWN_METHODS = ["tar", "cb_lat", "cb", "lat", "rmu", "npo", "simnpo", "wt_dist_reg", "wt_dist", "ga_simple", "ga", "grad_diff", "dpo"]
 import pandas as pd
 from dotenv import load_dotenv
 
