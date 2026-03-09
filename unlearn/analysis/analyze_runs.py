@@ -255,7 +255,7 @@ def _append_summary_table(sweeps_df: "pd.DataFrame", out_file: str) -> None:
         print("No rows for summary table.")
         return
 
-    headers = ["Method", "Best Config", "L2 Dist", "MMLU", "WMDP", "MMLU-WMDP", "Forget NLL", "Retain NLL"]
+    headers = ["Method", "Best Config", "L2 Dist", "MMLU", "WMDP (Robust)", "MMLU−WMDP (Robust)", "Forget NLL", "Retain NLL"]
     header  = "| " + " | ".join(headers) + " |"
     sep     = "| " + " | ".join(["---"] * len(headers)) + " |"
     body    = ["| " + " | ".join(r) + " |" for r in rows]
