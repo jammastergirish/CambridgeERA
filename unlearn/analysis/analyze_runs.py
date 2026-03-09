@@ -129,15 +129,36 @@ def main():
     df = pd.DataFrame(data)
 
     # ------------------------------------------------------------------
-    # Deduplicate: same run name (= same config) may appear multiple times
-    # in W&B (e.g. a re-run after a crash, or a forced re-run).
-    # Keep only the most recently created run for each name.
+    # Merge runs that share the same display Name.
+    #
+    # unlearn.py (training) and eval.py (eval subprocess) both call
+    # wandb.init() with the same display name, producing two separate runs:
+    #   - training run: has weight_l2_dist / NLL, also gets eval_bench
+    #     metrics logged back onto it after eval.py finishes
+    #   - eval run:     has eval_bench metrics only
+    #
+    # Simple "keep latest" would drop the training run and lose L2.
+    # Instead: group by Name and take the first non-null value per column
+    # (rows sorted latest-first, so newer values win when both are non-null).
     # ------------------------------------------------------------------
-    df = (
-        df.sort_values("CreatedAt", ascending=False)   # latest first
-          .drop_duplicates(subset="Name", keep="first") # one row per name
-          .drop(columns=["CreatedAt"])
-    )
+    df = df.sort_values("CreatedAt", ascending=False)
+
+    def _first_valid(s):
+        valid = s.dropna()
+        return valid.iloc[0] if not valid.empty else s.iloc[0]
+
+    merged_rows = []
+    for name, group in df.groupby("Name", sort=False):
+        row = {col: _first_valid(group[col]) for col in df.columns}
+        # Timestamp: always the latest run
+        row["CreatedAt"] = group["CreatedAt"].iloc[0]
+        merged_rows.append(row)
+
+    df = pd.DataFrame(merged_rows)
+
+    # Format timestamp for display — keep timezone explicit
+    df["Date (UTC)"] = pd.to_datetime(df["CreatedAt"], utc=True).dt.strftime("%Y-%m-%d %H:%M UTC")
+    df = df.drop(columns=["CreatedAt"])
 
     # Calculate a combined score
     # Goal: Maximize MMLU (retain) and Minimize WMDP_Robust (forget)
@@ -147,7 +168,7 @@ def main():
 
     print(f"\nSuccessfully processed {len(df)} runs with evaluation metrics.\n")
 
-    cols = ["Name", "Score", "L2 Dist", "MMLU", "WMDP (Robust)", "WMDP (Robust Rewritten)", "WMDP (Cloze)", "WMDP (Categorized)", "Forget NLL", "Retain NLL"]
+    cols = ["Name", "Score", "L2 Dist", "MMLU", "WMDP (Robust)", "WMDP (Robust Rewritten)", "WMDP (Cloze)", "WMDP (Categorized)", "Forget NLL", "Retain NLL", "Date (UTC)"]
 
     baselines_df = df[df["IsBase"]].sort_values("Name")
     sweeps_df    = df[~df["IsBase"]]
@@ -226,7 +247,16 @@ def _append_summary_table(sweeps_df: "pd.DataFrame", out_file: str) -> None:
         if ranked.empty:
             continue
 
-        best = ranked.iloc[0]
+        # Prefer runs that have L2 Dist, but only if they're within 0.01
+        # Score of the overall best.  If the L2 run is much worse, show
+        # the true best honestly (even if L2 is N/A for that row).
+        best_overall = ranked.iloc[0]
+        best_score   = best_overall.get("Score") or 0
+        with_l2 = ranked[ranked["L2 Dist"].notna()]
+        if not with_l2.empty and (best_score - with_l2.iloc[0].get("Score", 0)) <= 0.01:
+            best = with_l2.iloc[0]
+        else:
+            best = best_overall
         mmlu    = best.get("MMLU")
         wmdp    = best.get("WMDP (Robust)")
         l2      = best.get("L2 Dist")
@@ -249,13 +279,14 @@ def _append_summary_table(sweeps_df: "pd.DataFrame", out_file: str) -> None:
             mmlu_minus_wmdp,
             _f(fgt_nll, 3),
             _f(ret_nll, 3),
+            str(best.get("Date (UTC)", "N/A")),
         ])
 
     if not rows:
         print("No rows for summary table.")
         return
 
-    headers = ["Method", "Best Config", "L2 Dist", "MMLU", "WMDP (Robust)", "MMLU−WMDP (Robust)", "Forget NLL", "Retain NLL"]
+    headers = ["Method", "Best Config", "L2 Dist", "MMLU", "WMDP (Robust)", "MMLU−WMDP (Robust)", "Forget NLL", "Retain NLL", "Date (UTC)"]
     header  = "| " + " | ".join(headers) + " |"
     sep     = "| " + " | ".join(["---"] * len(headers)) + " |"
     body    = ["| " + " | ".join(r) + " |" for r in rows]
