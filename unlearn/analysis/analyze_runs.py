@@ -117,6 +117,9 @@ def main():
             # Some runs may use underscore instead of slash (e.g., "_simnpo__")
             # Baselines are plain model runs without any method suffix
             "IsBase":             not any(f"/{m}__" in run.name or f"_{m}__" in run.name for m in KNOWN_METHODS),
+            # Timestamp for deduplication — latest run wins when the same
+            # config has been run more than once.
+            "CreatedAt":               run.created_at,
         })
 
     if not data:
@@ -126,33 +129,14 @@ def main():
     df = pd.DataFrame(data)
 
     # ------------------------------------------------------------------
-    # Deduplicate runs that represent the same trained model.
-    #
-    # Two naming schemes exist across code versions:
-    #   Old  →  "unlearned_models_EleutherAI_deep-ignorance-unfiltered_npo__..."
-    #   New  →  "EleutherAI_deep-ignorance-unfiltered/npo__..."
-    #
-    # Runs from both eras may appear in the same project with identical
-    # metrics.  We detect them by rounding MMLU+WMDP to 4 dp (runs with
-    # exactly the same checkpoint produce bit-identical eval results), then
-    # keep whichever name contains a "/" (new-style) over the flat one.
+    # Deduplicate: same run name (= same config) may appear multiple times
+    # in W&B (e.g. a re-run after a crash, or a forced re-run).
+    # Keep only the most recently created run for each name.
     # ------------------------------------------------------------------
-    def _name_style_rank(name: str) -> int:
-        """Return 0 for new-style (has '/'), 1 for old-style."""
-        return 0 if "/" in name else 1
-
-    df["_style"] = df["Name"].apply(_name_style_rank)
-    df["_fp"] = (
-        df["MMLU"].round(4).astype(str)
-        + "|" + df["WMDP (Robust)"].round(4).astype(str)
-        + "|" + df["WMDP (Cloze)"].round(4).astype(str)
-        + "|" + df["WMDP (Categorized)"].round(4).astype(str)
-        + "|" + df["WMDP (Robust Rewritten)"].round(4).astype(str)
-    )
     df = (
-        df.sort_values("_style")          # new-style (0) first
-          .drop_duplicates(subset="_fp", keep="first")
-          .drop(columns=["_style", "_fp"])
+        df.sort_values("CreatedAt", ascending=False)   # latest first
+          .drop_duplicates(subset="Name", keep="first") # one row per name
+          .drop(columns=["CreatedAt"])
     )
 
     # Calculate a combined score
