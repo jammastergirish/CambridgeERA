@@ -31,6 +31,22 @@ def _md_table(df: pd.DataFrame, cols: list[str]) -> str:
     return "\n".join([header, sep] + rows)
 
 
+def _extract_best_config(run_name: str) -> str:
+    """Extract a short human-readable config string from the run name.
+
+    Run names look like:
+      EleutherAI_deep-ignorance-unfiltered/ga__ep3_lr2e-05_bs32_rw5.0_ml2048
+    We strip the model prefix and the method prefix, leaving just the params.
+    """
+    # Strip model prefix (everything up to and including the slash)
+    if "/" in run_name:
+        run_name = run_name.split("/", 1)[1]
+    # Strip method prefix (everything up to and including the first __)
+    if "__" in run_name:
+        run_name = run_name.split("__", 1)[1]
+    return run_name
+
+
 def main():
     load_dotenv()
     api = wandb.Api()
@@ -92,6 +108,11 @@ def main():
             "WMDP (Categorized)":      wmdp_3,
             "WMDP (Robust Rewritten)": wmdp_4,
             "Loss":                    run.summary.get("train/loss", None),
+            # L2 weight distance from base model (logged as wandb summary)
+            "L2 Dist":                 run.summary.get("weight_l2_dist", None),
+            # NLL on held-out forget/retain split
+            "Forget NLL":              run.summary.get("final_forget_nll", None),
+            "Retain NLL":              run.summary.get("final_retain_nll", None),
             # Sweep runs have method names like "/tar__", "/cb__", etc. in their name
             # Some runs may use underscore instead of slash (e.g., "_simnpo__")
             # Baselines are plain model runs without any method suffix
@@ -142,7 +163,7 @@ def main():
 
     print(f"\nSuccessfully processed {len(df)} runs with evaluation metrics.\n")
 
-    cols = ["Name", "Score", "MMLU", "WMDP (Robust)", "WMDP (Robust Rewritten)", "WMDP (Cloze)", "WMDP (Categorized)"]
+    cols = ["Name", "Score", "L2 Dist", "MMLU", "WMDP (Robust)", "WMDP (Robust Rewritten)", "WMDP (Cloze)", "WMDP (Categorized)", "Forget NLL", "Retain NLL"]
 
     baselines_df = df[df["IsBase"]].sort_values("Name")
     sweeps_df    = df[~df["IsBase"]]
@@ -185,8 +206,84 @@ def main():
             )
             f.write(_md_table(best, cols) + "\n\n")
 
+    # ------------------------------------------------------------------ #
+    # Cross-method summary table (appended to the same output file)
+    # ------------------------------------------------------------------ #
+    _append_summary_table(sweeps_df, out_file)
+
     print("Done!")
+
+
+def _append_summary_table(sweeps_df: "pd.DataFrame", out_file: str) -> None:
+    """
+    For each method, pick the single best run (by Score then MMLU) and
+    append a cross-method summary markdown table to the output file.
+
+    Columns: Method | Best Config | L2 Dist | MMLU | WMDP | MMLU-WMDP | Forget NLL | Retain NLL
+    """
+    import numpy as np
+
+    if sweeps_df.empty:
+        print("No sweep runs available – skipping summary table.")
+        return
+
+    def _f(val, decimals=4):
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            return "N/A"
+        return f"{val:.{decimals}f}"
+
+    rows = []
+    for method, group in sweeps_df.groupby("Method"):
+        ranked = group.dropna(subset=["Score"]).sort_values(
+            by=["Score", "MMLU"], ascending=[False, False]
+        )
+        if ranked.empty:
+            ranked = group.sort_values("MMLU", ascending=False)
+        if ranked.empty:
+            continue
+
+        best = ranked.iloc[0]
+        mmlu    = best.get("MMLU")
+        wmdp    = best.get("WMDP (Robust)")
+        l2      = best.get("L2 Dist")
+        fgt_nll = best.get("Forget NLL")
+        ret_nll = best.get("Retain NLL")
+
+        mmlu_minus_wmdp = (
+            f"{mmlu - wmdp:.4f}"
+            if (mmlu is not None and wmdp is not None
+                and not np.isnan(float(mmlu)) and not np.isnan(float(wmdp)))
+            else "N/A"
+        )
+
+        rows.append([
+            method,
+            _extract_best_config(best["Name"]),
+            _f(l2, 2),
+            _f(mmlu),
+            _f(wmdp),
+            mmlu_minus_wmdp,
+            _f(fgt_nll, 3),
+            _f(ret_nll, 3),
+        ])
+
+    if not rows:
+        print("No rows for summary table.")
+        return
+
+    headers = ["Method", "Best Config", "L2 Dist", "MMLU", "WMDP", "MMLU-WMDP", "Forget NLL", "Retain NLL"]
+    header  = "| " + " | ".join(headers) + " |"
+    sep     = "| " + " | ".join(["---"] * len(headers)) + " |"
+    body    = ["| " + " | ".join(r) + " |" for r in rows]
+    table   = "\n".join([header, sep] + body)
+
+    with open(out_file, "a") as f:
+        f.write("## Cross-Method Comparison — Best Config Per Method\n\n")
+        f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust)*\n\n")
+        f.write(table + "\n")
+
+    print("Summary table appended to", out_file)
+
 
 if __name__ == "__main__":
     main()
-
