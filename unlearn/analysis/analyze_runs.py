@@ -89,11 +89,8 @@ def _score(mmlu, wmdp):
 
 
 def _wmdp_primary(run_row):
-    """Return the best available WMDP score: prefer robust, fall back to robust_rewritten."""
-    r = run_row.get("WMDP (Robust)")
-    if r is not None and not (isinstance(r, float) and np.isnan(r)):
-        return r
-    return run_row.get("WMDP (Robust Rewritten)")
+    """Return WMDP Robust score (the meaningful forgetfulness metric)."""
+    return run_row.get("WMDP (Robust)")
 
 
 def _run_to_row(run_row) -> list[str]:
@@ -242,8 +239,7 @@ def _fetch_runs(api) -> pd.DataFrame:
     )
 
     # Score: MMLU - WMDP Robust (primary forgetfulness metric).
-    # Fall back to Robust Rewritten only for runs missing Robust.
-    wmdp_for_score = df["WMDP (Robust)"].fillna(df["WMDP (Robust Rewritten)"])
+    wmdp_for_score = df["WMDP (Robust)"]
     df["Score"] = df["MMLU"] - wmdp_for_score
     print(f"After dedup: {len(df)} unique runs.\n")
     return df
@@ -271,7 +267,7 @@ def main():
     with open(out_file, "w") as f:
         # 1. Best config per method
         f.write("## Best Config Per Method\n\n")
-        f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust, with fallback to Robust Rewritten)*\n\n")
+        f.write("*Best run per method ranked by Score = MMLU − WMDP (Robust)*\n\n")
         best_rows = []
         for method, group in sweeps_df.groupby("Method"):
             ranked = group.dropna(subset=["Score"]).sort_values(
