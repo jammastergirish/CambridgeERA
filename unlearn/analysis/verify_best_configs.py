@@ -10,7 +10,7 @@ Extract metrics for the 6 best unlearning configs from wandb.
 
 Training and eval are separate wandb runs with the same run name:
   - Training runs log: final_forget_nll, final_retain_nll, weight_l2_dist
-  - Eval runs log:     eval_bench/mmlu/acc, eval_bench/wmdp_bio_robust_rewritten/acc
+  - Eval runs log:     eval_bench/mmlu/acc, eval_bench/wmdp_bio_robust/acc
 
 This script fetches both, matches them by run name, and prints a unified table.
 
@@ -47,7 +47,7 @@ print(f"Total finished runs: {len(runs)}")
 # --- For each best config, find its training + eval runs ---
 
 print()
-print(f"{'Method':<12} {'L2':>8} {'F_NLL':>8} {'R_NLL':>8} {'MMLU':>8} {'WMDP_RR':>8}")
+print(f"{'Method':<12} {'L2':>8} {'F_NLL':>8} {'R_NLL':>8} {'MMLU':>8} {'WMDP_R':>8}")
 print("-" * 62)
 
 for method, substr in BEST_CONFIGS.items():
@@ -66,7 +66,7 @@ for method, substr in BEST_CONFIGS.items():
     fnll = f"{t.summary['final_forget_nll']:.3f}"   if t else "N/A"
     rnll = f"{t.summary['final_retain_nll']:.3f}"   if t else "N/A"
     mmlu = f"{e.summary['eval_bench/mmlu/acc']:.4f}" if e else "N/A"
-    wmdp = f"{e.summary['eval_bench/wmdp_bio_robust_rewritten/acc']:.4f}" if e and e.summary.get("eval_bench/wmdp_bio_robust_rewritten/acc") else "N/A"
+    wmdp = f"{e.summary['eval_bench/wmdp_bio_robust/acc']:.4f}" if e and e.summary.get("eval_bench/wmdp_bio_robust/acc") else "N/A"
 
     print(f"{method:<12} {l2:>8} {fnll:>8} {rnll:>8} {mmlu:>8} {wmdp:>8}")
 
