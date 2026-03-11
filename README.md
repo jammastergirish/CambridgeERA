@@ -745,6 +745,8 @@ The most robust method. Combines the adversarial robustness of LAT with the repr
 
 $$L_{\text{outer}} = \sum_{\ell} \Big[ -\cos\!\big(h_\ell^{\text{forget}(\delta^*)},\; c \cdot \hat{r}_\ell\big) + \alpha \cdot \big(1 - \cos(h_\ell^{\text{retain}},\; h_\ell^{\text{cached}})\big) \Big]$$
 
+Both LAT and CB-LAT use a [CAS-style scheduled coefficient](https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py) that linearly warms up over training: the retain coefficient ramps from 0 to its target value while the forget coefficient eases from 1.0 to 0.75. This prevents the two objectives from fighting each other early in training.
+
 ##### Weight Distortion — Gaussian Noise + Retain Fine-Tuning
 
 From [*From Dormant to Deleted*](https://arxiv.org/abs/2505.22310). Adds isotropic Gaussian noise (σ = `--wt-noise-std`, default 0.02) to **all** model weights before training, then fine-tunes on the retain set only. The noise displaces the model far from the pretrained basin in weight space, making it hard for an adversary to fine-tune back.
