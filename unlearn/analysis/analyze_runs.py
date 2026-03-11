@@ -251,10 +251,22 @@ def main():
         else:
             f.write("No baseline runs found.\n\n")
 
-        # 3. All runs, newest first
-        all_runs = df.sort_values("Created", ascending=False)
-        f.write("## All Runs (Newest First)\n\n")
-        f.write(_df_to_md(all_runs) + "\n")
+        # 3. All runs, grouped by method then newest first within each group
+        f.write("## All Runs (Grouped by Method)\n\n")
+        # Build a method-order mapping; unknowns go last
+        method_order = {m: i for i, m in enumerate(KNOWN_METHODS)}
+        all_runs = df.copy()
+        all_runs["_method_order"] = all_runs["Method"].map(
+            lambda m: method_order.get(m, len(KNOWN_METHODS))
+        )
+        all_runs = all_runs.sort_values(
+            ["_method_order", "Created"], ascending=[True, False]
+        ).drop(columns=["_method_order"])
+
+        # Emit one sub-section per method
+        for method, group in all_runs.groupby("Method", sort=False):
+            f.write(f"### {method}\n\n")
+            f.write(_df_to_md(group) + "\n\n")
 
     print("Done!")
 
