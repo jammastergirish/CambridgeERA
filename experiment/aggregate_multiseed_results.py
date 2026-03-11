@@ -5,6 +5,9 @@
 #   "numpy",
 #   "matplotlib",
 #   "wandb",
+#   "torch",
+#   "transformers",
+#   "tqdm",
 # ]
 # ///
 """
