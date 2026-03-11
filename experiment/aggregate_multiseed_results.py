@@ -211,29 +211,33 @@ def plot_consolidated_activation_comparison(
     # Log the consolidated plots to W&B under a dedicated run
     try:
         import wandb
-        from utils import load_dotenv, log_plots, finish_wandb
+        from utils import load_dotenv, log_plots, finish_wandb, infer_method_from_model_name
         load_dotenv()
         if os.environ.get("WANDB_API_KEY"):
-            import argparse as _ap
-            _fake_args = _ap.Namespace(outdir=output_dir)
+            method = infer_method_from_model_name(model_b_label)
+            tags = ["consolidated_activation_comparison"]
+            if method:
+                tags.append(f"method:{method}")
             wandb.init(
                 project="cambridge_era",
                 name=f"consolidated_activation/{model_b_label.split('/')[-1]}",
-                tags=["consolidated_activation_comparison"],
+                tags=tags,
                 config={
                     "num_seeds": num_seeds,
                     "seed_dirs": seed_dirs,
                     "aggregated_csv": aggregated_csv,
                     "model_a": model_a_label,
                     "model_b": model_b_label,
+                    "method": method,
                 },
                 reinit=True,
             )
             log_plots(plot_outdir, "activation_comparison")
             finish_wandb()
-            print(f"[aggregate] ✓ Logged consolidated plots to W&B (tag: consolidated_activation_comparison)")
+            print(f"[aggregate] ✓ Logged consolidated plots to W&B (tags: {tags})")
     except Exception as exc:
         print(f"[aggregate] W&B logging skipped: {exc}")
+
 
 def find_file_patterns(seed_dirs: List[str]) -> Dict[str, List[str]]:
     """Find common file patterns across seed directories."""
