@@ -1174,6 +1174,145 @@ def _pick_eval_device(requested_device: str) -> str:
     return requested_device
 
 
+def _create_model_card(args, repo_id):
+    """Create a HuggingFace model card (README.md) with hyperparameters and eval results."""
+    import json
+    from utils import model_outdir
+
+    method_info = {
+        "ga_simple": ("Gradient Ascent (simple)", "Jang et al. 2023", "https://arxiv.org/abs/2210.01504"),
+        "ga": ("Gradient Ascent", "Jang et al. 2023", "https://arxiv.org/abs/2210.01504"),
+        "grad_diff": ("Gradient Difference", None, None),
+        "dpo": ("Direct Preference Optimization", "Rafailov et al. 2023", "https://arxiv.org/abs/2305.18290"),
+        "npo": ("Negative Preference Optimization", "Zhang et al. 2024", "https://arxiv.org/abs/2404.05868"),
+        "simnpo": ("Simple NPO", "Meng et al. 2024", "https://arxiv.org/abs/2405.14734"),
+        "rmu": ("Representation Misdirection Unlearning", "Li et al. 2024", "https://arxiv.org/abs/2403.03218"),
+        "cb": ("Circuit Breakers", "Zou et al. 2024", "https://arxiv.org/abs/2406.04313"),
+        "lat": ("Latent Adversarial Training", "Casper et al. 2024", "https://arxiv.org/abs/2403.05030"),
+        "cb_lat": ("Circuit Breakers + LAT", "Zou et al. 2024; Casper et al. 2024", "https://arxiv.org/abs/2406.04313"),
+        "tar": ("Task Arithmetic", "Ilharco et al. 2023", "https://arxiv.org/abs/2212.04089"),
+        "wt_dist": ("Weight Distortion", "Siddiqui et al. 2025", "https://arxiv.org/abs/2505.22310"),
+        "wt_dist_reg": ("Weight Distortion (Regularized)", "Siddiqui et al. 2025", "https://arxiv.org/abs/2505.22310"),
+    }
+    method_names = {k: v[0] for k, v in method_info.items()}
+
+    # Collect hyperparameters
+    method = args.method
+    hyperparams = {
+        "Base model": args.model,
+        "Unlearning method": method_names.get(method, method),
+        "Learning rate": args.lr,
+        "Epochs": args.epochs,
+        "Batch size": args.batch_size,
+        "Max sequence length": args.max_length,
+        "Optimizer": getattr(args, "optimizer", "adamw"),
+        "Gradient clipping": args.grad_clip,
+        "Gradient accumulation steps": args.grad_accum_steps,
+        "Seed": args.seed,
+    }
+
+    # Add method-specific hyperparameters
+    if method in ("npo", "simnpo", "dpo"):
+        hyperparams["Beta"] = args.beta
+    if method in ("rmu",):
+        hyperparams["Alpha (retain weight)"] = args.alpha
+        hyperparams["Steering coefficient"] = args.steering_coeff
+    if method in ("rmu", "cb", "lat", "cb_lat"):
+        hyperparams["Layer IDs"] = args.layer_id
+    if method in ("grad_diff",):
+        hyperparams["Forget weight"] = args.forget_weight
+    if method in ("lat", "cb_lat"):
+        hyperparams["LAT epsilon"] = args.lat_eps
+        hyperparams["LAT steps"] = args.lat_steps
+    if method in ("ga", "npo", "simnpo", "lat", "cb_lat"):
+        hyperparams["Retain weight"] = args.retain_weight
+    if method in ("tar",):
+        hyperparams["TAR alpha"] = args.tar_alpha
+        hyperparams["TAR learning rate"] = args.tar_lr
+        hyperparams["TAR epochs"] = args.tar_epochs
+    if method in ("wt_dist",):
+        hyperparams["Noise std"] = args.wt_noise_std
+    if method in ("wt_dist_reg",):
+        hyperparams["Regularizer lambda"] = args.wt_reg_lambda
+
+    # Read eval results if available
+    eval_summary_path = os.path.join(
+        model_outdir(args.outdir, suffix="evals"), "summary.json"
+    )
+    eval_metrics = {}
+    if os.path.exists(eval_summary_path):
+        with open(eval_summary_path) as f:
+            eval_data = json.load(f)
+        eval_results = eval_data.get("results", {})
+        for task, metrics in eval_results.items():
+            for metric_key, value in metrics.items():
+                if metric_key.endswith(",none") and not metric_key.startswith("alias"):
+                    clean = metric_key.replace(",none", "")
+                    eval_metrics[f"{task}/{clean}"] = value
+
+    # Build the model card
+    method_name = method_names.get(method, method)
+    _, paper_cite, paper_url = method_info.get(method, (method, None, None))
+
+    # Summary paragraph
+    summary = (
+        f"This model was created by fine-tuning "
+        f"[{args.model}](https://huggingface.co/{args.model}) using the "
+        f"**{method_name}** unlearning algorithm."
+    )
+    if paper_cite and paper_url:
+        summary += (
+            f" The method is based on [{paper_cite}]({paper_url})."
+        )
+    summary += (
+        " The goal of unlearning is to remove specific knowledge from a "
+        "pretrained language model while preserving its general capabilities."
+    )
+
+    lines = [
+        "---",
+        "tags:",
+        "- unlearning",
+        f"base_model: {args.model}",
+        "---",
+        "",
+        f"# {os.path.basename(args.outdir)}",
+        "",
+        summary,
+        "",
+        "## Hyperparameters",
+        "",
+        "| Parameter | Value |",
+        "| --- | --- |",
+    ]
+    for key, value in hyperparams.items():
+        lines.append(f"| {key} | `{value}` |")
+
+    if eval_metrics:
+        lines += [
+            "",
+            "## Evaluation Results",
+            "",
+            "| Benchmark | Metric | Value |",
+            "| --- | --- | --- |",
+        ]
+        for metric_path, value in sorted(eval_metrics.items()):
+            parts = metric_path.split("/", 1)
+            benchmark = parts[0]
+            metric = parts[1] if len(parts) > 1 else "score"
+            if isinstance(value, float):
+                lines.append(f"| {benchmark} | {metric} | {value:.4f} |")
+            else:
+                lines.append(f"| {benchmark} | {metric} | {value} |")
+
+    lines.append("")
+
+    readme_path = os.path.join(args.outdir, "README.md")
+    with open(readme_path, "w") as f:
+        f.write("\n".join(lines))
+    print(f"[unlearn] Model card created ✓  {readme_path}")
+
+
 def run_evaluation_benchmarks(outdir, device, dtype, no_eval=False):
     """Run evaluation benchmarks on the unlearned model.
 
@@ -2006,6 +2145,10 @@ def main():
                 api = HfApi(token=hf_token)
                 username = api.whoami()["name"]
                 repo_id = f"{username}/{os.path.basename(args.outdir)}"
+
+                # Generate model card with hyperparameters and eval results
+                _create_model_card(args, repo_id)
+
                 print(f"[unlearn] Uploading to HuggingFace: {repo_id}")
                 api.create_repo(repo_id, exist_ok=True)
                 api.upload_folder(folder_path=args.outdir, repo_id=repo_id)
