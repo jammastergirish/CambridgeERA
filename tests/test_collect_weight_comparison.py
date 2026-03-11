@@ -264,7 +264,7 @@ class TestPlotWeightComparison:
 
         expected = [
             "relative_frobenius.png",
-            "relative_stable_rank.png",
+            "stable_rank_deltaW.png",
             "relative_spectral_norm.png",
             "absolute_frobenius.png",
             "absolute_stable_rank.png",

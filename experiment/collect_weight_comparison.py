@@ -321,7 +321,7 @@ def plot_weight_comparison(per_matrix_csv: str, outdir: str, title: str = None,
         ax.grid(alpha=0.3)
     fig.suptitle((title or "Relative stable rank of ΔW") + _subtitle, fontsize=14)
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, "relative_stable_rank.png"))
+    fig.savefig(os.path.join(outdir, "stable_rank_deltaW.png"))
     plt.close(fig)
 
     # ---- Plot B2: Absolute stable rank (baseline vs unlearned) ----
