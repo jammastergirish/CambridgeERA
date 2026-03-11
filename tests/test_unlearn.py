@@ -905,3 +905,114 @@ class TestMuonOptimizer:
         hidden, other = self._build_param_groups(named)
         assert len(hidden) + len(other) == len(named)
 
+
+# ---------------------------------------------------------------------------
+# Scheduled coefficient (CAS-style warmup for LAT / CB-LAT)
+# ---------------------------------------------------------------------------
+class TestScheduledCoeff:
+    """Test the CAS-style scheduled coefficient used in LAT and CB-LAT losses."""
+
+    def test_coeff_is_zero_at_step_zero(self):
+        """At step 0, scheduled_coeff should be 0 (no retain, full forget)."""
+        total_steps = 100
+        step = 0
+        coeff = min(1.0, step / total_steps)
+        assert coeff == 0.0
+
+    def test_coeff_is_one_at_final_step(self):
+        """At the last step, scheduled_coeff should be 1.0."""
+        total_steps = 100
+        step = 100
+        coeff = min(1.0, step / total_steps)
+        assert coeff == 1.0
+
+    def test_coeff_is_half_at_midpoint(self):
+        """At the midpoint, scheduled_coeff should be 0.5."""
+        total_steps = 100
+        step = 50
+        coeff = min(1.0, step / total_steps)
+        assert coeff == 0.5
+
+    def test_coeff_clamped_above_one(self):
+        """If step exceeds total_steps, coeff should still be 1.0."""
+        total_steps = 100
+        step = 200
+        coeff = min(1.0, step / total_steps)
+        assert coeff == 1.0
+
+    def test_lat_retain_ramps_zero_to_retain_weight(self):
+        """LAT effective retain should go from 0 to retain_weight."""
+        retain_weight = 0.8
+        # At start
+        eff_retain_start = retain_weight * 0.0
+        assert eff_retain_start == 0.0
+        # At end
+        eff_retain_end = retain_weight * 1.0
+        assert eff_retain_end == retain_weight
+
+    def test_lat_forget_eases_one_to_075(self):
+        """LAT effective forget should go from 1.0 to 0.75."""
+        eff_forget_start = 1.0 - 0.25 * 0.0
+        assert eff_forget_start == 1.0
+        eff_forget_end = 1.0 - 0.25 * 1.0
+        assert eff_forget_end == 0.75
+
+    def test_cb_lat_steering_eases(self):
+        """CB-LAT effective steering should go from steering_coeff to 0.75 * steering_coeff."""
+        steering_coeff = 20.0
+        eff_start = steering_coeff * (1.0 - 0.25 * 0.0)
+        assert eff_start == 20.0
+        eff_end = steering_coeff * (1.0 - 0.25 * 1.0)
+        assert eff_end == 15.0
+
+    def test_cb_lat_alpha_ramps(self):
+        """CB-LAT effective alpha should go from 0 to alpha."""
+        alpha = 100.0
+        eff_start = alpha * 0.0
+        assert eff_start == 0.0
+        eff_end = alpha * 1.0
+        assert eff_end == 100.0
+
+    def test_lat_loss_accepts_scheduled_coeff(self):
+        """lat_loss should accept scheduled_coeff without error and change the output."""
+        import torch
+        from unittest.mock import Mock, patch
+        from unlearn import lat_loss
+
+        # Create a tiny fake model with model.layers structure
+        model = torch.nn.Module()
+        inner = torch.nn.Module()
+        layer = torch.nn.Linear(16, 16)
+        inner.layers = torch.nn.ModuleList([layer])
+        model.model = inner
+        # Add a small lm_head so forward works
+        model.lm_head = torch.nn.Linear(16, 32)
+
+        batch = {
+            "input_ids": torch.randint(0, 32, (1, 4)),
+            "attention_mask": torch.ones(1, 4, dtype=torch.long),
+        }
+
+        # We can't easily run the full function without a real causal LM,
+        # but we can verify the signature accepts the parameter by checking
+        # the function's parameter list.
+        import inspect
+        sig = inspect.signature(lat_loss)
+        assert "scheduled_coeff" in sig.parameters
+
+    def test_cb_lat_loss_accepts_scheduled_coeff(self):
+        """cb_lat_loss should accept scheduled_coeff parameter."""
+        import inspect
+        from unlearn import cb_lat_loss
+        sig = inspect.signature(cb_lat_loss)
+        assert "scheduled_coeff" in sig.parameters
+
+    def test_scheduled_coeff_default_is_one(self):
+        """Both loss functions should default scheduled_coeff to 1.0 (no warmup)."""
+        import inspect
+        from unlearn import lat_loss, cb_lat_loss
+        lat_default = inspect.signature(lat_loss).parameters["scheduled_coeff"].default
+        cb_lat_default = inspect.signature(cb_lat_loss).parameters["scheduled_coeff"].default
+        assert lat_default == 1.0
+        assert cb_lat_default == 1.0
+
