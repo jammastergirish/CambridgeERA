@@ -241,6 +241,121 @@ def plot_consolidated_activation_comparison(
     except Exception as exc:
         print(f"[aggregate] W&B logging skipped: {exc}")
 
+def plot_consolidated_wmdp_lens(
+    aggregated_csv: str,
+    output_dir: str,
+    seed_dirs: List[str],
+) -> None:
+    """Re-generate wmdp_lens plots from the aggregated (mean±std) CSV.
+
+    Produces a shaded error-band accuracy-vs-layer chart and logs it to W&B
+    under the tag ``consolidated_wmdp_lens``.
+    """
+    if not os.path.exists(aggregated_csv):
+        print(f"[aggregate] Skipping consolidated wmdp_lens plots — {aggregated_csv} not found")
+        return
+
+    try:
+        import pandas as pd
+        import matplotlib.pyplot as plt
+
+        df = pd.read_csv(aggregated_csv)
+        # The aggregated CSV has 'accuracy' (mean) and 'accuracy_std' columns
+        if "accuracy" not in df.columns or "layer" not in df.columns:
+            print(f"[aggregate] Unexpected columns in {aggregated_csv}: {list(df.columns)}")
+            return
+
+        has_std = "accuracy_std" in df.columns
+
+        plot_outdir = os.path.join(output_dir, "consolidated_plots")
+        os.makedirs(plot_outdir, exist_ok=True)
+
+        # Try to infer model label from directory path (single-model analyses
+        # use MODEL_DIR/wmdp_lens/ rather than A__to__B/)
+        model_label = "Model"
+        for part in reversed(list(Path(output_dir).parts)):
+            if part not in ("wmdp_logit_lens", "wmdp_tuned_lens", "outputs", ""):
+                model_label = part.replace("_", "/", 1)
+                break
+
+        num_seeds = len(seed_dirs)
+        title = f"{model_label}: WMDP-Bio Accuracy ({num_seeds} seeds)"
+        suffix = " (mean ± 1σ)" if has_std else ""
+
+        layers = df["layer"]
+        acc = df["accuracy"]
+        std = df["accuracy_std"] if has_std else None
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        # Left: absolute accuracy ± std
+        ax = axes[0]
+        ax.plot(layers, acc, "o-", color="tab:blue", linewidth=1.5, label="accuracy")
+        if std is not None:
+            ax.fill_between(layers, acc - std, acc + std, alpha=0.2, color="tab:blue")
+        ax.axhline(0.25, color="gray", ls=":", alpha=0.5, label="Random chance (0.25)")
+        ax.set_xlabel("Layer")
+        ax.set_ylabel("WMDP-Bio Accuracy")
+        ax.set_title("WMDP Accuracy by Layer" + suffix)
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+        # Right: delta from mean final-layer accuracy
+        # Use the mean accuracy at the last layer as reference
+        final_acc = float(acc.iloc[-1])
+        deltas = acc - final_acc
+        bar_colors = ["green" if d >= 0 else "red" for d in deltas]
+        ax2 = axes[1]
+        ax2.bar(layers, deltas, color=bar_colors, alpha=0.6)
+        if std is not None:
+            ax2.errorbar(layers, deltas, yerr=std, fmt="none",
+                         ecolor="black", elinewidth=0.8, capsize=2)
+        ax2.axhline(0, color="gray", ls="--", alpha=0.5)
+        ax2.set_xlabel("Layer")
+        ax2.set_ylabel("Δ Accuracy (layer − final)")
+        ax2.set_title("Accuracy Delta from Final Layer" + suffix)
+        ax2.grid(alpha=0.3)
+
+        plt.suptitle(title, fontsize=11)
+        plt.tight_layout()
+        out_png = os.path.join(plot_outdir, "wmdp_lens_analysis.png")
+        plt.savefig(out_png, dpi=150)
+        plt.close()
+        print(f"[aggregate] ✓ Consolidated wmdp_lens plot written to {out_png}")
+
+    except Exception as exc:
+        print(f"[aggregate] Warning: could not generate consolidated wmdp_lens plots: {exc}")
+        return
+
+    # Log to W&B under a dedicated consolidated run
+    try:
+        import wandb
+        from utils import load_dotenv, log_plots, finish_wandb, infer_method_from_model_name
+        load_dotenv()
+        if os.environ.get("WANDB_API_KEY"):
+            method = infer_method_from_model_name(model_label)
+            tags = ["consolidated_wmdp_lens"]
+            if method:
+                tags.append(f"method:{method}")
+            wandb.init(
+                project="cambridge_era",
+                name=f"consolidated_wmdp_lens/{model_label.split('/')[-1]}",
+                tags=tags,
+                config={
+                    "num_seeds": num_seeds,
+                    "seed_dirs": seed_dirs,
+                    "aggregated_csv": aggregated_csv,
+                    "model": model_label,
+                    "method": method,
+                },
+                reinit=True,
+            )
+            log_plots(plot_outdir, "wmdp_lens")
+            finish_wandb()
+            print(f"[aggregate] ✓ Logged consolidated wmdp_lens plots to W&B (tags: {tags})")
+    except Exception as exc:
+        print(f"[aggregate] W&B logging skipped: {exc}")
+
 
 def find_file_patterns(seed_dirs: List[str]) -> Dict[str, List[str]]:
     """Find common file patterns across seed directories."""
@@ -279,14 +394,16 @@ def main():
 
     # Process each file pattern
     aggregated_activation_csv = None
+    aggregated_wmdp_lens_csv = None
     for filename, file_paths in file_patterns.items():
         output_path = os.path.join(args.output_dir, filename)
 
         if filename.endswith('.csv'):
             aggregate_csv_files(file_paths, output_path)
-            # Track activation_comparison.csv for consolidated plotting below
             if filename == "activation_comparison.csv":
                 aggregated_activation_csv = output_path
+            elif filename == "wmdp_lens_results.csv":
+                aggregated_wmdp_lens_csv = output_path
         elif filename.endswith('.json'):
             aggregate_json_files(file_paths, output_path)
         elif filename.endswith('.png'):
@@ -304,6 +421,12 @@ def main():
     if aggregated_activation_csv:
         plot_consolidated_activation_comparison(
             aggregated_activation_csv,
+            args.output_dir,
+            args.seed_dirs,
+        )
+    elif aggregated_wmdp_lens_csv:
+        plot_consolidated_wmdp_lens(
+            aggregated_wmdp_lens_csv,
             args.output_dir,
             args.seed_dirs,
         )
