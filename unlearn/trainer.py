@@ -286,18 +286,24 @@ class UnlearningTrainer(Trainer):
             )
 
         elif method == "lat":
+            total_steps = len(self.train_dataset)
+            scheduled_coeff = min(1.0, self._step_idx / total_steps)
             loss = lat_loss(
                 model, fb, rb, self.layer_ids,
                 a.lat_eps, a.lat_steps, a.retain_weight,
+                scheduled_coeff,
             )
 
         elif method == "cb_lat":
+            total_steps = len(self.train_dataset)
+            scheduled_coeff = min(1.0, self._step_idx / total_steps)
             cache_entry = self.retain_act_cache[self._step_idx % len(self.retain_act_cache)]
             loss = cb_lat_loss(
                 model, fb, rb, self.layer_ids,
                 self.random_targets, cache_entry,
                 a.steering_coeff, a.alpha,
                 a.lat_eps, a.lat_steps,
+                scheduled_coeff,
             )
 
         elif method == "wt_dist":

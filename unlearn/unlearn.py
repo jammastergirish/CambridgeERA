@@ -680,6 +680,7 @@ def lat_loss(
     lat_eps: float,      # L∞ budget for the adversarial perturbation
     lat_steps: int,       # number of PGD steps for the inner adversary
     retain_weight: float = 1.0,
+    scheduled_coeff: float = 1.0,  # linear warmup: 0→1 over training
 ) -> torch.Tensor:
     """
     Latent Adversarial Training:
@@ -782,7 +783,13 @@ def lat_loss(
     # Retain loss (standard next-token prediction — no perturbation)
     retain_loss = nll_loss(model, retain_batch)
 
-    return forget_loss + retain_weight * retain_loss
+    # Scheduled coefficients (CAS-style warmup):
+    #   retain ramps 0 → retain_weight, forget eases 1 → 0.75
+    # Reference: https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py
+    eff_retain = retain_weight * scheduled_coeff
+    eff_forget = 1.0 - 0.25 * scheduled_coeff
+
+    return eff_forget * forget_loss + eff_retain * retain_loss
 
 
 # ---- CB-LAT (combined) -------------------------------------------------
@@ -807,6 +814,7 @@ def cb_lat_loss(
     alpha: float,
     lat_eps: float,
     lat_steps: int,
+    scheduled_coeff: float = 1.0,  # linear warmup: 0→1 over training
 ) -> torch.Tensor:
     """
     CB-LAT: Circuit Breakers + Latent Adversarial Training.
@@ -884,6 +892,12 @@ def cb_lat_loss(
     # Retain activations (clean, no perturbation — we only attack forget data)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
+    # Scheduled coefficients (CAS-style warmup):
+    #   retain (alpha) ramps 0 → alpha, forget (steering) eases steering → 0.75*steering
+    # Reference: https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py
+    eff_steering = steering_coeff * (1.0 - 0.25 * scheduled_coeff)
+    eff_alpha = alpha * scheduled_coeff
+
     # CB loss computation: same as cb_loss() but using perturbed forget acts
     # Use the device of the activations for the loss tensor
     loss_device = forget_acts[layer_ids[0]].device
@@ -891,7 +905,7 @@ def cb_lat_loss(
     for lid in layer_ids:
         # Forget: push perturbed activations toward random noise direction
         fa = forget_acts[lid].flatten(0, 1)
-        rt = random_targets[lid].unsqueeze(0).expand_as(fa) * steering_coeff
+        rt = random_targets[lid].unsqueeze(0).expand_as(fa) * eff_steering
         cos_sim = F.cosine_similarity(fa, rt, dim=-1)
         loss = loss - cos_sim.mean()
 
@@ -901,7 +915,7 @@ def cb_lat_loss(
         bsz = min(ra.size(0), tr.size(0))
         retain_cos = F.cosine_similarity(
             ra[:bsz].flatten(0, 1), tr[:bsz].detach().flatten(0, 1), dim=-1)
-        loss = loss + alpha * (1.0 - retain_cos.mean())
+        loss = loss + eff_alpha * (1.0 - retain_cos.mean())
 
     return loss
 
