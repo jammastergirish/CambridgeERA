@@ -808,7 +808,6 @@ def cb_lat_loss(
     forget_batch: dict,
     retain_batch: dict,
     layer_ids: list[int],
-    random_targets: dict,
     retain_targets: dict,
     steering_coeff: float,
     alpha: float,
@@ -882,11 +881,15 @@ def cb_lat_loss(
     # Outer loop: CB rerouting with the adversarial perturbation active
     # This is the key difference from plain CB: the forget activations have
     # been perturbed by the adversary, so the model must reroute *despite* that.
+
+    # First get ORIGINAL (clean) forget activations for orthogonality target
+    # These are the representations we want to push away from
+    original_forget_acts = get_layer_activations(model, forget_batch, layer_ids)
+
+    # Then get PERTURBED forget activations (with δ injected)
     delta = delta.detach()
     handle = layers[target_lid].register_forward_hook(make_hook(delta))
-
-    # Get perturbed forget activations (with δ injected at the target layer)
-    forget_acts = get_layer_activations(model, forget_batch, layer_ids)
+    perturbed_forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     handle.remove()
 
     # Retain activations (clean, no perturbation — we only attack forget data)
@@ -898,16 +901,32 @@ def cb_lat_loss(
     eff_steering = steering_coeff * (1.0 - 0.25 * scheduled_coeff)
     eff_alpha = alpha * scheduled_coeff
 
-    # CB loss computation: same as cb_loss() but using perturbed forget acts
+    # CB loss computation using ORTHOGONALITY approach (paper's preferred method)
+    # Instead of pushing toward random targets, we push perturbed activations
+    # to be orthogonal to the original (clean) activations.
+    #
+    # From "Improving Alignment and Robustness with Circuit Breakers": https://arxiv.org/pdf/2406.04313
+    # Three approaches from the paper:
+    # 1. Random target with large norm: ||rep_cb - α*rep_rand||²  (RMU method)
+    # 2. Normalized random: ||rep_cb/||rep_cb|| - rep_rand/||rep_rand|||
+    # 3. Orthogonality: ReLU(cos_sim(rep_cb, rep_orig))  <-- USING THIS
+    #
+    # The paper states: "We find this [orthogonality] loss to be the most
+    # intuitive and most effective in terms of achieving a balance between
+    # robustness and preserved capability."
+    #
     # Use the device of the activations for the loss tensor
-    loss_device = forget_acts[layer_ids[0]].device
+    loss_device = perturbed_forget_acts[layer_ids[0]].device
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
     for lid in layer_ids:
-        # Forget: push perturbed activations toward random noise direction
-        fa = forget_acts[lid].flatten(0, 1)
-        rt = random_targets[lid].unsqueeze(0).expand_as(fa) * eff_steering
-        cos_sim = F.cosine_similarity(fa, rt, dim=-1)
-        loss = loss - cos_sim.mean()
+        # Forget: push PERTURBED activations to be orthogonal to ORIGINAL
+        # ReLU ensures we only optimize when cos_sim > 0 (not already orthogonal)
+        perturbed = perturbed_forget_acts[lid].flatten(0, 1)
+        original = original_forget_acts[lid].flatten(0, 1).detach()
+        cos_sim = F.cosine_similarity(perturbed, original, dim=-1)
+        # Apply ReLU to only penalize positive similarity (want to reach 0)
+        orthogonal_loss = F.relu(cos_sim).mean()
+        loss = loss + eff_steering * orthogonal_loss
 
         # Retain: preserve original activation directions
         ra = retain_acts[lid]
