@@ -519,6 +519,24 @@ def _derive_run_name(script_name: str, args) -> str:
     return script_name
 
 
+# Ordered longest-first so e.g. "wt_dist_reg" matches before "wt_dist"
+_KNOWN_METHODS = [
+    "tar", "cb_lat", "cb", "lat", "rmu", "npo", "simnpo",
+    "wt_dist_reg", "wt_dist", "ga_simple", "ga", "grad_diff", "dpo",
+]
+_METHOD_RE = re.compile(r"[/_](" + "|".join(_KNOWN_METHODS) + r")(?:__|/|$)")
+
+
+def infer_method_from_model_name(model_name: str) -> str | None:
+    """Return the unlearning method slug inferred from a model ID, or None.
+
+    Matches against known method slugs embedded in the model name, e.g.
+    ``girishgupta/deep-ignorance-unfiltered_unlearned_cb_lat`` → ``"cb_lat"``.
+    """
+    m = _METHOD_RE.search(model_name)
+    return m.group(1) if m else None
+
+
 def init_wandb(script_name: str, args, project: str = "cambridge_era", method: str | None = None, **kw):
     """Initialise a W&B run, logging to project "cambridge_era" by default.
 

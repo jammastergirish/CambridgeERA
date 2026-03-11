@@ -29,6 +29,7 @@ from utils import (
     filter_gpus_by_free_vram,
     compute_training_max_memory,
     ensure_datasets_exist,
+    infer_method_from_model_name,
 )
 
 
@@ -710,3 +711,43 @@ with open('data/retain.txt', 'w') as f:
         captured = capsys.readouterr()
         assert "Warning: create_datasets.py failed" in captured.out
         assert "RuntimeError" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# infer_method_from_model_name
+# ---------------------------------------------------------------------------
+class TestInferMethodFromModelName:
+    """Verify the method slug is correctly inferred from a model ID."""
+
+    def test_known_huggingface_models(self):
+        cases = [
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_ga", "ga"),
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_grad_diff", "grad_diff"),
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_ga_simple", "ga_simple"),
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_npo", "npo"),
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_dpo", "dpo"),
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_rmu", "rmu"),
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_lat", "lat"),
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_cb_lat", "cb_lat"),
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_simnpo", "simnpo"),
+            ("girishgupta/deep-ignorance-unfiltered_unlearned_wt_dist", "wt_dist"),
+        ]
+        for model_name, expected in cases:
+            assert infer_method_from_model_name(model_name) == expected, model_name
+
+    def test_wt_dist_reg_wins_over_wt_dist(self):
+        """Longer slug must take priority."""
+        name = "org/model_unlearned_wt_dist_reg__ep1"
+        assert infer_method_from_model_name(name) == "wt_dist_reg"
+
+    def test_cb_lat_wins_over_cb(self):
+        """cb_lat must not be shadowed by cb."""
+        name = "org/model_unlearned_cb_lat__ep1"
+        assert infer_method_from_model_name(name) == "cb_lat"
+
+    def test_returns_none_for_baseline(self):
+        assert infer_method_from_model_name("EleutherAI/deep-ignorance-unfiltered") is None
+
+    def test_returns_none_for_unknown_model(self):
+        assert infer_method_from_model_name("org/some-random-model") is None
+

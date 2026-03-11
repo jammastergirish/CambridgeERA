@@ -43,6 +43,7 @@ from utils import (
     extract_layer,
     classify_granular,
     init_wandb,
+    infer_method_from_model_name,
     log_csv_as_table,
     log_plots,
     finish_wandb,
@@ -262,7 +263,8 @@ def main():
     if args.outdir is None:
         args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="mlp_nullspace_alignment")
 
-    init_wandb("mlp_nullspace_alignment", args)
+    method = infer_method_from_model_name(args.model_b)
+    init_wandb("mlp_nullspace_alignment", args, method=method)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

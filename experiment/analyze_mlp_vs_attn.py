@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from utils import init_wandb, log_csv_as_table, log_plots, finish_wandb
+from utils import init_wandb, infer_method_from_model_name, log_csv_as_table, log_plots, finish_wandb
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +239,8 @@ def main():
     parser.add_argument("--outdir", default="outputs/mlp_attn_analysis")
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()
-    init_wandb("analyze_mlp_vs_attn", args)
+    method = infer_method_from_model_name(args.outdir)
+    init_wandb("analyze_mlp_vs_attn", args, method=method)
 
     os.makedirs(args.outdir, exist_ok=True)
 

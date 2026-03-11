@@ -47,6 +47,7 @@ from utils import (
     resolve_dtype,
     write_csv,
     init_wandb,
+    infer_method_from_model_name,
     log_csv_as_table,
     log_plots,
     finish_wandb,
@@ -319,7 +320,8 @@ def main():
     if args.outdir is None:
         args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_covariance")
 
-    init_wandb("activation_covariance", args)
+    method = infer_method_from_model_name(args.model_b)
+    init_wandb("activation_covariance", args, method=method)
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)

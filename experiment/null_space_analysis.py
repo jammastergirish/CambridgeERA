@@ -45,6 +45,7 @@ from utils import (
     write_csv,
     classify_granular,
     init_wandb,
+    infer_method_from_model_name,
     log_csv_as_table,
     log_plots,
     finish_wandb,
@@ -288,7 +289,8 @@ def main():
     if args.outdir is None:
         args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="null_space_analysis")
 
-    init_wandb("null_space_analysis", args)
+    method = infer_method_from_model_name(args.model_b)
+    init_wandb("null_space_analysis", args, method=method)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

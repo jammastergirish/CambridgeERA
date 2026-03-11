@@ -37,7 +37,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from utils import comparison_outdir, resolve_device, resolve_dtype, write_csv, init_wandb, log_csv_as_table, log_plots, finish_wandb
+from utils import comparison_outdir, resolve_device, resolve_dtype, write_csv, init_wandb, infer_method_from_model_name, log_csv_as_table, log_plots, finish_wandb
 
 
 def read_lines(path: str, max_samples: int) -> List[str]:
@@ -394,7 +394,8 @@ def main():
     if args.plot_outdir is None:
         args.plot_outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_plots")
 
-    init_wandb("activation_comparison", args)
+    method = infer_method_from_model_name(args.model_b)
+    init_wandb("activation_comparison", args, method=method)
 
     if not args.forget_text or not os.path.exists(args.forget_text):
         print("[collect_activation_comparison] Skipping: forget-text missing/not found")

@@ -31,15 +31,10 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 import wandb
 
-KNOWN_METHODS = [
-    "tar", "cb_lat", "cb", "lat", "rmu", "npo", "simnpo",
-    "wt_dist_reg", "wt_dist", "ga_simple", "ga", "grad_diff", "dpo",
-]
-
-# Longer slugs must come first so e.g. "wt_dist_reg" wins over "wt_dist"
-_METHOD_PATTERN = re.compile(
-    r"[/_](" + "|".join(KNOWN_METHODS) + r")(?:__|/|$)"
-)
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from utils import infer_method_from_model_name
 
 
 def infer_method(run) -> str | None:
@@ -51,11 +46,7 @@ def infer_method(run) -> str | None:
         return method
 
     # 2. Fall back to regex on the run name
-    m = _METHOD_PATTERN.search(run.name)
-    if m:
-        return m.group(1)
-
-    return None
+    return infer_method_from_model_name(run.name)
 
 
 def main():

@@ -44,6 +44,7 @@ from utils import (
     write_csv,
     extract_layer,
     init_wandb,
+    infer_method_from_model_name,
     log_csv_as_table,
     log_plots,
     finish_wandb,
@@ -312,7 +313,8 @@ def main():
     if args.outdir is None:
         args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="row_space_projection")
 
-    init_wandb("row_space_projection", args)
+    method = infer_method_from_model_name(args.model_b)
+    init_wandb("row_space_projection", args, method=method)
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

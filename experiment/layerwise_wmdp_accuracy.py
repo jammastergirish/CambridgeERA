@@ -51,6 +51,7 @@ from utils import (
     resolve_dtype,
     write_csv,
     init_wandb,
+    infer_method_from_model_name,
     log_csv_as_table,
     log_plots,
     finish_wandb,
@@ -372,7 +373,8 @@ def main():
     if args.outdir is None:
         args.outdir = model_outdir(args.model, suffix=f"wmdp_{args.lens}_lens")
 
-    init_wandb(f"wmdp_{args.lens}_lens", args)
+    method = infer_method_from_model_name(args.model)
+    init_wandb(f"wmdp_{args.lens}_lens", args, method=method)
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
