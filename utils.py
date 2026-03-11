@@ -519,13 +519,17 @@ def _derive_run_name(script_name: str, args) -> str:
     return script_name
 
 
-def init_wandb(script_name: str, args, project: str = "cambridge_era", **kw):
+def init_wandb(script_name: str, args, project: str = "cambridge_era", method: str | None = None, **kw):
     """Initialise a W&B run, logging to project "cambridge_era" by default.
 
     Silently no-ops if:
       - wandb is not installed, or
       - WANDB_API_KEY is not set in the environment (key absent from .env), or
       - WANDB_MODE=disabled is set explicitly.
+
+    Args:
+        method: If provided (e.g. "ga", "rmu"), a "method:<name>" tag is added
+                to the run so runs can be filtered by algorithm in the W&B UI.
     """
     try:
         import wandb
@@ -536,12 +540,15 @@ def init_wandb(script_name: str, args, project: str = "cambridge_era", **kw):
         return None
     run_name = _derive_run_name(script_name, args)
     group = os.environ.get("WANDB_RUN_GROUP", None)
+    tags = [script_name]
+    if method:
+        tags.append(f"method:{method}")
     run = wandb.init(
         project=project,
         name=run_name,
         config=vars(args) if hasattr(args, "__dict__") else {},
         group=group,
-        tags=[script_name],
+        tags=tags,
         reinit=True,
         **kw,
     )

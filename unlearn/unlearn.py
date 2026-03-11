@@ -1620,7 +1620,7 @@ def main():
 
     # ---- W&B ----
     from utils import init_wandb, finish_wandb
-    run = init_wandb("unlearn", args)
+    run = init_wandb("unlearn", args, method=args.method)
 
     # Log method-specific hyperparameters as a dedicated config group
     if run is not None:

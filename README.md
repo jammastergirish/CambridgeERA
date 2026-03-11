@@ -63,7 +63,7 @@ These are analogous to stimulus and control conditions in an experiment. Every a
 
 
 - Add `HF_TOKEN`and `WANDB_API_KEY` to `.env`.
-- Ensure the `uv` package manager is installed.
+- Ensure the `uv` package manager is installed. (`pip install uv`)
 
 ---
 
