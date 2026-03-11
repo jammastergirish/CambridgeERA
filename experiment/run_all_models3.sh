@@ -2,12 +2,19 @@
 # Run collect_activation_comparison.py for the three specified unlearned models.
 # Uses the same multi-seed runner and output layout as pipeline.sh.
 # Run from the project root:
-#   ./experiment/run_all_models3.sh
+#   ./experiment/run_all_models3.sh [--force]
 
 set -uo pipefail
 
 # Always run from the project root (parent of experiment/)
 cd "$(dirname "$0")/.."
+
+# ---- Force flag ----
+FORCE=0
+if [[ "${1:-}" == "--force" ]]; then
+  FORCE=1
+  echo "[run_all_models3] --force: will rerun all steps regardless of existing results"
+fi
 
 # Load credentials
 if [ -f .env ]; then
@@ -23,7 +30,6 @@ ACTIVATION_DTYPE="${ACTIVATION_DTYPE:-auto}"
 FORGET="${FORGET_TEXT:-data/forget.txt}"
 RETAIN="${RETAIN_TEXT:-data/retain.txt}"
 SEEDS="${SEEDS:-42 123 456}"
-FORCE="${FORCE:-0}"
 
 MODEL_A="EleutherAI/deep-ignorance-unfiltered"
 
