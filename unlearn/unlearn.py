@@ -819,6 +819,7 @@ def cb_lat_loss(
     forget_batch: dict,
     retain_batch: dict,
     layer_ids: list[int],
+    forget_targets: dict,  # {layer_id: (B, T, D) tensor — cached frozen activations from base model}
     retain_targets: dict,
     steering_coeff: float,
     alpha: float,
@@ -893,11 +894,7 @@ def cb_lat_loss(
     # This is the key difference from plain CB: the forget activations have
     # been perturbed by the adversary, so the model must reroute *despite* that.
 
-    # First get ORIGINAL (clean) forget activations for orthogonality target
-    # These are the representations we want to push away from
-    original_forget_acts = get_layer_activations(model, forget_batch, layer_ids)
-
-    # Then get PERTURBED forget activations (with δ injected)
+    # Get PERTURBED forget activations (with δ injected)
     delta = delta.detach()
     handle = layers[target_lid].register_forward_hook(make_hook(delta))
     perturbed_forget_acts = get_layer_activations(model, forget_batch, layer_ids)
@@ -906,11 +903,10 @@ def cb_lat_loss(
     # Retain activations (clean, no perturbation — we only attack forget data)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
-    # Scheduled coefficients (CAS-style warmup):
-    #   retain (alpha) ramps 0 → alpha, forget (steering) eases steering → 0.75*steering
-    # Reference: https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py
-    eff_steering = steering_coeff * (1.0 - 0.25 * scheduled_coeff)
-    eff_alpha = alpha * scheduled_coeff
+    # Scheduled coefficients: retain ramps up, forget eases down
+    # Referenced from RRTrainer in https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py
+    steering_coeff_eff = steering_coeff * (1.0 - 0.25 * scheduled_coeff)  # effective steering_coeff
+    alpha_eff = alpha * scheduled_coeff  # effective alpha
 
     # CB loss computation using ORTHOGONALITY approach (paper's preferred method)
     # Instead of pushing toward random targets, we push perturbed activations
@@ -930,14 +926,17 @@ def cb_lat_loss(
     loss_device = perturbed_forget_acts[layer_ids[0]].device
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
     for layer_id in layer_ids:
-        # Forget: push PERTURBED activations to be orthogonal to ORIGINAL
-        # ReLU ensures we only optimize when cos_sim > 0 (not already orthogonal)
-        perturbed = perturbed_forget_acts[layer_id].flatten(0, 1)
-        original = original_forget_acts[layer_id].flatten(0, 1).detach()
-        cos_sim = F.cosine_similarity(perturbed, original, dim=-1)
-        # Apply ReLU to only penalize positive similarity (want to reach 0)
+        # Forget: push PERTURBED activations orthogonal to frozen base model activations
+        # ReLU ensures we only penalize when cos_sim > 0 (not already orthogonal)
+        perturbed = perturbed_forget_acts[layer_id].float().flatten(0, 1)
+        ft = forget_targets[layer_id].to(perturbed.device).float().flatten(0, 1)
+        assert perturbed.size(0) == ft.size(0), (
+            f"Size mismatch at layer {layer_id}: "
+            f"perturbed_forget_acts={perturbed.size(0)}, forget_targets={ft.size(0)}"
+        )
+        cos_sim = F.cosine_similarity(perturbed, ft.detach(), dim=-1)
         orthogonal_loss = F.relu(cos_sim).mean()
-        loss = loss + eff_steering * orthogonal_loss
+        loss = loss + steering_coeff_eff * orthogonal_loss
 
         # Retain: preserve original activation directions
         ra = retain_acts[layer_id]
@@ -945,7 +944,7 @@ def cb_lat_loss(
         bsz = min(ra.size(0), tr.size(0))
         retain_cos = F.cosine_similarity(
             ra[:bsz].flatten(0, 1), tr[:bsz].detach().flatten(0, 1), dim=-1)
-        loss = loss + eff_alpha * (1.0 - retain_cos.mean())
+        loss = loss + alpha_eff * (1.0 - retain_cos.mean())  # penalise directional drift
 
     return loss
 
@@ -1853,9 +1852,10 @@ def main():
     n_steps = min(32, len(forget_batches), len(retain_batches))
     print(f"[unlearn]   steps/epoch: {n_steps}")
 
-    # ---- RMU / CB / LAT setup: cache retain activations + random targets ----
+    # ---- RMU / CB / LAT setup: cache forget & retain activations + random targets ----
     layer_ids = [int(x) for x in args.layer_id.split(",")]
     random_targets = {}
+    forget_act_cache: list[dict] = []
     retain_act_cache: list[dict] = []
 
     if args.method in ("rmu", "cb", "lat", "cb_lat"):
@@ -1897,6 +1897,18 @@ def main():
                 acts = get_layer_activations(model, rb_device, layer_ids)
                 # Cache activations on CPU to avoid GPU OOM
                 retain_act_cache.append({lid: a.detach().cpu().to(pt_dtype) for lid, a in acts.items()})
+
+        # Cache the forget-set activations from the ORIGINAL (pre-training)
+        # model.  CB/CB-LAT orthogonality loss pushes current activations
+        # away from these frozen references.
+        if args.method in ("cb", "cb_lat"):
+            print(f"[unlearn] {args.method.upper()}: caching forget activations...")
+            with torch.no_grad():
+                for fb in forget_batches[:n_steps]:
+                    fb_device = {k: v.to(device) for k, v in fb.items()}
+                    acts = get_layer_activations(model, fb_device, layer_ids)
+                    forget_act_cache.append({lid: a.detach().cpu().to(pt_dtype) for lid, a in acts.items()})
+
         model.train()
 
     # ---- Weight Distortion: add Gaussian noise to all parameters ----
@@ -2073,6 +2085,7 @@ def main():
         unlearn_args=args,
         ref_model=ref_model,
         random_targets=random_targets,
+        forget_act_cache=forget_act_cache,
         retain_act_cache=retain_act_cache,
         layer_ids=layer_ids,
     )
