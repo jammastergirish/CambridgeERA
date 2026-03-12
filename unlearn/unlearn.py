@@ -614,32 +614,45 @@ def cb_loss(
     forget_batch: dict,
     retain_batch: dict,
     layer_ids: list[int],
-    random_targets: dict,
+    forget_targets: dict,  # {layer_id: (B, T, D) tensor — cached frozen activations from base model}
     retain_targets: dict,
     steering_coeff: float,
     alpha: float,
+    scheduled_coeff: float = 1.0,  # linear warmup: 0→1 over training
 ) -> torch.Tensor:
     """
-    Circuit Breakers (Representation Rerouting):
-    Forget: maximize cosine similarity toward random direction.
-    Retain: minimize cosine distance from original activations.
+    Circuit Breakers (Representation Rerouting) using orthogonality loss.
+    Forget: ReLU(cos_sim(current, frozen_original)) — push activations orthogonal to base model.
+    Retain: minimize cosine distance from cached original activations.
+
+    Scheduled coefficients (referenced from RRTrainer in
+    https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py):
+      retain ramps 0 → alpha, forget eases steering_coeff → 0.75*steering_coeff
     """
 
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
+
+    # Scheduled coefficients: retain ramps up, forget eases down
+    steering_coeff_eff = steering_coeff * (1.0 - 0.25 * scheduled_coeff)  # effective steering_coeff
+    alpha_eff = alpha * scheduled_coeff  # effective alpha
 
     # Use the device of the activations for the loss tensor
     loss_device = forget_acts[layer_ids[0]].device
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
 
     for layer_id in layer_ids:
-        # Cast to float32: cosine_similarity is not auto-promoted by autocast,
-        # causing bf16 backward failures.
+        # Forget: push current activations orthogonal to frozen base model activations
+        # ReLU ensures we only penalize when cos_sim > 0 (not already orthogonal)
         fa = forget_acts[layer_id].float().flatten(0, 1)  # (B*T, D)
-        rt = random_targets[layer_id].float().unsqueeze(0).expand_as(fa) * steering_coeff
-        # We want fa to ALIGN with rt, so minimize negative cosine sim
-        cos_sim = F.cosine_similarity(fa, rt, dim=-1)
-        loss = loss - cos_sim.mean()  # negate: gradient descent on this = push TOWARD rt
+        ft = forget_targets[layer_id].to(fa.device).float().flatten(0, 1)
+        assert fa.size(0) == ft.size(0), (
+            f"Size mismatch at layer {layer_id}: "
+            f"forget_acts={fa.size(0)}, forget_targets={ft.size(0)}"
+        )
+        cos_sim = F.cosine_similarity(fa, ft.detach(), dim=-1)
+        orthogonal_loss = F.relu(cos_sim).mean()
+        loss = loss + steering_coeff_eff * orthogonal_loss
 
         # Retain: keep activations pointing in the same direction as the
         # cached original activations.  (1 - cos_sim) = 0 when perfectly aligned.
@@ -649,7 +662,7 @@ def cb_loss(
         ra_flat = ra[:bsz].flatten(0, 1)
         tr_flat = tr[:bsz].detach().flatten(0, 1)
         retain_cos = F.cosine_similarity(ra_flat, tr_flat, dim=-1)
-        loss = loss + alpha * (1.0 - retain_cos.mean())  # penalise directional drift
+        loss = loss + alpha_eff * (1.0 - retain_cos.mean())  # penalise directional drift
 
     return loss
 
