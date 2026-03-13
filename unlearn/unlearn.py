@@ -641,6 +641,9 @@ def cb_loss(
     loss_device = forget_acts[layer_ids[0]].device
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
 
+    total_orthogonal = torch.tensor(0.0, device=loss_device)
+    total_retain = torch.tensor(0.0, device=loss_device)
+
     for layer_id in layer_ids:
         # Forget: push current activations orthogonal to frozen base model activations
         # ReLU ensures we only penalize when cos_sim > 0 (not already orthogonal)
@@ -653,6 +656,7 @@ def cb_loss(
         cos_sim = F.cosine_similarity(fa, ft.detach(), dim=-1)
         orthogonal_loss = F.relu(cos_sim).mean()
         loss = loss + circuit_breaker_coeff * orthogonal_loss
+        total_orthogonal = total_orthogonal + orthogonal_loss.detach()
 
         # Retain: keep activations close to cached original activations (L2 distance).
         ra = retain_acts[layer_id].float()
@@ -660,8 +664,9 @@ def cb_loss(
         bsz = min(ra.size(0), tr.size(0))
         retain_loss = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2).mean()
         loss = loss + retain_coeff * retain_loss
+        total_retain = total_retain + retain_loss.detach()
 
-    return loss
+    return loss, total_orthogonal, total_retain
 
 
 # ---- LAT ---------------------------------------------------------------

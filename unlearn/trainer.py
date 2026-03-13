@@ -284,10 +284,15 @@ class UnlearningTrainer(Trainer):
             scheduled_coeff = min(1.0, self._step_idx / total_steps)
             forget_cache_entry = self.forget_act_cache[self._step_idx % len(self.forget_act_cache)]
             retain_cache_entry = self.retain_act_cache[self._step_idx % len(self.retain_act_cache)]
-            loss = cb_loss(
+            loss, orthogonal_raw, retain_raw = cb_loss(
                 model, fb, rb, self.layer_ids,
                 forget_cache_entry, retain_cache_entry,
                 remove_coef=a.steering_coeff, retain_coef=a.alpha,
+                scheduled_coeff=scheduled_coeff,
+            )
+            self._record(
+                orthogonal_loss=orthogonal_raw,
+                retain_loss=retain_raw,
                 scheduled_coeff=scheduled_coeff,
             )
 
