@@ -714,9 +714,13 @@ The most robust method. Combines the adversarial robustness of LAT with the repr
 
 1. **Inner loop (LAT):** Find adversarial $\delta$ at the middle target layer that helps the model recall forget data (same PGD procedure as LAT).
 
-2. **Outer loop (CB):** With $\delta$ frozen and injected, compute the Circuit Breaker loss — rerouting forget-set activations toward random targets while preserving retain-set activations. The key difference from standalone CB is that the forget activations are collected **with the adversarial perturbation active**, so the model must reroute representations even when an adversary is trying to restore them.
+2. **Outer loop (CB):** With $\delta$ frozen and injected, compute the Circuit Breaker loss — pushing perturbed forget-set activations to be orthogonal to their original (clean) representations while preserving retain-set activations. The key difference from standalone CB is that the forget activations are collected **with the adversarial perturbation active**, so the model must reroute representations even when an adversary is trying to restore them.
 
-$$L_{\text{outer}} = \sum_{\ell} \Big[ -\cos\!\big(h_\ell^{\text{forget}(\delta^*)},\; c \cdot \hat{r}_\ell\big) + \alpha \cdot \big(1 - \cos(h_\ell^{\text{retain}},\; h_\ell^{\text{cached}})\big) \Big]$$
+$$L_{\text{outer}} = \sum_{\ell} \Big[ c \cdot \text{ReLU}\!\big(\cos(h_\ell^{\text{forget}(\delta^*)},\; h_\ell^{\text{forget,clean}})\big) + \alpha \cdot \big(1 - \cos(h_\ell^{\text{retain}},\; h_\ell^{\text{cached}})\big) \Big]$$
+
+This implementation uses the **orthogonality approach** from [Improving Alignment and Robustness with Circuit Breakers](https://arxiv.org/pdf/2406.04313), where perturbed forget activations are pushed to be orthogonal to the original (clean) activations. The paper finds this "most intuitive and most effective" compared to random target approaches. The ReLU ensures we only optimize when cosine similarity is positive (i.e., when representations aren't already orthogonal).
+
+Both LAT and CB-LAT use a [scheduled coefficient](https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py) that linearly warms up over training: the retain coefficient ramps from 0 to its target value while the forget coefficient eases from 1.0 to 0.75. This prevents the two objectives from fighting each other early in training.
 
 ##### Weight Distortion — Gaussian Noise + Retain Fine-Tuning
 
