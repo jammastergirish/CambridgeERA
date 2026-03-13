@@ -752,7 +752,7 @@ $$L_{\text{outer}} = \sum_{\ell} \Big[ c \cdot \text{ReLU}\!\big(\cos(h_\ell^{\t
 
 This implementation uses the **orthogonality approach** from [Improving Alignment and Robustness with Circuit Breakers](https://arxiv.org/pdf/2406.04313), where perturbed forget activations are pushed to be orthogonal to the original (clean) activations. The paper finds this "most intuitive and most effective" compared to random target approaches. The ReLU ensures we only optimize when cosine similarity is positive (i.e., when representations aren't already orthogonal).
 
-Both LAT and CB-LAT use a [CAS-style scheduled coefficient](https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py) that linearly warms up over training: the retain coefficient ramps from 0 to its target value while the forget coefficient eases from 1.0 to 0.75. This prevents the two objectives from fighting each other early in training.
+Both LAT and CB-LAT use a [scheduled coefficient](https://github.com/EleutherAI/unlearn/blob/main/unlearn/reference/cas/unlearning.py) that linearly warms up over training: the retain coefficient ramps from 0 to its target value while the forget coefficient eases from 1.0 to 0.75. This prevents the two objectives from fighting each other early in training.
 
 ##### Weight Distortion — Gaussian Noise + Retain Fine-Tuning
 

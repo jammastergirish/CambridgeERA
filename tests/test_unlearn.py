@@ -419,7 +419,11 @@ class TestActivationCachingMemory:
                 raise
 
     def test_cosine_similarity_device_handling(self):
-        """Test cosine similarity computation handles CPU->GPU movement correctly."""
+        """Test cosine similarity computation handles CPU->GPU movement correctly.
+
+        Note: CB retain loss was changed from cosine similarity to L2 norm,
+        but cosine similarity is still used in the forget/orthogonality side.
+        """
         import torch
         import torch.nn.functional as F
 
@@ -907,10 +911,10 @@ class TestMuonOptimizer:
 
 
 # ---------------------------------------------------------------------------
-# Scheduled coefficient (CAS-style warmup for LAT / CB-LAT)
+# Scheduled coefficient warmup for LAT / CB-LAT
 # ---------------------------------------------------------------------------
 class TestScheduledCoeff:
-    """Test the CAS-style scheduled coefficient used in LAT and CB-LAT losses."""
+    """Test the scheduled coefficient used in LAT and CB-LAT losses."""
 
     def test_coeff_is_zero_at_step_zero(self):
         """At step 0, scheduled_coeff should be 0 (no retain, full forget)."""
@@ -940,79 +944,69 @@ class TestScheduledCoeff:
         coeff = min(1.0, step / total_steps)
         assert coeff == 1.0
 
-    def test_lat_retain_ramps_zero_to_retain_weight(self):
-        """LAT effective retain should go from 0 to retain_weight."""
-        retain_weight = 0.8
-        # At start
-        eff_retain_start = retain_weight * 0.0
-        assert eff_retain_start == 0.0
-        # At end
-        eff_retain_end = retain_weight * 1.0
-        assert eff_retain_end == retain_weight
+    def test_lat_retain_is_constant(self):
+        """LAT retain_coef is constant (not scheduled)."""
+        retain_coef = 0.8
+        # retain_coef is used directly, not multiplied by scheduled_coeff
+        assert retain_coef == 0.8
 
-    def test_lat_forget_eases_one_to_075(self):
-        """LAT effective forget should go from 1.0 to 0.75."""
-        eff_forget_start = 1.0 - 0.25 * 0.0
+    def test_lat_forget_fades_one_to_zero(self):
+        """LAT effective forget should go from 1.0 to 0.0 (eff_forget = 1 - scheduled_coeff)."""
+        eff_forget_start = 1.0 - 0.0  # scheduled_coeff=0
         assert eff_forget_start == 1.0
-        eff_forget_end = 1.0 - 0.25 * 1.0
-        assert eff_forget_end == 0.75
+        eff_forget_end = 1.0 - 1.0  # scheduled_coeff=1
+        assert eff_forget_end == 0.0
 
-    def test_cb_lat_steering_eases(self):
-        """CB-LAT effective steering should go from steering_coeff to 0.75 * steering_coeff."""
-        steering_coeff = 20.0
-        eff_start = steering_coeff * (1.0 - 0.25 * 0.0)
+    def test_cb_circuit_breaker_coeff_eases(self):
+        """CB/CB-LAT circuit_breaker_coeff should go from remove_coef to 0.75 * remove_coef."""
+        remove_coef = 20.0
+        eff_start = remove_coef * (1.0 - 0.25 * 0.0)
         assert eff_start == 20.0
-        eff_end = steering_coeff * (1.0 - 0.25 * 1.0)
+        eff_end = remove_coef * (1.0 - 0.25 * 1.0)
         assert eff_end == 15.0
 
-    def test_cb_lat_alpha_ramps(self):
-        """CB-LAT effective alpha should go from 0 to alpha."""
-        alpha = 100.0
-        eff_start = alpha * 0.0
+    def test_cb_retain_coeff_ramps(self):
+        """CB/CB-LAT retain_coeff should go from 0 to retain_coef."""
+        retain_coef = 100.0
+        eff_start = retain_coef * 0.0
         assert eff_start == 0.0
-        eff_end = alpha * 1.0
+        eff_end = retain_coef * 1.0
         assert eff_end == 100.0
 
     def test_lat_loss_accepts_scheduled_coeff(self):
-        """lat_loss should accept scheduled_coeff without error and change the output."""
-        import torch
-        from unittest.mock import Mock, patch
-        from unlearn import lat_loss
-
-        # Create a tiny fake model with model.layers structure
-        model = torch.nn.Module()
-        inner = torch.nn.Module()
-        layer = torch.nn.Linear(16, 16)
-        inner.layers = torch.nn.ModuleList([layer])
-        model.model = inner
-        # Add a small lm_head so forward works
-        model.lm_head = torch.nn.Linear(16, 32)
-
-        batch = {
-            "input_ids": torch.randint(0, 32, (1, 4)),
-            "attention_mask": torch.ones(1, 4, dtype=torch.long),
-        }
-
-        # We can't easily run the full function without a real causal LM,
-        # but we can verify the signature accepts the parameter by checking
-        # the function's parameter list.
+        """lat_loss should accept scheduled_coeff and retain_coef parameters."""
         import inspect
+        from unlearn import lat_loss
         sig = inspect.signature(lat_loss)
         assert "scheduled_coeff" in sig.parameters
+        assert "retain_coef" in sig.parameters
+
+    def test_cb_loss_accepts_scheduled_coeff(self):
+        """cb_loss should accept scheduled_coeff, remove_coef, retain_coef parameters."""
+        import inspect
+        from unlearn import cb_loss
+        sig = inspect.signature(cb_loss)
+        assert "scheduled_coeff" in sig.parameters
+        assert "remove_coef" in sig.parameters
+        assert "retain_coef" in sig.parameters
 
     def test_cb_lat_loss_accepts_scheduled_coeff(self):
-        """cb_lat_loss should accept scheduled_coeff parameter."""
+        """cb_lat_loss should accept scheduled_coeff, remove_coef, retain_coef parameters."""
         import inspect
         from unlearn import cb_lat_loss
         sig = inspect.signature(cb_lat_loss)
         assert "scheduled_coeff" in sig.parameters
+        assert "remove_coef" in sig.parameters
+        assert "retain_coef" in sig.parameters
 
     def test_scheduled_coeff_default_is_one(self):
-        """Both loss functions should default scheduled_coeff to 1.0 (no warmup)."""
+        """All three loss functions should default scheduled_coeff to 1.0 (no warmup)."""
         import inspect
-        from unlearn import lat_loss, cb_lat_loss
+        from unlearn import lat_loss, cb_loss, cb_lat_loss
         lat_default = inspect.signature(lat_loss).parameters["scheduled_coeff"].default
+        cb_default = inspect.signature(cb_loss).parameters["scheduled_coeff"].default
         cb_lat_default = inspect.signature(cb_lat_loss).parameters["scheduled_coeff"].default
         assert lat_default == 1.0
+        assert cb_default == 1.0
         assert cb_lat_default == 1.0
 
