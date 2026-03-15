@@ -106,11 +106,8 @@ def _svdvals_normalized(W: torch.Tensor) -> np.ndarray:
     than the full SVD.
     """
     Wf = W.detach().float()
-    try:
-        s = torch.linalg.svdvals(Wf).cpu().numpy()
-    except RuntimeError:
-        # Very small matrices or degenerate case
-        s = np.array([0.0])
+    s = torch.linalg.svdvals(Wf).cpu().numpy()
+    assert s.size > 0, f"svdvals returned empty array for tensor of shape {W.shape}"
     s = np.sort(s)[::-1]  # descending
     if s[0] > 0:
         s = s / s[0]
@@ -526,7 +523,7 @@ def run_analysis(
                 )
                 written_pngs.append(plot_path)
 
-            del Wa, Wb, dW
+            del Wa, Wb, dW, s_a, s_b, s_dw
 
         # dW overlay across ALL layers (now full-resolution)
         if dw_layer_spectra:
