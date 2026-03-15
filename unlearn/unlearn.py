@@ -1530,6 +1530,7 @@ def save_training_config(args, outdir):
     }
     for param in METHOD_PARAMS[args.method]:
         config[param] = getattr(args, param)
+    config["norm_reg_lambda"] = getattr(args, "norm_reg_lambda", 0.0)
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, "training_config.yaml"), "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -1707,7 +1708,8 @@ def main():
 
     # ---- W&B ----
     from utils import init_wandb, finish_wandb
-    run = init_wandb("unlearn", args, method=args.method)
+    extra_tags = ["norm_regularized"] if args.norm_reg_lambda > 0 else []
+    run = init_wandb("unlearn", args, method=args.method, extra_tags=extra_tags)
 
     # Log method-specific hyperparameters as a dedicated config group
     if run is not None:
@@ -1724,6 +1726,7 @@ def main():
             "eval_interval": args.eval_interval,
             "forget_data": args.forget_data,
             "retain_data": args.retain_data,
+            "norm_reg_lambda": args.norm_reg_lambda,
         }
         for param in METHOD_PARAMS[args.method]:
             hyperparameters[param] = getattr(args, param)

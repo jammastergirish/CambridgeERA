@@ -537,7 +537,8 @@ def infer_method_from_model_name(model_name: str) -> str | None:
     return m.group(1) if m else None
 
 
-def init_wandb(script_name: str, args, project: str = "cambridge_era", method: str | None = None, **kw):
+def init_wandb(script_name: str, args, project: str = "cambridge_era",
+               method: str | None = None, extra_tags: list[str] | None = None, **kw):
     """Initialise a W&B run, logging to project "cambridge_era" by default.
 
     Silently no-ops if:
@@ -548,6 +549,7 @@ def init_wandb(script_name: str, args, project: str = "cambridge_era", method: s
     Args:
         method: If provided (e.g. "ga", "rmu"), a "method:<name>" tag is added
                 to the run so runs can be filtered by algorithm in the W&B UI.
+        extra_tags: Additional tags to attach to the run.
     """
     try:
         import wandb
@@ -561,6 +563,8 @@ def init_wandb(script_name: str, args, project: str = "cambridge_era", method: s
     tags = [script_name]
     if method:
         tags.append(f"method:{method}")
+    if extra_tags:
+        tags.extend(extra_tags)
     run = wandb.init(
         project=project,
         name=run_name,
