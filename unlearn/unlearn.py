@@ -633,6 +633,10 @@ def cb_loss(
     forget_acts = get_layer_activations(model, forget_batch, layer_ids)
     retain_acts = get_layer_activations(model, retain_batch, layer_ids)
 
+    # Attention masks: (B, T) → (B*T,) or (B, T, 1) for masking padding positions
+    forget_mask = forget_batch["attention_mask"].to(forget_acts[layer_ids[0]].device).float()
+    retain_mask = retain_batch["attention_mask"].to(forget_acts[layer_ids[0]].device).float()
+
     # Scheduled coefficients: retain ramps up, forget eases down
     circuit_breaker_coeff = remove_coef * (1.0 - 0.25 * scheduled_coeff)
     retain_coeff = retain_coef * scheduled_coeff
@@ -644,6 +648,10 @@ def cb_loss(
     total_orthogonal = torch.tensor(0.0, device=loss_device)
     total_retain = torch.tensor(0.0, device=loss_device)
 
+    # Flatten masks for per-position masking: (B, T) → (B*T,)
+    forget_mask_flat = forget_mask.flatten()  # (B*T,)
+    retain_mask_flat = retain_mask.flatten()  # (B*T,)
+
     for layer_id in layer_ids:
         # Forget: push current activations orthogonal to frozen base model activations
         # ReLU ensures we only penalize when cos_sim > 0 (not already orthogonal)
@@ -653,16 +661,21 @@ def cb_loss(
             f"Size mismatch at layer {layer_id}: "
             f"forget_acts={fa.size(0)}, forget_targets={ft.size(0)}"
         )
-        cos_sim = F.cosine_similarity(fa, ft.detach(), dim=-1)
-        orthogonal_loss = F.relu(cos_sim).mean()
+        cos_sim = F.cosine_similarity(fa, ft.detach(), dim=-1)  # (B*T,)
+        # Mask out padding positions and average over real tokens only
+        masked_cos = F.relu(cos_sim) * forget_mask_flat
+        orthogonal_loss = masked_cos.sum() / forget_mask_flat.sum().clamp(min=1)
         loss = loss + circuit_breaker_coeff * orthogonal_loss
         total_orthogonal = total_orthogonal + orthogonal_loss.detach()
 
         # Retain: keep activations close to cached original activations (L2 distance).
-        ra = retain_acts[layer_id].float()
-        tr = retain_targets[layer_id].to(ra.device).float()
+        ra = retain_acts[layer_id].float().flatten(0, 1)  # (B*T, D)
+        tr = retain_targets[layer_id].to(ra.device).float().flatten(0, 1)
         bsz = min(ra.size(0), tr.size(0))
-        retain_loss = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2).mean()
+        mask_r = retain_mask_flat[:bsz]
+        l2_per_pos = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2)  # (B*T,)
+        # Mask out padding positions and average over real tokens only
+        retain_loss = (l2_per_pos * mask_r).sum() / mask_r.sum().clamp(min=1)
         loss = loss + retain_coeff * retain_loss
         total_retain = total_retain + retain_loss.detach()
 
@@ -927,6 +940,11 @@ def cb_lat_loss(
     # Use the device of the activations for the loss tensor
     loss_device = perturbed_forget_acts[layer_ids[0]].device
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
+
+    # Attention masks: mask out padding positions
+    forget_mask_flat = forget_batch["attention_mask"].to(loss_device).float().flatten()
+    retain_mask_flat = retain_batch["attention_mask"].to(loss_device).float().flatten()
+
     for layer_id in layer_ids:
         # Forget: push PERTURBED activations orthogonal to frozen base model activations
         # ReLU ensures we only penalize when cos_sim > 0 (not already orthogonal)
@@ -937,14 +955,17 @@ def cb_lat_loss(
             f"perturbed_forget_acts={perturbed.size(0)}, forget_targets={ft.size(0)}"
         )
         cos_sim = F.cosine_similarity(perturbed, ft.detach(), dim=-1)
-        orthogonal_loss = F.relu(cos_sim).mean()
+        masked_cos = F.relu(cos_sim) * forget_mask_flat
+        orthogonal_loss = masked_cos.sum() / forget_mask_flat.sum().clamp(min=1)
         loss = loss + circuit_breaker_coeff * orthogonal_loss
 
         # Retain: keep activations close to cached original activations (L2 distance).
-        ra = retain_acts[layer_id].float()
-        tr = retain_targets[layer_id].to(ra.device).float()
+        ra = retain_acts[layer_id].float().flatten(0, 1)
+        tr = retain_targets[layer_id].to(ra.device).float().flatten(0, 1)
         bsz = min(ra.size(0), tr.size(0))
-        retain_loss = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2).mean()
+        mask_r = retain_mask_flat[:bsz]
+        l2_per_pos = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2)
+        retain_loss = (l2_per_pos * mask_r).sum() / mask_r.sum().clamp(min=1)
         loss = loss + retain_coeff * retain_loss
 
     return loss
