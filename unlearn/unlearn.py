@@ -1,11 +1,12 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "torch>=2.6",
+#     "torch",
 #     "transformers",
 #     "accelerate>=0.27",
 #     "tqdm",
 #     "wandb",
+#     "torch>=2.6",
 # ]
 #
 # [tool.uv.sources]
