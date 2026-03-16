@@ -221,6 +221,31 @@ Six PNG plots are generated per component (one panel per component type — `qkv
 
 ---
 
+#### Step 1.5: Singular Value Spectrum Analysis (`experiment/singular_value_spectrum_analysis.py`)
+
+**Question:** *What is the effective rank of the weight update, and how does unlearning reshape the singular value spectrum?*
+
+While Step 1's stable rank gives a single scalar summary of dimensionality, this step plots the **full sorted singular value spectrum** of each weight matrix — baseline $W_a$, unlearned $W_b$, and the update $\Delta W = W_b - W_a$ — revealing the shape of the rank structure rather than just a number.
+
+All spectra are normalised by their leading singular value ($\sigma / \sigma_1$) so that matrices at different scales are directly comparable on a shared $[0, 1]$ axis.
+
+For each matrix, the **elbow index** (effective rank at the spectrum drop-off) is computed using the maximum-distance-from-chord method, giving a discrete count of "meaningful" singular directions.
+
+| Output | Description |
+|---|---|
+| `<component>_layer<N>.png` | 3-panel overlay for representative layers: (1) $W_a$ vs $W_b$ spectra with elbow markers, (2) $\Delta W$ spectrum, (3) log-scale view of all three |
+| `dW_spectrum_<component>.png` | $\Delta W$ spectra overlaid across all layers for one component — shows how update rank varies by depth |
+| `elbow_by_layer.png` | Line chart of elbow index vs layer for baseline, unlearned, and $\Delta W$ per component |
+| `sv_spectrum.png` | Summary bar chart of elbow indices across representative layers |
+| `elbow_summary.csv` | Per-matrix elbow indices and shift ($\text{elbow}_B - \text{elbow}_A$) |
+
+**Why this matters:** A low-rank $\Delta W$ (sharp elbow, few dominant singular values) indicates the update lives in a small subspace — consistent with LoRA-style or shallow edits that could be easily reversed. A high-rank $\Delta W$ with a gradual decay suggests distributed restructuring. Comparing the spectra of $W_a$ and $W_b$ directly reveals whether unlearning preserves or reshapes the model's intrinsic dimensionality at each layer.
+
+> [!NOTE]
+> This step is weight-only and deterministic — no text data or forward passes are required.
+
+---
+
 #### Step 3: Activation Norms (`experiment/collect_activation_comparison.py`)
 
 **Question:** *Does the intervention globally suppress or amplify activations?*
