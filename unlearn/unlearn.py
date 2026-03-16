@@ -941,6 +941,9 @@ def cb_lat_loss(
     loss_device = perturbed_forget_acts[layer_ids[0]].device
     loss = torch.tensor(0.0, device=loss_device, dtype=next(model.parameters()).dtype)
 
+    total_orthogonal = torch.tensor(0.0, device=loss_device)
+    total_retain = torch.tensor(0.0, device=loss_device)
+
     # Attention masks: mask out padding positions
     forget_mask_flat = forget_batch["attention_mask"].to(loss_device).float().flatten()
     retain_mask_flat = retain_batch["attention_mask"].to(loss_device).float().flatten()
@@ -958,6 +961,7 @@ def cb_lat_loss(
         masked_cos = F.relu(cos_sim) * forget_mask_flat
         orthogonal_loss = masked_cos.sum() / forget_mask_flat.sum().clamp(min=1)
         loss = loss + circuit_breaker_coeff * orthogonal_loss
+        total_orthogonal = total_orthogonal + orthogonal_loss.detach()
 
         # Retain: keep activations close to cached original activations (L2 distance).
         ra = retain_acts[layer_id].float().flatten(0, 1)
@@ -967,8 +971,9 @@ def cb_lat_loss(
         l2_per_pos = torch.norm(ra[:bsz] - tr[:bsz].detach(), dim=-1, p=2)
         retain_loss = (l2_per_pos * mask_r).sum() / mask_r.sum().clamp(min=1)
         loss = loss + retain_coeff * retain_loss
+        total_retain = total_retain + retain_loss.detach()
 
-    return loss
+    return loss, total_orthogonal, total_retain
 
 
 # ---- Weight Distortion ---------------------------------------------------
