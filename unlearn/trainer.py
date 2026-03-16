@@ -290,9 +290,13 @@ class UnlearningTrainer(Trainer):
                 remove_coef=a.steering_coeff, retain_coef=a.alpha,
                 scheduled_coeff=scheduled_coeff,
             )
+            cb_coeff = a.steering_coeff * (1.0 - 0.25 * scheduled_coeff)
+            ret_coeff = a.alpha * scheduled_coeff
             self._record(
                 orthogonal_loss=orthogonal_raw,
                 retain_loss=retain_raw,
+                weighted_forget=cb_coeff * orthogonal_raw,
+                weighted_retain=ret_coeff * retain_raw,
                 scheduled_coeff=scheduled_coeff,
             )
 
