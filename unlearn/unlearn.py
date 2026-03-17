@@ -1441,7 +1441,7 @@ def save_training_config(args, outdir):
         "grad_clip": args.grad_clip,
         "grad_accum_steps": args.grad_accum_steps,
         "optimizer": getattr(args, "optimizer", "adamw"),
-        "deterministic_algorithms": False,
+        "deterministic_algorithms": True,
         "torch_version": torch.__version__,
         "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
         "cudnn_version": torch.backends.cudnn.version() if torch.cuda.is_available() else None,
@@ -1649,6 +1649,11 @@ def main():
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
+        torch.cuda.manual_seed_all(args.seed)
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     print(f"[unlearn] method={args.method}  device={device}  dtype={pt_dtype}")
     print(f"[unlearn] model={args.model}")
