@@ -1229,20 +1229,49 @@ def _create_model_card(args, repo_id, run_name=None):
     if method in ("wt_dist_reg",):
         hyperparams["Regularizer lambda"] = args.wt_reg_lambda
 
-    # Read eval results if available
-    eval_summary_path = os.path.join(
-        model_outdir(args.outdir, suffix="evals"), "summary.json"
-    )
+    # Read eval results from W&B (primary) with local summary.json as fallback.
+    # W&B keys come from analyze_runs.py: eval_bench/mmlu/acc and
+    # eval_bench/wmdp_bio_robust/acc (= WMDP Bio Robust).
     eval_metrics = {}
-    if os.path.exists(eval_summary_path):
-        with open(eval_summary_path) as f:
-            eval_data = json.load(f)
-        eval_results = eval_data.get("results", {})
-        for task, metrics in eval_results.items():
-            for metric_key, value in metrics.items():
-                if metric_key.endswith(",none") and not metric_key.startswith("alias"):
-                    clean = metric_key.replace(",none", "")
-                    eval_metrics[f"{task}/{clean}"] = value
+
+    # --- W&B lookup ---
+    _wandb_mmlu = None
+    _wandb_wmdp = None
+    if run_name:
+        try:
+            import wandb as _wandb_mod
+            _api = _wandb_mod.Api()
+            _project = os.environ.get("WANDB_PROJECT", "cambridge_era")
+            _runs = _api.runs(_project, filters={"display_name": run_name})
+            for _r in _runs:
+                if _r.state != "finished":
+                    continue
+                _s = _r.summary
+                _wandb_mmlu = _s.get("eval_bench/mmlu/acc")
+                _wandb_wmdp = _s.get("eval_bench/wmdp_bio_robust/acc")
+                break  # first matching finished run is enough
+        except Exception:
+            pass  # W&B unavailable — fall through to local file
+
+    if _wandb_mmlu is not None:
+        eval_metrics["MMLU"] = _wandb_mmlu
+    if _wandb_wmdp is not None:
+        eval_metrics["WMDP Bio (Robust)"] = _wandb_wmdp
+
+    # --- Local fallback (summary.json) ---
+    if not eval_metrics:
+        eval_summary_path = os.path.join(
+            model_outdir(args.outdir, suffix="evals"), "summary.json"
+        )
+        if os.path.exists(eval_summary_path):
+            with open(eval_summary_path) as f:
+                eval_data = json.load(f)
+            eval_results = eval_data.get("results", {})
+            for task, metrics in eval_results.items():
+                for metric_key, value in metrics.items():
+                    if metric_key.endswith(",none") and not metric_key.startswith("alias"):
+                        clean = metric_key.replace(",none", "")
+                        eval_metrics[f"{task}/{clean}"] = value
 
     # Build the model card
     method_name = method_names.get(method, method)
@@ -1287,17 +1316,21 @@ def _create_model_card(args, repo_id, run_name=None):
             "",
             "## Evaluation Results",
             "",
-            "| Benchmark | Metric | Value |",
-            "| --- | --- | --- |",
+            "| Benchmark | Value |",
+            "| --- | --- |",
         ]
         for metric_path, value in sorted(eval_metrics.items()):
             parts = metric_path.split("/", 1)
-            benchmark = parts[0]
-            metric = parts[1] if len(parts) > 1 else "score"
-            if isinstance(value, float):
-                lines.append(f"| {benchmark} | {metric} | {value:.4f} |")
+            if len(parts) == 1:
+                # W&B-sourced flat key (e.g. "MMLU", "WMDP Bio (Robust)")
+                label = parts[0]
             else:
-                lines.append(f"| {benchmark} | {metric} | {value} |")
+                # Local-file task/metric key
+                label = f"{parts[0]} / {parts[1]}"
+            if isinstance(value, float):
+                lines.append(f"| {label} | {value:.4f} |")
+            else:
+                lines.append(f"| {label} | {value} |")
 
     lines.append("")
 
