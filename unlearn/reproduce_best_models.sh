@@ -24,6 +24,9 @@ TOLERANCE="${TOLERANCE:-0.01}"
 DRY_RUN="${DRY_RUN:-0}"
 METHODS_FILTER=("$@")
 
+# Methods to skip (space-separated list)
+EXCLUDE_METHODS=(cb cb_lat lat)
+
 # ── Best configs from best_unlearning_models.md ──────────────────────────
 # Each entry: method|expected_mmlu|expected_wmdp_robust|env_overrides
 BEST_CONFIGS=(
@@ -49,6 +52,15 @@ failed_methods=()
 
 for entry in "${BEST_CONFIGS[@]}"; do
   IFS='|' read -r method expected_mmlu expected_wmdp env_vars <<< "$entry"
+
+  # Skip excluded methods
+  for excluded in "${EXCLUDE_METHODS[@]}"; do
+    if [[ "$excluded" == "$method" ]]; then
+      echo "[reproduce] Skipping excluded method: $method"
+      skipped=$((skipped + 1))
+      continue 2
+    fi
+  done
 
   # Filter if specific methods were requested
   if [[ ${#METHODS_FILTER[@]} -gt 0 ]]; then
