@@ -956,6 +956,130 @@ def wt_dist_reg_loss(
     return retain_nll - reg_lambda * l2_dist
 
 
+# ---- Activation Norm Regularisation --------------------------------------
+# An optional add-on loss that can be combined with any method.  It penalises
+# deviations of per-layer activation L2 norms from reference (base model)
+# targets, anchoring the model's norm profile during unlearning.
+#
+#   L_norm_reg = Σ_l (mean_token ‖h_l‖₂  −  target_l)²
+
+def _resolve_layers(model):
+    """Return the nn.ModuleList of transformer layers for common HF architectures."""
+    for attr in ("model.layers", "gpt_neox.layers", "transformer.h"):
+        obj = model
+        try:
+            for part in attr.split("."):
+                obj = getattr(obj, part)
+            return obj
+        except AttributeError:
+            continue
+    raise RuntimeError("norm_reg: could not locate transformer layers in model")
+
+
+def norm_reg_loss(
+    model,
+    batch: dict,
+    target_norms: list[float],
+) -> torch.Tensor:
+    """Compute activation-norm regularisation on a single batch.
+
+    Uses forward hooks to compute each layer's mean per-token L2 norm
+    during the forward pass, so full hidden-state tensors are never kept
+    in memory simultaneously.
+    """
+    layers = _resolve_layers(model)
+    mask = batch["attention_mask"]                         # int tensor, no .float() needed
+    token_count = mask.sum().clamp(min=1.0)
+    device = next(model.parameters()).device
+
+    # Collect scalar mean-L2 norms per layer via hooks.
+    # Each hook computes the norm and stores a differentiable scalar.
+    layer_norms: list[torch.Tensor] = []
+    handles: list[torch.utils.hooks.RemovableHook] = []
+
+    def make_hook(storage_list):
+        def hook_fn(module, input, output):
+            hidden = output[0] if isinstance(output, tuple) else output
+            l2 = torch.linalg.vector_norm(hidden.float(), ord=2, dim=-1)  # [B, T]
+            mean_l2 = (l2 * mask.to(l2.device)).sum() / token_count.to(l2.device)
+            storage_list.append(mean_l2)
+        return hook_fn
+
+    for layer in layers:
+        handles.append(layer.register_forward_hook(make_hook(layer_norms)))
+
+    try:
+        model(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+        )
+    finally:
+        for h in handles:
+            h.remove()
+
+    loss = torch.tensor(0.0, device=device)
+    for idx, mean_l2 in enumerate(layer_norms):
+        if idx >= len(target_norms):
+            break
+        loss = loss + (mean_l2 - target_norms[idx]) ** 2
+
+    return loss
+
+
+@torch.no_grad()
+def compute_reference_norms(
+    model,
+    batches: list[dict],
+    device: str,
+    n_batches: int | None = None,
+) -> list[float]:
+    """Compute mean per-layer L2 activation norms from the model.
+
+    Uses forward hooks so that full hidden-state tensors are never kept
+    in memory across layers.  Only scalar sums are accumulated.
+    """
+    model.eval()
+    layers = _resolve_layers(model)
+    n_layers = len(layers)
+    sum_l2 = [0.0] * n_layers
+    total_tokens = 0.0
+
+    limit = n_batches if n_batches else len(batches)
+    for batch in batches[:limit]:
+        batch_dev = {k: v.to(device) for k, v in batch.items()}
+        mask = batch_dev["attention_mask"]
+        total_tokens += float(mask.sum().item())
+
+        # Per-batch accumulator populated by hooks
+        batch_norms: list[float] = []
+        handles: list[torch.utils.hooks.RemovableHook] = []
+
+        def make_hook(storage_list, layer_mask):
+            def hook_fn(module, input, output):
+                hidden = output[0] if isinstance(output, tuple) else output
+                l2 = torch.linalg.vector_norm(hidden.float(), ord=2, dim=-1)
+                storage_list.append(float((l2 * layer_mask.to(l2.device)).sum().item()))
+            return hook_fn
+
+        for layer in layers:
+            handles.append(layer.register_forward_hook(make_hook(batch_norms, mask)))
+
+        try:
+            model(
+                input_ids=batch_dev["input_ids"],
+                attention_mask=batch_dev["attention_mask"],
+            )
+        finally:
+            for h in handles:
+                h.remove()
+
+        for i, val in enumerate(batch_norms):
+            sum_l2[i] += val
+
+    model.train()
+    return [s / total_tokens if total_tokens else 0.0 for s in sum_l2]
+
+
 # ---- Task Arithmetic Removal (TAR) --------------------------------------
 # TAR uses task arithmetic: θ_unlearned = θ_base - α(θ_forget_ft - θ_base)
 # where θ_forget_ft is obtained by fine-tuning the base model on forget data.
@@ -1458,6 +1582,7 @@ PARAM_ABBREV: dict[str, str] = {
     "tar_epochs": "tep",
     "wt_noise_std": "wn",
     "wt_reg_lambda": "wr",
+    "norm_reg_lambda": "nrl",
 }
 
 
@@ -1486,6 +1611,7 @@ def save_training_config(args, outdir):
     }
     for param in METHOD_PARAMS[args.method]:
         config[param] = getattr(args, param)
+    config["norm_reg_lambda"] = getattr(args, "norm_reg_lambda", 0.0)
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, "training_config.yaml"), "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
@@ -1510,6 +1636,11 @@ def build_outdir(args) -> str:
         parts.append(f"{abbrev}{value}")
 
     suffix = "_".join(parts)
+
+    # Append norm-reg suffix when enabled (cross-cutting, not method-specific)
+    nrl = getattr(args, "norm_reg_lambda", 0.0)
+    if nrl > 0:
+        suffix = f"{suffix}_nrl{nrl}"
 
     # Append optimizer suffix when non-default, so the name is unique and
     # visible in local folders, W&B run names, and HuggingFace repo names.
@@ -1584,6 +1715,10 @@ def main():
                         help="Std of Gaussian noise for Weight Distortion (wt_dist)")
     parser.add_argument("--wt-reg-lambda", type=float, default=0.1,
                         help="Regularizer weight for Weight Dist Reg (wt_dist_reg)")
+    parser.add_argument("--norm-reg-lambda", type=float, default=0.0,
+                        help="Activation-norm regularisation weight (0 = disabled). "
+                             "When > 0, penalises per-layer L2 norm deviations from "
+                             "the base model. Can be combined with any method.")
     parser.add_argument("--eval-split", type=float, default=0.1,
                         help="Fraction of data to hold out for evaluation (0 to disable)")
     parser.add_argument(
@@ -1654,7 +1789,8 @@ def main():
 
     # ---- W&B ----
     from utils import init_wandb, finish_wandb
-    run = init_wandb("unlearn", args, method=args.method)
+    extra_tags = ["norm_regularized"] if args.norm_reg_lambda > 0 else []
+    run = init_wandb("unlearn", args, method=args.method, extra_tags=extra_tags)
 
     # Log method-specific hyperparameters as a dedicated config group
     if run is not None:
@@ -1671,6 +1807,7 @@ def main():
             "eval_interval": args.eval_interval,
             "forget_data": args.forget_data,
             "retain_data": args.retain_data,
+            "norm_reg_lambda": args.norm_reg_lambda,
         }
         for param in METHOD_PARAMS[args.method]:
             hyperparameters[param] = getattr(args, param)
@@ -1900,6 +2037,16 @@ def main():
                 retain_act_cache.append({lid: a.detach().cpu().to(pt_dtype) for lid, a in acts.items()})
         model.train()
 
+    # ---- Activation-norm regularisation: compute reference norms ----
+    norm_reg_target_norms: list[float] | None = None
+    if args.norm_reg_lambda > 0:
+        print(f"[unlearn] NORM_REG: computing reference activation norms (λ={args.norm_reg_lambda})...")
+        norm_reg_target_norms = compute_reference_norms(
+            model, forget_batches, device, n_batches=min(n_steps, len(forget_batches)),
+        )
+        print(f"[unlearn] NORM_REG: reference norms for {len(norm_reg_target_norms)} layers "
+              f"(range [{min(norm_reg_target_norms):.2f}, {max(norm_reg_target_norms):.2f}])")
+
     # ---- Weight Distortion: add Gaussian noise to all parameters ----
     if args.method == "wt_dist":
         print(f"[unlearn] WT_DIST: adding Gaussian noise (std={args.wt_noise_std}) to all parameters...")
@@ -2076,6 +2223,7 @@ def main():
         random_targets=random_targets,
         retain_act_cache=retain_act_cache,
         layer_ids=layer_ids,
+        norm_reg_target_norms=norm_reg_target_norms,
     )
 
     # Wire up pretrained_params for wt_dist_reg (set before train() is called)

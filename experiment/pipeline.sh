@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 # Always run from the project root (parent of experiment/)
 cd "$(dirname "$0")/.."
@@ -27,7 +27,7 @@ if [ -f .env ]; then
 fi
 
 # Group all W&B runs from this pipeline invocation together
-export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-pipeline_$(date +%s)}"
+# (tagging deferred until MODEL_B is known — see below)
 
 # Configuration — single output root for all results
 OUTROOT="${OUTROOT:-outputs}"
@@ -47,6 +47,22 @@ SEEDS="${SEEDS:-42 123 456}"
 MODEL_A_DIR="${MODEL_A//\//_}"
 MODEL_B_DIR="${MODEL_B//\//_}"
 COMP="${MODEL_A_DIR}__to__${MODEL_B_DIR}"
+
+# Detect if MODEL_B is already a norm-controlled variant (contains _nrl)
+IS_NORM_CONTROLLED=0
+if [[ "$MODEL_B" == *"_nrl"* ]]; then
+  IS_NORM_CONTROLLED=1
+fi
+
+# Group all W&B runs from this pipeline invocation together.
+# When MODEL_B is a norm-controlled variant, prefix the group and add a W&B tag
+# so every run in this invocation is filterable in the dashboard.
+PIPELINE_TAG="pipeline_$(date +%s)"
+if [[ "$IS_NORM_CONTROLLED" == "1" ]]; then
+  PIPELINE_TAG="norm_controlled_${PIPELINE_TAG}"
+  export WANDB_TAGS="${WANDB_TAGS:+${WANDB_TAGS},}norm_controlled"
+fi
+export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-$PIPELINE_TAG}"
 
 # Device and dtype settings
 PARAM_DEVICE="${PARAM_DEVICE:-auto}"  # auto = cuda > mps > cpu
@@ -98,12 +114,34 @@ run_multiseed_experiment() {
     --sentinel-file "$sentinel"
 }
 
+# ---- Resilient step runner ----
+# Runs a command; on failure, logs a warning and continues instead of aborting.
+# Usage: run_step "Step N: description" command arg1 arg2 ...
+STEP_FAILURES=0
+run_step() {
+  local step_name="$1"
+  shift
+  if "$@"; then
+    return 0
+  else
+    local rc=$?
+    echo ""
+    echo "  ✗ $step_name FAILED (exit $rc) — continuing to next step"
+    echo ""
+    ((STEP_FAILURES++))
+    return 0  # swallow the error so the pipeline continues
+  fi
+}
+
 echo "=========================================="
 echo "      MODEL DIFFS ANALYSIS PIPELINE"
 echo "=========================================="
 echo ""
 echo "Model A:  $MODEL_A"
 echo "Model B:  $MODEL_B"
+if [[ "$IS_NORM_CONTROLLED" == "1" ]]; then
+  echo "          ^^^ norm-controlled variant (activation-norm regularised)"
+fi
 echo "Output root:   $OUTROOT"
 echo "Seeds:         $SEEDS  (for statistical robustness)"
 echo ""
@@ -155,7 +193,7 @@ echo "----------------------------------------"
 if step_complete "${OUTROOT}/${COMP}/weight_comparison" "per_matrix.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/collect_weight_comparison.py \
+  run_step "Step 1" uv run experiment/collect_weight_comparison.py \
     --model-a "$MODEL_A" \
     --model-b "$MODEL_B" \
     --device "$PARAM_DEVICE" \
@@ -181,7 +219,7 @@ echo "----------------------------------------"
 if step_complete "${OUTROOT}/${COMP}/sv_spectrum" "sv_spectrum.png"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/singular_value_spectrum_analysis.py \
+  run_step "Step 1.5" uv run experiment/singular_value_spectrum_analysis.py \
     --model-a "$MODEL_A" \
     --model-b "$MODEL_B" \
     --device "$PARAM_DEVICE" \
@@ -217,7 +255,7 @@ else
   echo ""
   echo "Comparing: $MODEL_A → $MODEL_B"
   echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${COMP}/activation_comparison" "activation_comparison.csv" \
+  run_step "Step 3" run_multiseed_experiment "${OUTROOT}/${COMP}/activation_comparison" "activation_comparison.csv" \
     "experiment/collect_activation_comparison.py" \
     --model-a "$MODEL_A" \
     --model-b "$MODEL_B" \
@@ -226,6 +264,97 @@ else
     --device "$ACTIVATION_DEVICE" \
     --dtype "$ACTIVATION_DTYPE" \
     --title "${MODEL_B##*/}: Activation Norms"
+fi
+
+# ============================================
+# STEP 3b: Norm-Controlled Unlearning Experiment
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 3b: Norm-Controlled Unlearning"
+echo "=========================================="
+echo "Gradient-ascent unlearning with activation-norm regularisation."
+echo "Tests whether unlearning can avoid the characteristic norm drops."
+
+if [[ "$IS_NORM_CONTROLLED" == "1" ]]; then
+  echo "  ✓ MODEL_B is already norm-controlled — skipping to avoid infinite loop"
+fi
+
+# Norm-controlled unlearning re-runs the SAME method used to produce MODEL_B,
+# but with --norm-reg-lambda to anchor activation norms to the base model.
+# This lets us compare the original unlearned model (MODEL_B) against a
+# norm-controlled variant to see if the norm drops are avoidable.
+#
+# NORM_CTRL_METHOD is inferred from MODEL_B's name by default (matching the
+# same slug logic as utils.infer_method_from_model_name).
+NORM_CTRL_LAMBDA="${NORM_CTRL_LAMBDA:-1.0}"
+NORM_CTRL_METHOD="${NORM_CTRL_METHOD:-}"
+
+if [[ "$IS_NORM_CONTROLLED" == "1" ]]; then
+  :  # already printed skip message above
+elif [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
+  echo "Warning: Data files missing; skipping norm-controlled unlearning."
+elif [[ -z "$NORM_CTRL_METHOD" ]]; then
+  # Try to infer the method from MODEL_B's name
+  NORM_CTRL_METHOD=$(python3 -c "
+import sys; sys.path.insert(0,'.')
+from utils import infer_method_from_model_name
+m = infer_method_from_model_name('$MODEL_B')
+print(m or '')
+")
+  if [[ -z "$NORM_CTRL_METHOD" ]]; then
+    echo "  Could not infer unlearning method from MODEL_B name."
+    echo "  Set NORM_CTRL_METHOD=<method> to enable this step."
+  else
+    echo "  Inferred method: $NORM_CTRL_METHOD (from MODEL_B name)"
+  fi
+fi
+
+if [[ "$IS_NORM_CONTROLLED" != "1" && -n "$NORM_CTRL_METHOD" && -f "$FORGET" && -f "$RETAIN" ]]; then
+  echo ""
+  echo "Re-running $NORM_CTRL_METHOD with norm regularisation (λ=$NORM_CTRL_LAMBDA)"
+  echo "  Base model: $MODEL_A"
+  echo "----------------------------------------"
+
+  # Let unlearn.py auto-generate its outdir; we just need to know the path
+  # for the comparison step. build_outdir appends _nrl<lambda> when non-zero.
+  NORM_CTRL_OUTDIR=$(python3 -c "
+import sys, types; sys.path.insert(0,'.')
+from utils import model_outdir
+# Minimal args object matching build_outdir's expectations
+a = types.SimpleNamespace(
+    model='$MODEL_A', method='$NORM_CTRL_METHOD',
+    epochs=1, lr=1e-5, batch_size=4, max_length=512, max_lines=1024,
+    retain_weight=1.0, forget_weight=1.0, beta=0.1, alpha=100.0,
+    steering_coeff=20.0, layer_id='5,6,7', lat_eps=0.1, lat_steps=5,
+    tar_alpha=1.0, tar_lr=1e-5, tar_epochs=1,
+    wt_noise_std=0.02, wt_reg_lambda=0.1,
+    norm_reg_lambda=$NORM_CTRL_LAMBDA, optimizer='adamw', grad_accum_steps=1,
+)
+sys.path.insert(0,'unlearn')
+from unlearn import build_outdir
+print(build_outdir(a))
+")
+  NORM_CTRL_COMP="${MODEL_A_DIR}__to__$(basename "$NORM_CTRL_OUTDIR")"
+
+  if step_complete "$NORM_CTRL_OUTDIR" "config.json"; then
+    echo "  ✓ Norm-controlled model already trained — skipping"
+  else
+    run_step "Step 3b" uv run unlearn/unlearn.py \
+      --model "$MODEL_A" \
+      --method "$NORM_CTRL_METHOD" \
+      --forget-data "$FORGET" \
+      --retain-data "$RETAIN" \
+      --norm-reg-lambda "$NORM_CTRL_LAMBDA" \
+      --device "$ACTIVATION_DEVICE" \
+      --dtype "$ACTIVATION_DTYPE" \
+      --no-eval
+  fi
+
+  echo ""
+  echo "Norm-controlled model saved to: $NORM_CTRL_OUTDIR"
+  echo "To run the full distinguishability analysis, re-run the pipeline with:"
+  echo "  MODEL_B=$NORM_CTRL_OUTDIR ./experiment/pipeline.sh"
 fi
 
 # ============================================
@@ -241,7 +370,7 @@ echo "Analyzing: $MODEL_A → $MODEL_B"
 if step_complete "${OUTROOT}/${COMP}/mlp_attn_analysis" "mlp_attn_summary.csv"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/analyze_mlp_vs_attn.py \
+  run_step "Step 4" uv run experiment/analyze_mlp_vs_attn.py \
     --per-layer-csv "${OUTROOT}/${COMP}/weight_comparison/per_coarse_layer.csv" \
     --per-matrix-csv "${OUTROOT}/${COMP}/weight_comparison/per_matrix.csv" \
     --outdir "${OUTROOT}/${COMP}/mlp_attn_analysis" \
@@ -275,7 +404,7 @@ for LENS in $LENS_MODES; do
   echo ""
   echo "Model A: $MODEL_A"
   echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${MODEL_A_DIR}/wmdp_${LENS}_lens" "summary.json" \
+  run_step "Step 5 (${LENS}, Model A)" run_multiseed_experiment "${OUTROOT}/${MODEL_A_DIR}/wmdp_${LENS}_lens" "summary.json" \
     "experiment/layerwise_wmdp_accuracy.py" \
     --model "$MODEL_A" \
     --lens "$LENS" \
@@ -285,7 +414,7 @@ for LENS in $LENS_MODES; do
   echo ""
   echo "Model B: $MODEL_B"
   echo "----------------------------------------"
-  run_multiseed_experiment "${OUTROOT}/${MODEL_B_DIR}/wmdp_${LENS}_lens" "summary.json" \
+  run_step "Step 5 (${LENS}, Model B)" run_multiseed_experiment "${OUTROOT}/${MODEL_B_DIR}/wmdp_${LENS}_lens" "summary.json" \
     "experiment/layerwise_wmdp_accuracy.py" \
     --model "$MODEL_B" \
     --lens "$LENS" \
@@ -304,7 +433,7 @@ echo "Note: This is computationally intensive (SVD on 50 weight matrices)"
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/null_space_analysis" "null_space_visualization.png" \
+run_step "Step 7" run_multiseed_experiment "${OUTROOT}/${COMP}/null_space_analysis" "null_space_visualization.png" \
   "experiment/null_space_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -321,7 +450,7 @@ echo "Analyzing how well forget/retain activations are separated..."
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/activation_separation" "summary.json" \
+run_step "Step 8" run_multiseed_experiment "${OUTROOT}/${COMP}/activation_separation" "summary.json" \
   "experiment/activation_separation_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -341,7 +470,7 @@ echo "Analyzing covariance spectrum changes..."
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/activation_covariance" "summary.json" \
+run_step "Step 9" run_multiseed_experiment "${OUTROOT}/${COMP}/activation_covariance" "summary.json" \
   "experiment/activation_covariance_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -364,7 +493,7 @@ echo "Analyzing: $MODEL_A → $MODEL_B"
 if step_complete "${OUTROOT}/${COMP}/mlp_nullspace_alignment" "summary.json"; then
   echo "  ✓ Already complete — skipping"
 else
-  uv run experiment/mlp_nullspace_alignment.py \
+  run_step "Step 10" uv run experiment/mlp_nullspace_alignment.py \
     --model-a "$MODEL_A" \
     --model-b "$MODEL_B" \
     --device "$PARAM_DEVICE" \
@@ -382,7 +511,7 @@ echo "Analyzing how activations project onto update directions..."
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/row_space_projection" "summary.json" \
+run_step "Step 11" run_multiseed_experiment "${OUTROOT}/${COMP}/row_space_projection" "summary.json" \
   "experiment/row_space_projection_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -402,7 +531,7 @@ echo "Analyzing local smoothness changes..."
 
 echo ""
 echo "Analyzing: $MODEL_A → $MODEL_B"
-run_multiseed_experiment "${OUTROOT}/${COMP}/lipschitzness_analysis" "summary.json" \
+run_step "Step 12" run_multiseed_experiment "${OUTROOT}/${COMP}/lipschitzness_analysis" "summary.json" \
   "experiment/local_lipschitzness_analysis.py" \
   --model-a "$MODEL_A" \
   --model-b "$MODEL_B" \
@@ -447,6 +576,11 @@ echo "  • Multi-seed experiments (${SEEDS}) provide error bars for stochastic 
 echo "  • Results include mean ± std across seeds in CSV/JSON files"
 echo "  • Individual seed results preserved under seed_*/ subdirectories"
 echo ""
+if [[ $STEP_FAILURES -gt 0 ]]; then
+  echo "WARNING: $STEP_FAILURES step(s) failed during this run."
+  echo "  Rerun with --force to retry, or check the logs above for details."
+  echo ""
+fi
 echo "Tip: rerun with --force to regenerate all results."
 echo "Tip: set SEEDS=\"42 123 456 789 999\" for more robust statistics."
 echo ""

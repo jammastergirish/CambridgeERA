@@ -82,7 +82,26 @@ MODEL_B=EleutherAI/deep-ignorance-e2e-strong-filter-adversarial \
 ENABLE_TUNED_LENS=1 ./experiment/pipeline.sh
 ```
 
-Already-completed steps are automatically skipped (pass `--force` to rerun).
+Already-completed steps are automatically skipped (pass `--force` to rerun). Individual step failures are logged but do not abort the pipeline — remaining steps continue and a failure summary is printed at the end.
+
+### Running All Best Models
+
+To run the full pipeline on every model in the [best-unlearned-models](https://huggingface.co/collections/girishgupta/best-unlearned-models) HuggingFace collection:
+
+```bash
+# Run pipeline on all 8 best models, then on their norm-controlled variants
+./experiment/run_pipeline_best_models.sh
+
+# Preview commands without running
+DRY_RUN=1 ./experiment/run_pipeline_best_models.sh
+
+# Rerun completed steps
+./experiment/run_pipeline_best_models.sh --force
+```
+
+This runs in two passes:
+1. **Pass 1** runs the pipeline on each HF model. Step 3b trains a norm-controlled variant of each.
+2. **Pass 2** finds the norm-controlled models produced by Pass 1 (local directories containing `_nrl`) and runs the full pipeline on each. Step 3b is automatically skipped for these to avoid infinite recursion.
 
 ### Statistical Robustness & Error Bars
 
@@ -260,6 +279,29 @@ For each layer, computes the mean L1 and L2 norms of hidden states per token, pl
 Both are averaged across all tokens (weighted by attention mask). They are **not** divided by hidden dimension since all models share the same architecture, so they are directly comparable across models and layers.
 
 **Why this matters:** If norms are similar between base and unlearned models but different for the filtered model, it means unlearning doesn't achieve suppression through reducing activation magnitudes—it's doing something more subtle (or less effective). L1 and L2 capture different aspects: L1 is more sensitive to many small changes spread across dimensions, while L2 is dominated by the largest components.
+
+---
+
+#### Step 3b: Norm-Controlled Unlearning (pipeline-only)
+
+**Question:** *Can unlearning avoid the characteristic activation-norm drops if we explicitly regularise for them?*
+
+Re-runs the same unlearning method used to produce `MODEL_B`, but with `--norm-reg-lambda` enabled. This adds a cross-cutting loss term that penalises per-layer L2 activation norm deviations from the base model's norms:
+
+$$L_{\text{norm\_reg}} = \sum_l \left( \overline{\lVert h_l \rVert}_2 - \text{target}_l \right)^2$$
+
+Reference norms are computed once from the base model before training begins. During training, forward hooks on each transformer layer compute the scalar mean-L2 norm inline, so full hidden-state tensors are never held in memory across layers.
+
+This step is **automatically skipped** when `MODEL_B` is already a norm-controlled variant (detected by `_nrl` in the name), preventing infinite recursion when re-running the pipeline on the norm-controlled output.
+
+**Configuration:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `NORM_CTRL_LAMBDA` | `1.0` | Regularisation strength (λ) |
+| `NORM_CTRL_METHOD` | *(inferred from MODEL_B)* | Unlearning method to re-run |
+
+After training, the pipeline prints the output directory and suggests re-running the full pipeline with the norm-controlled model as `MODEL_B`, so all downstream diagnostics (Steps 3–12) run on the norm-controlled variant. When run this way, all W&B runs are tagged `norm_controlled` and the run group is prefixed `norm_controlled_`.
 
 ---
 
@@ -606,6 +648,8 @@ The cloze test in particular is the hardest to game: it requires the model to *g
 | `tar` | Parameter-Space | `--tar-alpha`, `--tar-lr`, `--tar-epochs` | [Ilharco et al. 2023](https://arxiv.org/abs/2212.04089) |
 | `wt_dist` | Parameter-Space | `--wt-noise-std` | [Siddiqui et al. 2025](https://arxiv.org/abs/2505.22310) |
 | `wt_dist_reg` | Parameter-Space | `--wt-reg-lambda` | [Siddiqui et al. 2025](https://arxiv.org/abs/2505.22310) |
+
+**Cross-cutting option:** `--norm-reg-lambda <float>` (default 0, disabled) can be combined with any method above. When > 0, it adds an activation-norm regularisation loss that anchors per-layer L2 norms to the base model. See [Step 3b](#step-3b-norm-controlled-unlearning-pipeline-only) for details.
 
 See `uv run unlearn/unlearn.py --help` for full argument reference.
 
