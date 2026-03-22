@@ -432,6 +432,21 @@ Estimates the local Lipschitz constant by perturbing input embeddings with small
 
 **Why this matters:** A model that becomes rougher on forget text hasn't *learned to not know* something — it's in an unstable regime where small pushes (fine-tuning) can tip it back. Smoothness changes are a direct indicator of whether the loss landscape around forget-domain inputs is fundamentally reshaped or just locally perturbed.
 
+#### Step 13: Basin Analysis (`experiment/basin_analysis.py`)
+
+**Question:** *Is there a "Goldilocks distance" from the pretrained model that separates effective unlearning from ineffective or destructive interventions?*
+
+Joins per-layer results from Steps 1 (weight distances), 3 (activation norm changes), and 5 (WMDP accuracy) to correlate how far each layer moved in weight space with how much forget-domain knowledge was actually removed. Inspired by the "alignment basin" finding in subliminal learning research, where interventions that move too little or too far from initialization both fail.
+
+| Outcome | Interpretation |
+|---|---|
+| Strong positive correlation (distance ↔ accuracy drop) | Layers that move more forget more — intervention is proportional |
+| Weak/no correlation | Unlearning effectiveness is decoupled from weight distance — edits may be in the wrong subspace |
+| High selectivity (forget >> retain activation change) | Intervention is targeted at forget-domain representations |
+| Goldilocks zone visible in scatter | There is an optimal per-layer distance; beyond it, general capability degrades |
+
+**Why this matters:** If effective unlearning requires moving a specific distance from the pretrained checkpoint — not too little (no effect) and not too much (catastrophic forgetting) — then the geometry of this basin constrains which methods can succeed. Methods that produce uniformly small edits (like CB-LAT) may be inherently limited because they never reach the basin boundary, while aggressive methods (gradient ascent) may overshoot it.
+
 ---
 
 ### The Big Picture
@@ -448,6 +463,7 @@ The diagnostics answer an escalating series of questions:
 | **Function** | Do activations actually change on target text? | 8–9 |
 | **Precision** | Is the change *targeted* at forget-domain inputs? | 11 |
 | **Stability** | Is the new behavior robust or fragile? | 12 |
+| **Basin** | Is there an optimal distance from the pretrained model? | 13 |
 
 The thesis prediction is that unlearning methods (CB-LAT) will show: small magnitude, attention-localized, low-rank, nullspace-aligned, minimal activation change, low selectivity, and increased roughness — the full mechanistic signature of a brittle intervention. While filtering will show the opposite across every dimension.
 
@@ -459,7 +475,7 @@ All results are saved under a single root (default `outputs/`):
 
 ```
 outputs/
-  <comparison>/                        # Steps 1–4, 7–12: per model-pair
+  <comparison>/                        # Steps 1–4, 7–13: per model-pair
     weight_comparison/     per_matrix.csv, per_component.csv, per_layer.csv, per_coarse_layer.csv
     param_plots/           Layer locality, stable rank, rank comparison PNGs
     activation_comparison/ activation_comparison.csv
@@ -471,6 +487,7 @@ outputs/
     mlp_nullspace/         alignment metrics + plots
     row_space_projection/  projection metrics + plots
     lipschitzness/         Lipschitz estimates + plots
+    basin_analysis/        basin_summary.csv, summary.json, Goldilocks scatter + profile PNGs
 
   <model>/                             # Steps 0, 5: per individual model
     evals/                 summary.json, high_level_summary.md

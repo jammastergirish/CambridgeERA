@@ -541,6 +541,44 @@ run_step "Step 12" run_multiseed_experiment "${OUTROOT}/${COMP}/lipschitzness_an
   --dtype "$ACTIVATION_DTYPE"
 
 # ============================================
+# STEP 13: Basin Analysis (Goldilocks Distance)
+# ============================================
+echo ""
+echo "=========================================="
+echo "STEP 13: Basin Analysis (Goldilocks Distance)"
+echo "=========================================="
+echo "Correlating per-layer weight distance with unlearning effectiveness."
+echo "Requires Steps 1, 3, and 5 (logit lens) to have completed."
+
+BASIN_WEIGHT_CSV="${OUTROOT}/${COMP}/weight_comparison/per_coarse_layer.csv"
+BASIN_ACTIVATION_CSV="${OUTROOT}/${COMP}/activation_comparison/activation_comparison.csv"
+BASIN_WMDP_A_CSV="${OUTROOT}/${MODEL_A_DIR}/wmdp_logit_lens/wmdp_lens_results.csv"
+BASIN_WMDP_B_CSV="${OUTROOT}/${MODEL_B_DIR}/wmdp_logit_lens/wmdp_lens_results.csv"
+
+BASIN_MISSING=""
+for f in "$BASIN_WEIGHT_CSV" "$BASIN_ACTIVATION_CSV" "$BASIN_WMDP_A_CSV" "$BASIN_WMDP_B_CSV"; do
+  if [[ ! -f "$f" ]]; then
+    BASIN_MISSING="${BASIN_MISSING}  missing: $f\n"
+  fi
+done
+
+if [[ -n "$BASIN_MISSING" ]]; then
+  echo "  Skipping — prerequisite CSVs not found:"
+  printf "$BASIN_MISSING"
+  echo "  Run Steps 1, 3, and 5 first."
+elif step_complete "${OUTROOT}/${COMP}/basin_analysis" "summary.json"; then
+  echo "  ✓ Already complete — skipping"
+else
+  run_step "Step 13" uv run experiment/basin_analysis.py \
+    --weight-csv "$BASIN_WEIGHT_CSV" \
+    --activation-csv "$BASIN_ACTIVATION_CSV" \
+    --wmdp-a-csv "$BASIN_WMDP_A_CSV" \
+    --wmdp-b-csv "$BASIN_WMDP_B_CSV" \
+    --outdir "${OUTROOT}/${COMP}/basin_analysis" \
+    --title "${MODEL_B##*/}: Basin Analysis"
+fi
+
+# ============================================
 # COMPLETION
 # ============================================
 echo ""
@@ -563,6 +601,7 @@ echo "    activation_covariance/  covariance spectra + plots (multi-seed aggrega
 echo "    mlp_nullspace_alignment/ alignment metrics + plots"
 echo "    row_space_projection/   projection metrics + plots (multi-seed aggregated)"
 echo "    lipschitzness_analysis/ Lipschitz estimates + plots (multi-seed aggregated)"
+echo "    basin_analysis/         basin_summary.csv, summary.json, Goldilocks scatter + profile PNGs"
 echo "        └── seed_*/         Individual seed results (for debugging)"
 echo ""
 echo "  <model>/"
