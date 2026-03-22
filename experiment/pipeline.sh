@@ -77,9 +77,10 @@ RETAIN="${RETAIN_TEXT:-data/retain.txt}"
 # Subsequent step_complete checks grep this cache — no network calls per step.
 WANDB_CACHE="/tmp/wandb_finished_runs_${$}.txt"
 echo "[pipeline] Fetching completed runs from W&B..."
-if uv run experiment/check_wandb_complete.py --fetch --cache-file "$WANDB_CACHE" 2>/dev/null; then
+if uv run experiment/check_wandb_complete.py --fetch --cache-file "$WANDB_CACHE"; then
   WANDB_AVAILABLE=1
-  echo "[pipeline] W&B cache ready."
+  WANDB_CACHE_COUNT=$(wc -l < "$WANDB_CACHE" 2>/dev/null || echo 0)
+  echo "[pipeline] W&B cache ready ($WANDB_CACHE_COUNT runs)."
 else
   WANDB_AVAILABLE=0
   echo "[pipeline] W&B unavailable — using local sentinel files as fallback."

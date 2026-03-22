@@ -74,7 +74,13 @@ def fetch_finished_runs(project: str, cache_file: str) -> int:
         with open(cache_file, "w") as fh:
             fh.write("\n".join(lines) + "\n")
 
+        # Show a few sample entries for debugging
         print(f"[wandb-cache] Cached {len(lines)} finished runs to {cache_file}")
+        if lines:
+            print(f"[wandb-cache] Sample entries:")
+            for sample in lines[:5]:
+                parts = sample.split("\t")
+                print(f"  name={parts[0]}  model_a={parts[1]}  model_b={parts[2] if len(parts)>2 else ''}")
         return 0
 
     except Exception as exc:
