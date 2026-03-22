@@ -140,7 +140,7 @@ run_multiseed_experiment() {
     seed_dirs+=("$seed_outdir")
 
     # Check if this seed already has output files (CSV or JSON)
-    if [[ "$FORCE" != "1" ]] && ls "${seed_outdir}"/*.csv "${seed_outdir}"/*.json 2>/dev/null | head -1 | grep -q .; then
+    if [[ "$FORCE" != "1" ]] && [[ -n "$(find "${seed_outdir}" -maxdepth 1 \( -name '*.csv' -o -name '*.json' \) -print -quit 2>/dev/null)" ]]; then
       echo "    Seed $seed: ✓ output exists — skipping"
       continue
     fi
