@@ -108,22 +108,18 @@ wandb_step_complete() {
 
 # ---- Skip-if-complete helper ----
 # Usage: step_complete <dir> <sentinel_file>
-# Checks W&B first (authoritative), falls back to local sentinel file.
+# W&B is the authority. Local sentinel is only used when W&B is unavailable.
 # Returns 0 (true) if the step has already completed.
 step_complete() {
   local dir="$1" sentinel="$2"
   if [[ "$FORCE" == "1" ]]; then return 1; fi
-  # Check local sentinel first (fast, no network)
-  if [[ -f "${dir}/${sentinel}" ]]; then return 0; fi
-  # Check W&B (catches cases where local files are missing but run completed)
+  # W&B is authoritative — check it first
   wandb_step_complete "$dir"
   local rc=$?
-  if [[ $rc -eq 0 ]]; then
-    echo "  (completed in W&B, local sentinel missing)"
-    return 0
-  fi
-  # rc=1 means not found, rc=2 means W&B unavailable — either way, not complete
-  return 1
+  if [[ $rc -eq 0 ]]; then return 0; fi
+  if [[ $rc -eq 1 ]]; then return 1; fi
+  # rc=2: W&B unavailable — fall back to local sentinel
+  [[ -f "${dir}/${sentinel}" ]]
 }
 
 # ---- Multi-seed experiment runner ----
