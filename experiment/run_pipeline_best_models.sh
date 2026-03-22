@@ -125,6 +125,24 @@ else
   run_pass "Pass 2: Norm-controlled variants" "${NRL_MODELS[@]}"
 fi
 
+# ==================================================================
+# Cross-method basin comparison (runs after all pipelines complete)
+# ==================================================================
+echo ""
+echo "=========================================="
+echo "  Cross-Method Basin Comparison"
+echo "=========================================="
+echo "Aggregating basin analysis results across all methods..."
+
+CROSS_METHOD_OUTDIR="${OUTROOT:-outputs}/cross_method_basin"
+if [[ -f "${CROSS_METHOD_OUTDIR}/summary.json" && "$FORCE_FLAG" != "--force" ]]; then
+  echo "  ✓ Already complete — skipping"
+else
+  run_step "Cross-method basin" uv run experiment/cross_method_basin_comparison.py \
+    --model-a "$MODEL_A" \
+    --outdir "$CROSS_METHOD_OUTDIR"
+fi
+
 # Exit with failure if either pass had failures
 if [[ $PASS1_FAILURES -gt 0 ]]; then
   exit 1
