@@ -27,7 +27,7 @@ if [ -f .env ]; then
 fi
 
 # Group all W&B runs from this pipeline invocation together
-export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-pipeline_$(date +%s)}"
+# (tagging deferred until MODEL_B is known — see below)
 
 # Configuration — single output root for all results
 OUTROOT="${OUTROOT:-outputs}"
@@ -47,6 +47,22 @@ SEEDS="${SEEDS:-42 123 456}"
 MODEL_A_DIR="${MODEL_A//\//_}"
 MODEL_B_DIR="${MODEL_B//\//_}"
 COMP="${MODEL_A_DIR}__to__${MODEL_B_DIR}"
+
+# Detect if MODEL_B is already a norm-controlled variant (contains _nrl)
+IS_NORM_CONTROLLED=0
+if [[ "$MODEL_B" == *"_nrl"* ]]; then
+  IS_NORM_CONTROLLED=1
+fi
+
+# Group all W&B runs from this pipeline invocation together.
+# When MODEL_B is a norm-controlled variant, prefix the group and add a W&B tag
+# so every run in this invocation is filterable in the dashboard.
+PIPELINE_TAG="pipeline_$(date +%s)"
+if [[ "$IS_NORM_CONTROLLED" == "1" ]]; then
+  PIPELINE_TAG="norm_controlled_${PIPELINE_TAG}"
+  export WANDB_TAGS="${WANDB_TAGS:+${WANDB_TAGS},}norm_controlled"
+fi
+export WANDB_RUN_GROUP="${WANDB_RUN_GROUP:-$PIPELINE_TAG}"
 
 # Device and dtype settings
 PARAM_DEVICE="${PARAM_DEVICE:-auto}"  # auto = cuda > mps > cpu
@@ -104,6 +120,9 @@ echo "=========================================="
 echo ""
 echo "Model A:  $MODEL_A"
 echo "Model B:  $MODEL_B"
+if [[ "$IS_NORM_CONTROLLED" == "1" ]]; then
+  echo "          ^^^ norm-controlled variant (activation-norm regularised)"
+fi
 echo "Output root:   $OUTROOT"
 echo "Seeds:         $SEEDS  (for statistical robustness)"
 echo ""
@@ -238,6 +257,10 @@ echo "=========================================="
 echo "Gradient-ascent unlearning with activation-norm regularisation."
 echo "Tests whether unlearning can avoid the characteristic norm drops."
 
+if [[ "$IS_NORM_CONTROLLED" == "1" ]]; then
+  echo "  ✓ MODEL_B is already norm-controlled — skipping to avoid infinite loop"
+fi
+
 # Norm-controlled unlearning re-runs the SAME method used to produce MODEL_B,
 # but with --norm-reg-lambda to anchor activation norms to the base model.
 # This lets us compare the original unlearned model (MODEL_B) against a
@@ -248,7 +271,9 @@ echo "Tests whether unlearning can avoid the characteristic norm drops."
 NORM_CTRL_LAMBDA="${NORM_CTRL_LAMBDA:-1.0}"
 NORM_CTRL_METHOD="${NORM_CTRL_METHOD:-}"
 
-if [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
+if [[ "$IS_NORM_CONTROLLED" == "1" ]]; then
+  :  # already printed skip message above
+elif [[ ! -f "$FORGET" || ! -f "$RETAIN" ]]; then
   echo "Warning: Data files missing; skipping norm-controlled unlearning."
 elif [[ -z "$NORM_CTRL_METHOD" ]]; then
   # Try to infer the method from MODEL_B's name
@@ -266,7 +291,7 @@ print(m or '')
   fi
 fi
 
-if [[ -n "$NORM_CTRL_METHOD" && -f "$FORGET" && -f "$RETAIN" ]]; then
+if [[ "$IS_NORM_CONTROLLED" != "1" && -n "$NORM_CTRL_METHOD" && -f "$FORGET" && -f "$RETAIN" ]]; then
   echo ""
   echo "Re-running $NORM_CTRL_METHOD with norm regularisation (λ=$NORM_CTRL_LAMBDA)"
   echo "  Base model: $MODEL_A"
