@@ -187,7 +187,7 @@ def plot_cross_method_scatter(combined_df: pd.DataFrame, outdir: str) -> None:
     axes[0].legend(fontsize=7, loc="upper left", ncol=2)
     plt.suptitle("Cross-Method Basin Analysis: Weight Distance vs Unlearning", fontsize=13)
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "cross_method_scatter.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "cross_method_scatter.png"), dpi=300)
     plt.close()
 
 
@@ -226,7 +226,7 @@ def plot_selectivity_profiles(combined_df: pd.DataFrame, outdir: str) -> None:
 
     plt.suptitle("Cross-Method: Selectivity and Accuracy Drop Profiles", fontsize=13)
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "cross_method_selectivity.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "cross_method_selectivity.png"), dpi=300)
     plt.close()
 
 
@@ -256,7 +256,7 @@ def plot_method_heatmap(combined_df: pd.DataFrame, outdir: str) -> None:
     axis.set_title("Accuracy Drop by Method and Layer (red = more drop)")
     plt.colorbar(im, ax=axis, label="Accuracy Drop", shrink=0.8)
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "cross_method_heatmap.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "cross_method_heatmap.png"), dpi=300)
     plt.close()
 
 
@@ -305,7 +305,7 @@ def plot_method_summary_bars(summary_rows: List[Dict], outdir: str) -> None:
 
     plt.suptitle("Cross-Method Comparison: Basin Analysis Summary", fontsize=13)
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "cross_method_summary.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "cross_method_summary.png"), dpi=300)
     plt.close()
 
 

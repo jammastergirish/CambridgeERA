@@ -195,7 +195,7 @@ def _plot_overlay(
 
     fig.suptitle(f"{title}\n{name}", fontsize=11)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=120)
+    fig.savefig(outpath, dpi=300)
     plt.close(fig)
 
 
@@ -226,7 +226,7 @@ def _plot_dw_all_layers(
     ax.grid(alpha=0.3)
     fig.suptitle(title, fontsize=10)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=120)
+    fig.savefig(outpath, dpi=300)
     plt.close(fig)
 
 
@@ -270,7 +270,7 @@ def _plot_elbow_summary(
 
     fig.suptitle(f"{title}\nElbow indices (effective rank at drop-off)", fontsize=11)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=120)
+    fig.savefig(outpath, dpi=300)
     plt.close(fig)
 
 
@@ -324,7 +324,7 @@ def _plot_elbow_linechart(
 
     fig.suptitle(f"{title}\nElbow index by layer (effective rank at spectrum drop-off)", fontsize=11)
     fig.tight_layout()
-    fig.savefig(outpath, dpi=130)
+    fig.savefig(outpath, dpi=300)
     plt.close(fig)
 
 

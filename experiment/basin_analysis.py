@@ -260,7 +260,7 @@ def plot_goldilocks_scatter(summary_df: pd.DataFrame, outdir: str, title: Option
 
     plt.suptitle(title or "Basin Analysis: Weight Distance vs Unlearning Effectiveness", fontsize=13)
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "basin_goldilocks.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "basin_goldilocks.png"), dpi=300)
     plt.close()
 
 
@@ -328,7 +328,7 @@ def plot_basin_profile(summary_df: pd.DataFrame, outdir: str, title: Optional[st
 
     plt.suptitle(title or "Basin Profile: Per-Layer Unlearning Characterisation", fontsize=13)
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "basin_profile.png"), dpi=150)
+    plt.savefig(os.path.join(outdir, "basin_profile.png"), dpi=300)
     plt.close()
 
 
