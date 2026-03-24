@@ -332,7 +332,7 @@ def plot_consolidated_wmdp_lens(
         plt.suptitle(title, fontsize=11)
         plt.tight_layout()
         out_png = os.path.join(plot_outdir, "wmdp_lens_analysis.png")
-        plt.savefig(out_png, dpi=150)
+        plt.savefig(out_png, dpi=300)
         plt.close()
         print(f"[aggregate] ✓ Consolidated wmdp_lens plot written to {out_png}")
 
