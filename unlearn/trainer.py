@@ -30,7 +30,7 @@ Usage (from unlearn.py main()):
 """
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader, SequentialSampler
 from transformers import Trainer
 
 
@@ -189,7 +189,9 @@ class UnlearningTrainer(Trainer):
       - WandB logging          (TrainingArguments.report_to="wandb")
       - Multi-GPU via Accelerate (transparent)
 
-    We only override compute_loss() to plug in our unlearning objectives.
+    We override compute_loss() to plug in our unlearning objectives,
+    and get_train_dataloader() to disable shuffling (activation caches
+    are indexed by step, so iteration order must match cache order).
     """
 
     def __init__(
@@ -197,7 +199,8 @@ class UnlearningTrainer(Trainer):
         *args,
         unlearn_args,        # argparse Namespace from unlearn.py
         ref_model=None,      # frozen reference model (DPO / NPO only)
-        random_targets=None, # {layer_id: (D,) unit-norm tensor} for RMU/CB/CB-LAT
+        random_targets=None, # {layer_id: (D,) unit-norm tensor} for RMU
+        forget_act_cache=None,  # list of {layer_id: (B,T,D)} cached frozen forget activations
         retain_act_cache=None,  # list of {layer_id: (B,T,D)} cached activations
         layer_ids=None,      # list[int] target layer indices
         norm_reg_target_norms=None,  # list[float] per-layer L2 norm targets
@@ -207,6 +210,7 @@ class UnlearningTrainer(Trainer):
         self.unlearn_args = unlearn_args
         self.ref_model = ref_model
         self.random_targets = random_targets or {}
+        self.forget_act_cache = forget_act_cache or []
         self.retain_act_cache = retain_act_cache or []
         self.layer_ids = layer_ids or []
         self.norm_reg_target_norms = norm_reg_target_norms
@@ -244,6 +248,11 @@ class UnlearningTrainer(Trainer):
             "nll_loss":         _mod.nll_loss,
             "avg_log_prob":     _mod.avg_log_prob,
         }
+
+    def _get_train_sampler(self, dataset=None):
+        """Override to disable shuffling — activation caches are indexed by
+        step count, so dataset iteration order must match cache order."""
+        return SequentialSampler(dataset if dataset is not None else self.train_dataset)
 
     # ------------------------------------------------------------------
     # W&B metric helpers
@@ -366,26 +375,60 @@ class UnlearningTrainer(Trainer):
             )
 
         elif method == "cb":
-            cache_entry = self.retain_act_cache[self._step_idx % len(self.retain_act_cache)]
-            loss = cb_loss(
+            total_steps = len(self.train_dataset)
+            scheduled_coeff = min(1.0, self._step_idx / total_steps)
+            forget_cache_entry = self.forget_act_cache[self._step_idx % len(self.forget_act_cache)]
+            retain_cache_entry = self.retain_act_cache[self._step_idx % len(self.retain_act_cache)]
+            loss, orthogonal_raw, retain_raw = cb_loss(
                 model, fb, rb, self.layer_ids,
-                self.random_targets, cache_entry,
-                a.steering_coeff, a.alpha,
+                forget_cache_entry, retain_cache_entry,
+                remove_coef=a.steering_coeff, retain_coef=a.alpha,
+                scheduled_coeff=scheduled_coeff,
+            )
+            cb_coeff = a.steering_coeff * (1.0 - 0.25 * scheduled_coeff)
+            ret_coeff = a.alpha * scheduled_coeff
+            self._record(
+                orthogonal_loss=orthogonal_raw,
+                retain_loss=retain_raw,
+                weighted_forget=cb_coeff * orthogonal_raw,
+                weighted_retain=ret_coeff * retain_raw,
+                scheduled_coeff=scheduled_coeff,
+                forget_coeff=cb_coeff,
+                retain_coeff=ret_coeff,
             )
 
         elif method == "lat":
+            total_steps = len(self.train_dataset)
+            scheduled_coeff = min(1.0, self._step_idx / total_steps)
             loss = lat_loss(
                 model, fb, rb, self.layer_ids,
-                a.lat_eps, a.lat_steps, a.retain_weight,
+                a.lat_eps, a.lat_steps,
+                retain_coef=a.retain_weight,
+                scheduled_coeff=scheduled_coeff,
             )
 
         elif method == "cb_lat":
-            cache_entry = self.retain_act_cache[self._step_idx % len(self.retain_act_cache)]
-            loss = cb_lat_loss(
+            total_steps = len(self.train_dataset)
+            scheduled_coeff = min(1.0, self._step_idx / total_steps)
+            forget_cache_entry = self.forget_act_cache[self._step_idx % len(self.forget_act_cache)]
+            retain_cache_entry = self.retain_act_cache[self._step_idx % len(self.retain_act_cache)]
+            loss, orthogonal_raw, retain_raw = cb_lat_loss(
                 model, fb, rb, self.layer_ids,
-                self.random_targets, cache_entry,
-                a.steering_coeff, a.alpha,
-                a.lat_eps, a.lat_steps,
+                forget_cache_entry, retain_cache_entry,
+                remove_coef=a.steering_coeff, retain_coef=a.alpha,
+                lat_eps=a.lat_eps, lat_steps=a.lat_steps,
+                scheduled_coeff=scheduled_coeff,
+            )
+            cb_coeff = a.steering_coeff * (1.0 - 0.25 * scheduled_coeff)
+            ret_coeff = a.alpha * scheduled_coeff
+            self._record(
+                orthogonal_loss=orthogonal_raw,
+                retain_loss=retain_raw,
+                weighted_forget=cb_coeff * orthogonal_raw,
+                weighted_retain=ret_coeff * retain_raw,
+                scheduled_coeff=scheduled_coeff,
+                forget_coeff=cb_coeff,
+                retain_coeff=ret_coeff,
             )
 
         elif method == "wt_dist":
