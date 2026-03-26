@@ -403,7 +403,7 @@ def main():
         args.plot_outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_plots")
 
     method = infer_method_from_model_name(args.model_b)
-    init_wandb("activation_comparison", args, method=method)
+    init_wandb("activation_comparison", args, method=method, run_type="experiment")
 
     if not args.forget_text or not os.path.exists(args.forget_text):
         print("[collect_activation_comparison] Skipping: forget-text missing/not found")

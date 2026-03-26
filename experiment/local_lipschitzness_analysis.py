@@ -407,7 +407,7 @@ def main():
         args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="lipschitzness_analysis")
 
     method = infer_method_from_model_name(args.model_b)
-    init_wandb("local_lipschitzness", args, method=method)
+    init_wandb("local_lipschitzness", args, method=method, run_type="experiment")
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

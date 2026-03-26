@@ -611,7 +611,7 @@ def infer_method_from_model_name(model_name: str) -> str | None:
 
 
 def init_wandb(script_name: str, args, project: str = "cambridge_era",
-               method: str | None = None, run_type: str = "experiment",
+               method: str | None = None, run_type: str | None = None,
                extra_tags: list[str] | None = None, **kw):
     """Initialise a W&B run, logging to project "cambridge_era" by default.
 
@@ -636,6 +636,8 @@ def init_wandb(script_name: str, args, project: str = "cambridge_era",
         return None
     run_name = _derive_run_name(script_name, args)
     group = os.environ.get("WANDB_RUN_GROUP", None)
+    if not run_type:
+        raise ValueError("run_type is required (e.g. 'experiment', 'unlearn')")
     tags = [script_name, f"run_type:{run_type}"]
     if method:
         tags.append(f"method:{method}")

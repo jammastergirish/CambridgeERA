@@ -240,7 +240,7 @@ def main():
     parser.add_argument("--title", default=None, help="Title for plots")
     args = parser.parse_args()
     method = infer_method_from_model_name(args.outdir)
-    init_wandb("analyze_mlp_vs_attn", args, method=method)
+    init_wandb("analyze_mlp_vs_attn", args, method=method, run_type="experiment")
 
     os.makedirs(args.outdir, exist_ok=True)
 

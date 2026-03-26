@@ -320,7 +320,7 @@ def main():
         args.outdir = comparison_outdir(args.model_a, args.model_b, suffix="activation_separation")
 
     method = infer_method_from_model_name(args.model_b)
-    init_wandb("activation_separation", args, method=method)
+    init_wandb("activation_separation", args, method=method, run_type="experiment")
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)

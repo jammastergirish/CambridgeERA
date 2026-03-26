@@ -330,7 +330,7 @@ def main():
     outdir = args.outdir or os.path.join(args.output_root, "cross_method_basin")
     os.makedirs(outdir, exist_ok=True)
 
-    init_wandb("cross_method_basin", args)
+    init_wandb("cross_method_basin", args, run_type="experiment")
 
     # Load all basin results
     print("[cross_method] Searching for basin results...")

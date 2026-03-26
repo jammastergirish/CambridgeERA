@@ -374,7 +374,7 @@ def main():
         args.outdir = model_outdir(args.model, suffix=f"wmdp_{args.lens}_lens")
 
     method = infer_method_from_model_name(args.model)
-    init_wandb(f"wmdp_{args.lens}_lens", args, method=method)
+    init_wandb(f"wmdp_{args.lens}_lens", args, method=method, run_type="experiment")
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)

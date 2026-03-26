@@ -361,7 +361,7 @@ def main():
     args = parser.parse_args()
 
     method = infer_method_from_model_name(args.outdir)
-    init_wandb("basin_analysis", args, method=method)
+    init_wandb("basin_analysis", args, method=method, run_type="experiment")
 
     os.makedirs(args.outdir, exist_ok=True)
 
